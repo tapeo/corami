@@ -332,6 +332,7 @@ async function restoreGitDirectory(backup: string, target: string): Promise<bool
     return false;
   }
 
+  mkdirSync(target, { recursive: true });
   const copied = await run('cp', ['-R', source, join(target, '.git')]);
   return copied.ok;
 }
