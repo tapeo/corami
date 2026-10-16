@@ -159,62 +159,78 @@ async function rm(context: CommandContext): Promise<{ data?: unknown; text?: str
   return { text: `Project ${name} removed.` };
 }
 
+const NAME_FLAG = { name: 'name', value: 'name', description: 'Project name on the server' };
+const DRY_RUN_FLAG = { name: 'dry-run', description: 'Show what it would do, without doing it' };
+
 export const projectCommand: CommandSpec = {
   name: 'project',
   summary: 'Manages projects',
-  usage: 'corami project <ls|show|add|import|rm> [arguments]',
-  flags: [
-    { name: 'json', description: 'JSON output' },
-    { name: 'name', value: 'name', description: 'Add, import: project name on the server' },
+  usage: 'corami project <action> [arguments]',
+  flags: [{ name: 'json', description: 'JSON output' }],
+  actions: [
     {
-      name: 'path',
-      value: 'folder',
-      description: 'Add: register an existing folder, without cloning',
+      name: 'ls',
+      summary: 'Lists the projects with their previews',
+      usage: 'corami project ls',
+      examples: ['corami project ls'],
+      run: ls,
     },
-    { name: 'include', value: 'glob', description: 'Import: local files to copy, repeatable' },
     {
-      name: 'user',
-      value: 'user',
-      description: 'Import: user on the server, default the one of the configuration',
+      name: 'show',
+      summary: 'Shows a project: path, git, previews',
+      usage: 'corami project show <name>',
+      examples: ['corami project show myapp'],
+      run: show,
     },
-    { name: 'yes', description: 'Rm: confirm the removal' },
-    { name: 'dry-run', description: 'Add, import: show what it would do, without doing it' },
+    {
+      name: 'add',
+      summary: 'Clones a repository on the server, or registers a folder already there',
+      usage: 'corami project add <git-url> [--name <name>] | corami project add --path <folder>',
+      flags: [
+        NAME_FLAG,
+        {
+          name: 'path',
+          value: 'folder',
+          description: 'Register an existing folder of the server, without cloning',
+        },
+        DRY_RUN_FLAG,
+      ],
+      examples: [
+        'corami project add git@github.com:me/myapp.git',
+        'corami project add --path ~/projects/myapp',
+      ],
+      run: add,
+    },
+    {
+      name: 'import',
+      summary: 'Moves a local project to the server, the folder becomes the synced copy',
+      usage:
+        'corami project import [folder] [--name <name>] [--include <glob>] [--user <user>] [--dry-run]',
+      flags: [
+        NAME_FLAG,
+        { name: 'include', value: 'glob', description: 'Local files to copy, repeatable' },
+        {
+          name: 'user',
+          value: 'user',
+          description: 'User on the server, default the one of the configuration',
+        },
+        DRY_RUN_FLAG,
+      ],
+      examples: [
+        'corami project import ~/dev/myapp',
+        'corami project import . --name myapp --include .env.local --dry-run',
+      ],
+      run: runImport,
+    },
+    {
+      name: 'rm',
+      summary: 'Removes a project from the server, previews included',
+      usage: 'corami project rm <name> --yes',
+      flags: [{ name: 'yes', description: 'Confirm the removal' }],
+      examples: ['corami project rm myapp --yes'],
+      run: rm,
+    },
   ],
-  examples: [
-    'corami project ls',
-    'corami project show myapp',
-    'corami project add git@github.com:me/myapp.git',
-    'corami project add --path ~/dev/myapp',
-    'corami project import ~/dev/myapp',
-    'corami project import . --name myapp --include .env.local --dry-run',
-    'corami project rm myapp --yes',
-  ],
-  run: async (context) => {
-    const action = context.args.positionals[0];
-    const rest: CommandContext = {
-      ...context,
-      args: { ...context.args, positionals: context.args.positionals.slice(1) },
-    };
-
-    switch (action) {
-      case 'ls':
-        return ls(rest);
-      case 'show':
-        return show(rest);
-      case 'add':
-        return add(rest);
-      case 'import':
-        return runImport(rest);
-      case 'rm':
-        return rm(rest);
-      default:
-        throw new CoramiError({
-          code: 'usage',
-          message: `Unknown action: ${action ?? ''}`,
-          fix: 'Use corami project ls, show, add, import or rm',
-        });
-    }
-  },
 };
 
 export type { ProjectSummary };
