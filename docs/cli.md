@@ -10,7 +10,6 @@ Commands of v1. A command that does several things has actions, as in `corami sy
 - [Projects](#projects)
 - [Previews](#previews)
 - [Sync](#sync)
-- [Backup](#backup)
 - [Output examples](#output-examples)
 
 ## Setup
@@ -60,7 +59,7 @@ A role and flags after `--` go to the setup. Without a terminal it installs the 
 
 ## Projects
 
-A project is added to the server once, with `project add` or `project import`, and every client then takes its local copy with `corami sync <project>`. The [README](../README.md#start-a-project) shows which command fits where the project is today.
+A project is added to the server once, with `project add` or `project import`, and every client then takes its local copy with `corami sync <project>`. The [quick start](quickstart.md#3-your-first-project) shows which command fits where the project is today.
 
 | Command | Description |
 |---|---|
@@ -101,7 +100,6 @@ Inside a synced copy the project name is not needed: the commands find it from t
 The account of the server for the sync and the import is `server_user` of the configuration, saved by `corami setup client`, then `user` of the health answer of the daemon, then `root`. `--user` overrides it for one command.
 
 Every side is a peer and follows only `origin`: `corami git watch` runs one cycle at startup and then one every minute, downloads the refs of `origin` and, when it is behind and the files have already arrived with the sync, moves its HEAD without touching the files. The push is done by whoever makes the commit: `git push` from the side that has the commits, and the other aligns after the push. A merged PR on GitHub enters with a `git pull` on any side, and the other follows when the files arrive with the sync.
-
 
 ## Output examples
 

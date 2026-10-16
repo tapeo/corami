@@ -4,7 +4,8 @@ Corami starts no project process. The agent, or you, starts the dev server; then
 
 ```bash
 # on the server, from ~/projects/<project>
-pnpm exec next dev -H 127.0.0.1 -p 3000 &
+systemd-run --user --unit myapp-web --collect \
+  pnpm exec next dev -H 127.0.0.1 -p 3000
 corami serve 3000
 ```
 
@@ -31,13 +32,7 @@ corami serve 3000
 
 ## Start the app so it survives the harness
 
-A background command of the harness shell dies with the session or with the tool timeout, and nobody restarts it. Start the dev server as a user service of the server instead:
-
-```bash
-# on the server, from the project folder
-systemd-run --user --unit myapp-web --collect \
-  pnpm exec next dev -H 127.0.0.1 -p 3000
-```
+A background command of the harness shell (`&`) dies with the session or with the tool timeout, and nobody restarts it. That is why the example above starts the dev server as a user service of the server:
 
 - Logs: `journalctl --user -u myapp-web -f`.
 - Stop: `systemctl --user stop myapp-web`.
@@ -90,13 +85,4 @@ Symptom when it is missing: the page loads half styled, hot reload does nothing 
 
 ## Instructions for the agent
 
-Copy this into the `AGENTS.md` of the project, with the project name in place of `<project>`:
-
-```markdown
-## Corami environment
-
-- The project lives on the server, synced with every client. The dev server runs on the server, not on this machine: `systemd-run --user --unit <project>-web --collect pnpm exec next dev -H 127.0.0.1 -p 3000`.
-- Give the preview an address: `corami serve 3000` (from `~/projects/<project>`), then read `url` from the JSON. `corami serve ls` lists the addresses.
-- After every UI change, open that URL with the browser of this harness (or a browser tool it offers) and read the console and the failed requests there, then take the screenshot. The page is in a secure context because the address is HTTPS.
-- Builds run where the tools are: on the server, or on a client over SSH. See docs/builds.md in the Corami repository.
-```
+The block to copy into the `AGENTS.md` of the project is in the [quick start](quickstart.md#tell-the-agent-about-corami).
