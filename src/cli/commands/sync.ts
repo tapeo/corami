@@ -545,10 +545,13 @@ function formatBytes(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
+const DRY_RUN_FLAG = { name: 'dry-run', description: 'Show what it would do' };
+
 export const syncCommand: CommandSpec = {
   name: 'sync',
   summary: 'Synced local copy',
-  usage: 'corami sync [<project>|<status|flush|rm|prune>]',
+  usage:
+    'corami sync <project> [--path <folder>] [--server-path <folder>] [--user <user>] [--no-git] [--dry-run]',
   flags: [
     { name: 'path', value: 'folder', description: 'Path of the local copy' },
     { name: 'server-path', value: 'folder', description: 'Path of the project on the server' },
@@ -559,41 +562,52 @@ export const syncCommand: CommandSpec = {
     },
     { name: 'no-git', description: 'Do not give the new local copy its own .git' },
     { name: 'json', description: 'JSON output' },
-    { name: 'force', description: 'Proceeds even with conflicts or local-only files' },
+    DRY_RUN_FLAG,
+  ],
+  examples: ['corami sync myapp', 'corami sync myapp --path ~/code/myapp'],
+  actions: [
     {
-      name: 'unused',
-      value: 'duration',
-      description: 'Only copies idle for longer than, e.g. 30d',
+      name: 'status',
+      summary: 'State, conflicts, last change and git state of the two sides',
+      usage: 'corami sync status [<project>]',
+      examples: ['corami sync status', 'corami sync status myapp'],
+      run: status,
     },
-    { name: 'yes', description: 'Confirm the removal' },
-    { name: 'dry-run', description: 'Show what it would do' },
+    {
+      name: 'flush',
+      summary: 'Flushes the queue of the session',
+      usage: 'corami sync flush [<project>]',
+      examples: ['corami sync flush myapp'],
+      run: control,
+    },
+    {
+      name: 'rm',
+      summary: 'Removes only the local copy, after the checks',
+      usage: 'corami sync rm <project> [--path <folder>] [--force] [--dry-run]',
+      flags: [
+        { name: 'path', value: 'folder', description: 'Path of the local copy' },
+        { name: 'force', description: 'Proceeds even with conflicts or local-only files' },
+        DRY_RUN_FLAG,
+      ],
+      examples: ['corami sync rm myapp', 'corami sync rm myapp --dry-run'],
+      run: rm,
+    },
+    {
+      name: 'prune',
+      summary: 'Lists and removes the copies of this client unused for a while',
+      usage: 'corami sync prune --unused <duration> [--dry-run] [--yes]',
+      flags: [
+        {
+          name: 'unused',
+          value: 'duration',
+          description: 'Only copies idle for longer than, e.g. 30d',
+        },
+        DRY_RUN_FLAG,
+        { name: 'yes', description: 'Confirm the removal' },
+      ],
+      examples: ['corami sync prune --unused 30d', 'corami sync prune --unused 30d --yes'],
+      run: prune,
+    },
   ],
-  examples: [
-    'corami sync myapp',
-    'corami sync status myapp',
-    'corami sync rm myapp',
-    'corami sync prune --unused 30d',
-  ],
-  run: (context) => {
-    const action = context.args.positionals[0];
-    const rest: CommandContext = {
-      ...context,
-      args: { ...context.args, positionals: context.args.positionals.slice(1) },
-    };
-
-    switch (action) {
-      case undefined:
-        return start(rest);
-      case 'status':
-        return status(rest);
-      case 'flush':
-        return control(rest);
-      case 'rm':
-        return rm(rest);
-      case 'prune':
-        return prune(rest);
-      default:
-        return start(context);
-    }
-  },
+  run: start,
 };
