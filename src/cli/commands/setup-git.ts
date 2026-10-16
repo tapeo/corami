@@ -1,5 +1,6 @@
 import type { CommandContext } from '@/cli/command.ts';
-import { renderTable } from '@/cli/output.ts';
+import type { StepResult } from '@/cli/commands/setup-steps.ts';
+import { renderSteps } from '@/cli/output.ts';
 import { booleanFlag, stringFlag } from '@/cli/parser.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { run as exec } from '@/core/exec.ts';
@@ -13,13 +14,6 @@ import {
   rewriteHttpsRemotes,
   testProvider,
 } from '@/integrations/ssh.ts';
-
-interface GitStepResult {
-  step: string;
-  status: 'done' | 'skipped' | 'failed' | 'waiting';
-  summary: string;
-  detail?: string | undefined;
-}
 
 export async function runGitSetup(
   context: CommandContext,
@@ -36,7 +30,7 @@ export async function runGitSetup(
   }
 
   const dryRun = booleanFlag(context.args, 'dry-run');
-  const results: GitStepResult[] = [];
+  const results: StepResult[] = [];
 
   if (dryRun) {
     results.push({ step: 'key', status: 'skipped', summary: `Would create ${publicKeyPath()}` });
@@ -113,7 +107,7 @@ export async function runGitSetup(
 
 function output(
   context: CommandContext,
-  results: GitStepResult[],
+  results: StepResult[],
   publicKey: string | undefined,
   newKeyUrl?: string,
 ): { data?: unknown; text?: string } {
@@ -121,13 +115,7 @@ function output(
     return { data: { steps: results, public_key: publicKey, add_key_url: newKeyUrl } };
   }
 
-  const lines = [
-    renderTable(results, [
-      { header: 'Step', value: (row) => row.step },
-      { header: 'Result', value: (row) => row.status },
-      { header: 'Detail', value: (row) => row.summary },
-    ]),
-  ];
+  const lines = renderSteps(results);
 
   if (publicKey !== undefined) {
     lines.push('', 'Public key:', publicKey);

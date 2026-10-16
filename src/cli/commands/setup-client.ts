@@ -2,7 +2,7 @@ import { join } from 'node:path';
 
 import type { CommandContext } from '@/cli/command.ts';
 import { runStepInTerminal, type StepResult } from '@/cli/commands/setup-steps.ts';
-import { renderTable } from '@/cli/output.ts';
+import { renderSteps } from '@/cli/output.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
 import type { Prompter } from '@/cli/prompt.ts';
 import { homeDirectory, readGlobalConfig, writeGlobalConfig } from '@/core/config.ts';
@@ -427,19 +427,7 @@ function render(steps: StepResult[], partial: boolean, withSteps: boolean): stri
   const lines: string[] = [];
 
   if (withSteps) {
-    lines.push(
-      renderTable(steps, [
-        { header: 'Step', value: (row) => row.step },
-        { header: 'Result', value: (row) => row.status },
-        { header: 'Detail', value: (row) => row.summary },
-      ]),
-    );
-
-    for (const step of steps) {
-      if (step.detail !== undefined) {
-        lines.push(`${step.step}: ${step.detail}`);
-      }
-    }
+    lines.push(...renderSteps(steps));
   }
 
   const failed = steps.some((step) => step.status === 'failed');

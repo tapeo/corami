@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
 import type { CommandContext } from '@/cli/command.ts';
+import type { StepResult } from '@/cli/commands/setup-steps.ts';
 import { createSyncFor } from '@/cli/commands/sync.ts';
-import { renderTable } from '@/cli/output.ts';
+import { renderSteps } from '@/cli/output.ts';
 import { booleanFlag, stringFlag, stringListFlag } from '@/cli/parser.ts';
 import { addProject, projectDetail, serverUserForSync } from '@/cli/server-client.ts';
 import { homeDirectory, readGlobalConfig, serverProjectPath } from '@/core/config.ts';
@@ -20,13 +21,6 @@ import {
   shellQuote,
   TAR_EXCLUDES,
 } from '@/core/transfer.ts';
-
-interface ImportStep {
-  step: string;
-  status: 'done' | 'skipped' | 'failed' | 'waiting';
-  summary: string;
-  detail?: string | undefined;
-}
 
 export async function runImport(
   context: CommandContext,
@@ -47,7 +41,7 @@ export async function runImport(
   const projectName = stringFlag(context.args, 'name') ?? basename(target);
   const dryRun = booleanFlag(context.args, 'dry-run');
   const extraIncludes = stringListFlag(context.args, 'include');
-  const steps: ImportStep[] = [];
+  const steps: StepResult[] = [];
 
   const facts = await localGitFacts(target);
 
@@ -372,7 +366,7 @@ function stamp(): string {
 
 function finish(
   context: CommandContext,
-  steps: ImportStep[],
+  steps: StepResult[],
   project: string,
   target: string,
   dryRun: boolean,
@@ -381,19 +375,7 @@ function finish(
     return { data: { project, local: target, dry_run: dryRun, steps } };
   }
 
-  const lines = [
-    renderTable(steps, [
-      { header: 'Step', value: (row) => row.step },
-      { header: 'Result', value: (row) => row.status },
-      { header: 'Detail', value: (row) => row.summary },
-    ]),
-  ];
-
-  for (const step of steps) {
-    if (step.detail !== undefined) {
-      lines.push(`${step.step}: ${step.detail}`);
-    }
-  }
+  const lines = renderSteps(steps);
 
   const failed = steps.some((step) => step.status === 'failed');
 

@@ -106,6 +106,33 @@ export function renderTable<T>(rows: T[], columns: TableColumn<T>[]): string {
   return [header, ...body].join('\n');
 }
 
+/** A step of a setup or an import, as the commands report it. */
+export interface StepRow {
+  step: string;
+  status: string;
+  summary: string;
+  detail?: string | undefined;
+}
+
+/** The table of the steps, then the detail of each step that has one. */
+export function renderSteps(steps: StepRow[]): string[] {
+  const lines = [
+    renderTable(steps, [
+      { header: 'Step', value: (row) => row.step },
+      { header: 'Result', value: (row) => row.status },
+      { header: 'Detail', value: (row) => row.summary },
+    ]),
+  ];
+
+  for (const step of steps) {
+    if (step.detail !== undefined) {
+      lines.push(`${step.step}: ${step.detail}`);
+    }
+  }
+
+  return lines;
+}
+
 export function reportError(error: unknown, options: OutputOptions): number {
   const coramiError = toCoramiError(error);
   emit(failure(coramiError), options);

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { failure, renderTable, success } from '@/cli/output.ts';
+import { failure, renderSteps, renderTable, success } from '@/cli/output.ts';
 import { CoramiError, exitCodeFor, toCoramiError } from '@/core/errors.ts';
 
 describe('envelope', () => {
@@ -68,5 +68,17 @@ describe('renderTable', () => {
     );
 
     expect(table.split('\n')).toEqual(['Project   Port', 'shop-app  4101', 'landing   4200']);
+  });
+});
+
+describe('renderSteps', () => {
+  test('puts the detail of a step under the table', () => {
+    const lines = renderSteps([
+      { step: 'key', status: 'done', summary: 'Key created', detail: '~/.ssh/id_ed25519.pub' },
+      { step: 'verify', status: 'failed', summary: 'Connection refused' },
+    ]);
+
+    expect(lines[0]?.split('\n')[0]).toMatch(/^Step +Result +Detail$/);
+    expect(lines.slice(1)).toEqual(['key: ~/.ssh/id_ed25519.pub']);
   });
 });

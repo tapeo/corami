@@ -20,7 +20,7 @@ import {
   stepSummary,
   stepTailscale,
 } from '@/cli/commands/setup-steps.ts';
-import { renderTable } from '@/cli/output.ts';
+import { renderSteps } from '@/cli/output.ts';
 import { booleanFlag, stringFlag } from '@/cli/parser.ts';
 import { canPrompt, type Prompter, terminalPrompter } from '@/cli/prompt.ts';
 import { readGlobalConfig, writeGlobalConfig } from '@/core/config.ts';
@@ -354,19 +354,7 @@ function render(results: StepResult[], fqdn: string | undefined, withSteps: bool
   const lines: string[] = [];
 
   if (withSteps) {
-    lines.push(
-      renderTable(results, [
-        { header: 'Step', value: (row) => row.step },
-        { header: 'Result', value: (row) => row.status },
-        { header: 'Detail', value: (row) => row.summary },
-      ]),
-    );
-
-    for (const result of results) {
-      if (result.detail !== undefined) {
-        lines.push(`${result.step}: ${result.detail}`);
-      }
-    }
+    lines.push(...renderSteps(results));
   }
 
   const login = results.find(
