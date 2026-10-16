@@ -119,8 +119,10 @@ The server is tried on the test VPS (`docs/architecture.md`, "Test environment")
 ```bash
 bun build src/main.ts --compile --target=bun-linux-x64 --outfile dist/corami-linux-x64
 scp dist/corami-linux-x64 root@<vps>:.corami/bin/corami.new
-ssh root@<vps> 'mv -f ~/.corami/bin/corami.new ~/.corami/bin/corami && systemctl --user restart corami-daemon'
+ssh root@<vps> 'mv -f ~/.corami/bin/corami.new ~/.corami/bin/corami && corami setup server --step user'
 ```
+
+The account that owns the projects has its own copy of the binary (`~corami/.corami/bin/corami`): the step `user` replaces it and restarts the daemon of the account, and the same step also works from a local build. As root, the commands that write the projects (`project add`, `serve`, `setup git`) are not run on the VPS: `ssh corami@<vps>` is.
 
 On a freshly created VPS, instead of the restart you run `ssh -t root@<vps> corami setup server`, which is what `install.sh ... server` does after the download.
 

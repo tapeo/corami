@@ -570,17 +570,20 @@ One binary, two setups. In a terminal they ask what the flags leave out (role, o
 
 ### Server setup
 
-`corami setup server [--owner <login>] [--hostname <name>] [--user <user>] [--firewall]`, Linux only.
+`corami setup server [--owner <login>] [--hostname <name>] [--user <user>] [--firewall]`, Linux only. It runs as root: the account that owns the projects is created by the setup.
 
 1. `preflight`: OS and architecture, root or not.
 2. `packages`: minimal apt packages for Corami: `git`, `curl`, `unzip`, `ca-certificates`.
 3. `tailscale`: official script, then `tailscale up --ssh --hostname <name>` (default `corami`; the name ends up in the public certificate logs). Without `--auth-key` it prints the login link: in a terminal the setup waits for the approval and goes on, otherwise it stops with `waiting` and is run again after the approval. In a terminal, without `--owner` and without one saved, it then proposes the login that signed the server in as the owner.
 4. `hosts`: a line in `/etc/hosts` for its own FQDN.
-5. `firewall`, with `--firewall`, or with a yes in a terminal when Tailscale SSH is on and the firewall is not in place yet: inbound blocked except on `tailscale0`.
-6. `daemon`: `loginctl enable-linger`, then the `corami-daemon` unit, with the owner login and the FQDN in its environment. It writes the global config with `role: server`.
-7. `git-watch`: the git alignment service, in the same scope as the daemon.
-8. `serve`: `tailscale serve` for port 7420. It fails, with the remedy, when the HTTPS certificates are not enabled in the Tailscale console.
-9. `summary`: the daemon is running; its address and the `corami setup client <fqdn>` command for the clients. Without `--owner` it warns that every tailnet member can reach the daemon.
+5. `user`: the account that owns the projects, `corami` by default, `--user` for another name. It is created with `useradd`, the `authorized_keys` of root are copied into it with the right permissions, linger is enabled and its runtime directory awaited, the binary of the setup is copied into its `~/.corami/bin`, the folder is added to its PATH, and it becomes the operator of Tailscale (`tailscale set --operator`), so that it can run `tailscale serve` for the previews without root. The steps that need the machine are run by root, the steps of the account are run again as the account itself with `runuser`, which is what puts their homes, their user services and the paths of `paths()` in the right place. Root never runs the binary of the account, and the account never runs the one of root.
+6. `firewall`, with `--firewall`, or with a yes in a terminal when Tailscale SSH is on and the firewall is not in place yet: inbound blocked except on `tailscale0`.
+7. `daemon`: `loginctl enable-linger`, then the `corami-daemon` unit as a systemd user service of the account, with the owner login and the FQDN in its environment. It writes the global config with `role: server` and `server_user` in the home of the account. Without user services it falls back to a system unit with `User=` and the home of the account.
+8. `git-watch`: the git alignment service, in the same scope as the daemon.
+9. `serve`: `tailscale serve` for port 7420, run as the account. It fails, with the remedy, when the HTTPS certificates are not enabled in the Tailscale console.
+10. `summary`: the daemon is running; its address and the `corami setup client <fqdn>` command for the clients. Without `--owner` it warns that every tailnet member can reach the daemon.
+
+Root keeps its own configuration with `server_user`, the account that owns the projects. A command that would write under the home of root on such a server (`project add`, `serve`, `setup git`) stops and says to run it as that account; `setup` and `update` run the steps of the account again as the account, and `doctor` reads.
 
 Separate commands, not steps of the setup: `corami setup git` (SSH key of the server and remotes). Harness, toolchains and backup are the user's.
 
@@ -592,15 +595,15 @@ Without a terminal the setup takes its options as flags. A non-interactive mode 
 
 1. `tailscale`: Tailscale installed and online. Corami does not install it on a client: the step fails with the remedy.
 2. `daemon`: `GET https://<server>:7420/v1/health`: certificate, reachability, version and owner login.
-3. `ssh`: `ssh <user>@<server> true` over Tailscale SSH, in batch mode. Default user `root`.
+3. `ssh`: `ssh <user>@<server> true` over Tailscale SSH, in batch mode. The user is `--user`, then the one the daemon announces in `user` (the account that owns the projects on the server), then `root`.
 4. `mutagen`: Mutagen from `pinned-tools` in `~/.corami/bin`, unless already present. On Windows it must already be in the PATH.
 5. `mutagen-daemon`: the Mutagen daemon as a service (see the table), so that the sync sessions start again after a reboot without a mutagen command. A daemon started on demand is stopped first, because it holds the lock; on macOS a registration that points to another Mutagen binary is replaced.
-6. `config`: global config with `role: client`, `server_host` and the owner login.
+6. `config`: global config with `role: client`, `server_host`, `server_user` and the owner login.
 7. `git-watch`: the git alignment service.
 
 ### Updates
 
-`corami update` downloads the new release from GitHub and verifies the sha256 before replacing the binary. On the server it restarts the daemon. From source the command exits with an error: the binary to replace would be bun. `corami update --check` stays available.
+`corami update` downloads the new release from GitHub and verifies the sha256 before replacing the binary. On the server it restarts the daemon: as the account when the update runs as the account, through `runuser` when it runs as root, which also replaces the binary of the account. From source the command exits with an error: the binary to replace would be bun. `corami update --check` stays available.
 
 The binaries of the release declare the tag (`--define` in the workflow); every other execution declares `dev`, or the value of `CORAMI_VERSION` when it is in the execution environment.
 

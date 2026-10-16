@@ -44,14 +44,16 @@ The binary comes from the [GitHub releases](https://github.com/tapeo/corami/rele
 
 ### 1. Server
 
-On a fresh server, as the user that will own the projects (usually `root`):
+On a fresh server, as root:
 
 ```bash
 ssh root@your-server
 curl -fsSL https://github.com/tapeo/corami/releases/latest/download/install.sh | sh
 ```
 
-The script puts `corami` in `~/.corami/bin` and asks what the machine is: answer server. The setup installs Tailscale and shows a login link: open it and approve the machine, the setup waits and goes on. It proposes your Tailscale login as the only account allowed to reach the daemon, offers to close public SSH, installs the services and publishes the daemon at `https://<machine>.<your-tailnet>.ts.net:7420`.
+The script puts `corami` in `~/.corami/bin` and asks what the machine is: answer server. The setup installs Tailscale and shows a login link: open it and approve the machine, the setup waits and goes on. It proposes your Tailscale login as the only account allowed to reach the daemon, creates the account `corami`, which owns the projects and runs the services, offers to close public SSH, installs the services and publishes the daemon at `https://<machine>.<your-tailnet>.ts.net:7420`.
+
+From then on you work as `corami`, and enter with `ssh corami@your-server.<your-tailnet>.ts.net`: the projects, the agents and the services belong to that account. Root stays for the machine only: the packages of the toolchain, the provider console.
 
 ### 2. Client
 

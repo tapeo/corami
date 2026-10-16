@@ -305,8 +305,13 @@ async function installScheduledTask(spec: ServiceSpec): Promise<ServiceResult> {
 
 // The git alignment service. It runs on the server and on every client, and
 // it is the same on both: a single way to install it, with the systemd scope
-// decided by the caller.
-export function gitWatchSpec(binary: string, scope?: 'user' | 'system'): ServiceSpec {
+// decided by the caller. `home` is the home of the account it runs as, when
+// that is not the home of the process installing it.
+export function gitWatchSpec(
+  binary: string,
+  scope?: 'user' | 'system',
+  home?: string,
+): ServiceSpec {
   return {
     name: 'corami-git-watch',
     description: 'Corami git alignment',
@@ -316,7 +321,7 @@ export function gitWatchSpec(binary: string, scope?: 'user' | 'system'): Service
     // Without these lines launchd throws away the output of the service: the
     // JSON lines of the cycle go to a file, as on the server they go to the
     // journal.
-    logFile: join(paths().root, 'logs', 'git-watch.log'),
+    logFile: join(home ?? homedir(), '.corami', 'logs', 'git-watch.log'),
     ...(scope === undefined ? {} : { systemdScope: scope }),
   };
 }

@@ -16,21 +16,23 @@ Commands of v1. They all accept `--json`. Without a TTY the output is JSON by de
 | Command | Where | Description |
 |---|---|---|
 | `corami setup` | all | in a terminal: asks what the machine is, then runs the setup of that role |
-| `corami setup server [--owner <login>]` | server | idempotent setup: Tailscale, HTTPS, the `corami-daemon` and `corami-git-watch` services |
+| `corami setup server [--owner <login>] [--user <user>]` | server, as root | idempotent setup: Tailscale, the account that owns the projects, HTTPS, the `corami-daemon` and `corami-git-watch` services |
 | `corami setup server --firewall` | server | closes public SSH: you enter with Tailscale SSH |
-| `corami setup server --step <step>` | server | runs a single step: `preflight`, `packages`, `tailscale`, `hosts`, `firewall`, `daemon`, `git-watch`, `serve`, `summary` |
+| `corami setup server --step <step>` | server | runs a single step: `preflight`, `packages`, `tailscale`, `hosts`, `user`, `firewall`, `daemon`, `git-watch`, `serve`, `summary` |
 | `corami setup client [server] [--user <user>]` | client | idempotent setup: checks Tailscale, daemon and SSH, installs Mutagen, the Mutagen daemon service and `corami-git-watch`, saves the configuration |
 | `corami setup client <server> --step <step>` | client | runs a single step: `tailscale`, `daemon`, `ssh`, `mutagen`, `mutagen-daemon`, `config`, `git-watch` |
-| `corami setup git [--provider github\|gitlab\|bitbucket]` | server | SSH key of the server, check and rewriting of HTTPS remotes |
-| `corami doctor [area]` | all | checks with remedies. Areas: `net`, `tools`, `git` |
-| `corami update [--check]` | all | updates the binary from the GitHub release, with a sum check; on the server it restarts the daemon |
+| `corami setup git [--provider github\|gitlab\|bitbucket]` | server, as the account | SSH key of the server, check and rewriting of HTTPS remotes |
+| `corami doctor [area]` | all | checks with remedies. Areas: `net`, `tools`, `git`, `server` |
+| `corami update [--check]` | all | updates the binary from the GitHub release, with a sum check; on the server it restarts the daemon, and as root it also replaces the binary of the account |
 
 In a terminal the setups ask what the flags do not say, and only that:
 
 - `corami setup` without a role asks for it. Outside Linux the machine can only be a client.
 - `corami setup server` waits for the approval of the Tailscale login link instead of stopping, proposes the Tailscale login of the server as the owner when `--owner` is missing and none is saved, and offers to close public SSH when Tailscale SSH is on and the firewall is not in place yet.
-- `corami setup client` without a server proposes the one already configured, then the machines of the tailnet where a Corami daemon answers, then asks for the name.
+- `corami setup client` without a server proposes the one already configured, then the machines of the tailnet where a Corami daemon answers, then asks for the name. The account of the server is the one the daemon announces, `--user` an override.
 - A failed step shows the reason and offers to run it again.
+
+The server setup runs as root and creates the account that owns the projects, `corami` by default: the projects, the daemon, the git alignment service, the agents and their previews belong to it. Root keeps for the machine: a command that would write under the home of root on such a server (`project add`, `serve`, `setup git`) stops and says to run it as that account.
 
 Without a terminal, or with `--json`, they ask nothing: the options come from the flags, and a missing server or role is a `usage` error.
 
@@ -93,7 +95,7 @@ The public port is stable per preview and comes from the daemon, in the range 41
 
 Inside a synced copy the project name is not needed: the commands find it from the sync sessions.
 
-`CORAMI_SERVER_USER` (default `root`) picks the user of the server for the sync, when the server is not `root`.
+The account of the server for the sync and the import is `server_user` of the configuration, saved by `corami setup client`, then `user` of the health answer of the daemon, then `root`. `--user` overrides it for one command.
 
 Every side is a peer and follows only `origin`: `corami git watch` runs one cycle at startup and then one every minute, downloads the refs of `origin` and, when it is behind and the files have already arrived with the sync, moves its HEAD without touching the files. The push is done by whoever makes the commit: `git push` from the side that has the commits, and the other aligns after the push. A merged PR on GitHub enters with a `git pull` on any side, and the other follows when the files arrive with the sync.
 

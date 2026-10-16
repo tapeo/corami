@@ -1,4 +1,6 @@
 import { realpathSync } from 'node:fs';
+import { userInfo } from 'node:os';
+import { join } from 'node:path';
 
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { booleanFlag, stringFlag } from '@/cli/parser.ts';
@@ -14,6 +16,7 @@ import {
   replaceBinary,
 } from '@/core/release.ts';
 import { gitWatchSpec, restartService, serviceActive } from '@/integrations/service.ts';
+import { homeDirectoryForUser, userId } from '@/integrations/systemd.ts';
 import { VERSION } from '@/version.ts';
 
 async function run_(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
@@ -79,6 +82,7 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
   });
 
   replaceBinary(binary, downloaded.path);
+  const copiedToOwner = await copyToOwner();
   const restarted = await restartDaemon();
   const watchRestarted = await restartGitWatch();
 
@@ -86,6 +90,7 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
     from: VERSION,
     to: downloaded.version,
     binary,
+    account_binary_updated: copiedToOwner,
     restarted_daemon: restarted,
     restarted_git_watch: watchRestarted,
   };
@@ -97,7 +102,8 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
   return {
     text: [
       `Updated from ${VERSION} to ${downloaded.version}.`,
-      `Binario: ${binary}`,
+      `Binary: ${binary}`,
+      copiedToOwner ? 'The account that owns the projects runs the same binary.' : '',
       restarted ? 'Daemon service restarted.' : '',
       watchRestarted ? 'Git alignment service restarted.' : '',
     ]
@@ -114,11 +120,85 @@ export function resolveBinary(): string {
   }
 }
 
+/**
+ * `corami update` replaces the binary it is running from. When the setup ran
+ * as root on a server, that is the binary of root: the one of the account runs
+ * the services, so it is replaced too, and the services are restarted as the
+ * account.
+ */
+async function copyToOwner(): Promise<boolean> {
+  if (process.platform !== 'linux' || userInfo().username !== 'root') {
+    return false;
+  }
+
+  const user = await configuredServerUser();
+
+  if (user === undefined) {
+    return false;
+  }
+
+  const home = await homeDirectoryForUser(user);
+
+  if (home === undefined) {
+    return false;
+  }
+
+  const target = join(home, '.corami', 'bin', 'corami');
+
+  if (!(await Bun.file(target).exists())) {
+    return false;
+  }
+
+  return (await run('cp', ['-f', resolveBinary(), target])).ok;
+}
+
+/** The account that owns the projects on this server, when one is configured. */
+async function configuredServerUser(): Promise<string | undefined> {
+  const config = await readGlobalConfig().catch(() => undefined);
+  const user = config?.role === 'server' ? config.server_user : undefined;
+
+  return user === undefined || user === 'root' ? undefined : user;
+}
+
+// The daemon runs as the account that owns the projects: started as root the
+// restart goes through `runuser`, as the setup does for its steps.
 async function restartDaemon(): Promise<boolean> {
   const config = await readGlobalConfig().catch(() => undefined);
 
   if (config?.role !== 'server') {
     return false;
+  }
+
+  const owner = await configuredServerUser();
+
+  if (owner !== undefined) {
+    const home = await homeDirectoryForUser(owner);
+    const uid = await userId(owner);
+    const result = await run(
+      'runuser',
+      [
+        '-u',
+        owner,
+        '--',
+        resolveBinary(),
+        'setup',
+        'server',
+        '--step',
+        'daemon',
+        '--user',
+        owner,
+        '--json',
+      ],
+      {
+        env: {
+          ...(home === undefined ? {} : { HOME: home }),
+          ...(uid === undefined ? {} : { XDG_RUNTIME_DIR: `/run/user/${uid}` }),
+        },
+        timeoutMs: 2 * 60_000,
+      },
+    );
+
+    return result.ok;
   }
 
   const env = { XDG_RUNTIME_DIR: `/run/user/${process.getuid?.() ?? 0}` };

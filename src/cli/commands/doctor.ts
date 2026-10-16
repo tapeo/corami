@@ -1,6 +1,8 @@
+import { join } from 'node:path';
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { stringFlag } from '@/cli/parser.ts';
-import { readGlobalConfig } from '@/core/config.ts';
+
+import { projectRoot, readGlobalConfig } from '@/core/config.ts';
 import {
   type CheckResult,
   type CheckStatus,
@@ -10,7 +12,9 @@ import {
   checkTailscale,
 } from '@/core/doctor.ts';
 import { CoramiError } from '@/core/errors.ts';
+import { run as runCommand } from '@/core/exec.ts';
 import { findTool, MUTAGEN } from '@/core/pinned-tools.ts';
+import { canSudo, privilegedGroups } from '@/core/server-user.ts';
 import { daemonServiceActive } from '@/integrations/mutagen.ts';
 import {
   gitWatchSpec,
@@ -19,7 +23,7 @@ import {
   servicePlatform,
 } from '@/integrations/service.ts';
 
-export const DOCTOR_AREAS = ['net', 'tools', 'git'] as const;
+export const DOCTOR_AREAS = ['net', 'tools', 'git', 'server'] as const;
 
 const STATUS_LABEL: Record<CheckStatus, string> = {
   ok: 'ok',
@@ -68,9 +72,96 @@ async function collectChecks(): Promise<CheckResult[]> {
     checkPinnedTools(),
     checkGitService(),
     checkSyncDaemon(),
+    checkServerAccount(),
   ]);
 
   return groups.flat();
+}
+
+// Servers only: the account that owns the projects. Root would work, but a
+// wrong agent or dependency would then take the whole machine, so it is worth
+// a warning rather than nothing.
+async function checkServerAccount(): Promise<CheckResult[]> {
+  const config = await readGlobalConfig().catch(() => undefined);
+
+  if (config?.role !== 'server') {
+    return [];
+  }
+
+  const user = config.server_user;
+
+  if (user === undefined) {
+    return [
+      {
+        area: 'server',
+        id: 'server.account',
+        status: 'warn',
+        summary: 'No account owns the projects: they live in the home of root',
+        detail: 'Run corami setup server --user <account> as root to create one',
+      },
+    ];
+  }
+
+  const [groups, sudo, owner, legacy] = await Promise.all([
+    runCommand('id', ['-nG', user]),
+    runCommand('sudo', ['-n', '-l', '-U', user]),
+    runCommand('stat', ['-c', '%U', projectRoot()]),
+    Bun.file(join('/root', 'corami', 'projects')).exists(),
+  ]);
+  const checks: CheckResult[] = [
+    {
+      area: 'server',
+      id: 'server.account',
+      status: 'ok',
+      summary: `The projects are owned by ${user}`,
+      detail: projectRoot(),
+    },
+  ];
+
+  if (legacy) {
+    checks.push({
+      area: 'server',
+      id: 'server.legacy',
+      status: 'fail',
+      summary: 'Projects of root are still in /root/corami/projects',
+      detail: 'They are not the ones the clients sync',
+      fix: 'Move them to the account of the projects, then remove /root/corami',
+    });
+  }
+
+  if (owner.ok && owner.stdout.trim() !== '' && owner.stdout.trim() !== user) {
+    checks.push({
+      area: 'server',
+      id: 'server.owner',
+      status: 'warn',
+      summary: `Some projects are owned by ${owner.stdout.trim()}, not by ${user}`,
+      fix: `chown -R ${user}:${user} ${projectRoot()}`,
+    });
+  }
+
+  const privileged = privilegedGroups(groups.ok ? groups.stdout : '');
+  const sudoAllowed = sudo.ok && canSudo(sudo.stdout);
+
+  if (privileged.length > 0 || sudoAllowed) {
+    const ways = [...privileged, ...(sudoAllowed ? ['sudo'] : [])].join(', ');
+
+    checks.push({
+      area: 'server',
+      id: 'server.privileges',
+      status: 'warn',
+      summary: `${user} can become root (${ways})`,
+      detail: 'The separation only holds when the account that runs the agents is not privileged',
+    });
+  } else {
+    checks.push({
+      area: 'server',
+      id: 'server.privileges',
+      status: 'ok',
+      summary: `${user} cannot become root`,
+    });
+  }
+
+  return checks;
 }
 
 async function checkGitService(): Promise<CheckResult[]> {

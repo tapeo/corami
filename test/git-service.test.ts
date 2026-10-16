@@ -127,6 +127,14 @@ describe('service files', () => {
     expect(gitWatchSpec('/usr/local/bin/corami').systemdScope).toBeUndefined();
   });
 
+  test('the log of the service goes to the home of the account it runs as', () => {
+    // Installed by root for the account that owns the projects, the path is
+    // the one of the account, not the one of root.
+    expect(gitWatchSpec('/usr/local/bin/corami', 'user', '/home/corami').logFile).toBe(
+      '/home/corami/.corami/logs/git-watch.log',
+    );
+  });
+
   test('the Mutagen daemon runs in the foreground under its service', () => {
     // On Linux the unit runs `mutagen daemon run` and restarts it: the sync
     // sessions come back after a reboot without a mutagen command.

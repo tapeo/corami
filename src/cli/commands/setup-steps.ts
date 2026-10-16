@@ -396,7 +396,7 @@ export async function stepGitWatch(context: StepContext): Promise<StepResult> {
   }
 
   const result = await installService({
-    ...gitWatchSpec(coramiBinary(), scope),
+    ...gitWatchSpec(coramiBinary(), scope, home),
     ...(scope === 'user' && home !== undefined ? { systemdHome: home } : {}),
     ...(scope === 'system' ? { systemdUser: user } : {}),
   });

@@ -161,17 +161,18 @@ export async function runClientSetup(
   };
 }
 
-// The account that owns the projects on the server: the flag, then the one
-// saved by an earlier setup, then the one the daemon announces in its health
-// answer, then root for a server that announces nothing. The SSH of the sync
-// and the step `ssh` use it.
+// The account that owns the projects on the server: `--user`, then the one
+// the daemon announces in its health answer, then the one saved by an earlier
+// setup, then root for a server that announces nothing. The SSH of the sync
+// and the step `ssh` use it; a server whose account changed is followed
+// without running the setup again.
 async function resolveUser(context: ClientContext, flag: string | undefined): Promise<string> {
-  const configured = (await readGlobalConfig().catch(() => undefined))?.server_user;
   const health =
     context.health ?? (await fetchHealth(`https://${context.server}:7420`).catch(() => undefined));
   const announced = typeof health?.user === 'string' ? health.user : undefined;
+  const configured = (await readGlobalConfig().catch(() => undefined))?.server_user;
 
-  return serverUser({ flag, configured, announced }) ?? 'root';
+  return serverUser({ flag, configured: announced ?? configured }) ?? 'root';
 }
 
 // The server already configured comes first, then the machines of the tailnet

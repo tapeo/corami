@@ -33,11 +33,12 @@ The installer downloads the binary to `~/.corami/bin`, checks its sha256, adds t
 
 1. It installs Tailscale if needed and shows a login link: open it and approve the machine. The setup waits for the approval and goes on.
 2. It proposes your Tailscale login as the owner, the only account that can reach the daemon. The daemon answers only to the owner; previews are reachable by everyone in the tailnet, so in a shared tailnet restrict them with an ACL rule.
-3. It offers to close public SSH, keeping only the tailnet. From then on you enter with `ssh root@your-server.<your-tailnet>.ts.net`, or from the provider console. The default is no, and `corami setup server --firewall` does it later.
-4. It publishes the daemon over HTTPS. That needs the HTTPS certificates enabled in the Tailscale admin console, once per tailnet: if they are not, the step fails with the link to that page and offers to try again. Previews need HTTPS because a browser treats plain HTTP on any name that is not `localhost` as insecure, which disables service workers, camera access, geolocation, the clipboard and `crypto.subtle`.
-5. It installs the daemon (`corami-daemon`) and the git alignment service (`corami-git-watch`) as systemd user services, and publishes the daemon at `https://<machine>.<your-tailnet>.ts.net:7420`.
+3. It creates the account `corami`: the projects, the daemon, the git alignment service, the agents and their previews all belong to it. Root stays for the machine. `--user <name>` picks another name.
+4. It offers to close public SSH, keeping only the tailnet. From then on you enter with `ssh corami@your-server.<your-tailnet>.ts.net`, or as root from the provider console. The default is no, and `corami setup server --firewall` does it later.
+5. It publishes the daemon over HTTPS. That needs the HTTPS certificates enabled in the Tailscale admin console, once per tailnet: if they are not, the step fails with the link to that page and offers to try again. Previews need HTTPS because a browser treats plain HTTP on any name that is not `localhost` as insecure, which disables service workers, camera access, geolocation, the clipboard and `crypto.subtle`.
+6. It installs the daemon (`corami-daemon`) and the git alignment service (`corami-git-watch`) as systemd user services of `corami`, and publishes the daemon at `https://<machine>.<your-tailnet>.ts.net:7420`.
 
-From a new shell, check:
+From a new shell, as `corami`, check:
 
 ```bash
 corami doctor          # network, HTTPS, tools, services
@@ -74,7 +75,7 @@ systemctl --user enable --now opencode-serve     # unit you create once, see bel
 tailscale serve --bg --https=4096 http://127.0.0.1:4096
 ```
 
-A minimal unit, in `~/.config/systemd/user/opencode-serve.service`:
+A minimal unit, in `~/.config/systemd/user/opencode-serve.service` (the home of `corami`):
 
 ```ini
 [Unit]
@@ -82,7 +83,7 @@ Description=opencode serve
 After=network-online.target
 
 [Service]
-ExecStart=/root/.opencode/bin/opencode serve --hostname 127.0.0.1 --port 4096
+ExecStart=/home/corami/.opencode/bin/opencode serve --hostname 127.0.0.1 --port 4096
 Environment=OPENCODE_SERVER_PASSWORD=change-me
 Restart=on-failure
 
