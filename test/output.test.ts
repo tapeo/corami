@@ -1,0 +1,72 @@
+import { describe, expect, test } from 'bun:test';
+
+import { failure, renderTable, success } from '@/cli/output.ts';
+import { CoramiError, exitCodeFor, toCoramiError } from '@/core/errors.ts';
+
+describe('envelope', () => {
+  test('wraps successful data', () => {
+    expect(success({ version: '0.0.1' })).toEqual({ ok: true, data: { version: '0.0.1' } });
+  });
+
+  test('carries code, message and fix', () => {
+    const envelope = failure(
+      new CoramiError({
+        code: 'capability_missing',
+        message: 'Command not found: flutter',
+        fix: 'Install flutter on the server',
+      }),
+    );
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe('capability_missing');
+    expect(envelope.error.fix).toBe('Install flutter on the server');
+  });
+});
+
+describe('exit codes', () => {
+  test('maps capability_missing to 3', () => {
+    expect(exitCodeFor('capability_missing')).toBe(3);
+  });
+
+  test('maps sync_conflict to 4', () => {
+    expect(exitCodeFor('sync_conflict')).toBe(4);
+  });
+
+  test('maps server_unreachable to 5', () => {
+    expect(exitCodeFor('server_unreachable')).toBe(5);
+  });
+
+  test('maps usage to 2', () => {
+    expect(exitCodeFor('usage')).toBe(2);
+  });
+});
+
+describe('toCoramiError', () => {
+  test('keeps a CoramiError as is', () => {
+    const error = new CoramiError({ code: 'project_exists', message: 'already there' });
+    expect(toCoramiError(error)).toBe(error);
+  });
+
+  test('wraps a plain error', () => {
+    const wrapped = toCoramiError(new Error('boom'));
+    expect(wrapped.code).toBe('generic');
+    expect(wrapped.message).toBe('boom');
+  });
+});
+
+describe('renderTable', () => {
+  test('aligns columns', () => {
+    const table = renderTable(
+      [
+        { name: 'shop-app', port: 4101 },
+        { name: 'landing', port: 4200 },
+      ],
+      [
+        { header: 'Project', value: (row) => row.name },
+        { header: 'Port', value: (row) => String(row.port) },
+      ],
+    );
+
+    expect(table.split('\n')).toEqual(['Project   Port', 'shop-app  4101', 'landing   4200']);
+  });
+});

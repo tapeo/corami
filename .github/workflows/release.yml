@@ -1,0 +1,60 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.3
+
+      - run: bun install --frozen-lockfile
+      - run: bun run verify
+
+      - name: Build the five binaries
+        run: |
+          mkdir -p dist
+          VERSION="${GITHUB_REF_NAME#v}"
+          DEFINE="process.env.CORAMI_VERSION=\"$VERSION\""
+          bun build src/main.ts --compile --target=bun-linux-x64 --define "$DEFINE" --outfile dist/corami-linux-x64
+          bun build src/main.ts --compile --target=bun-linux-arm64 --define "$DEFINE" --outfile dist/corami-linux-arm64
+          bun build src/main.ts --compile --target=bun-darwin-arm64 --define "$DEFINE" --outfile dist/corami-darwin-arm64
+          bun build src/main.ts --compile --target=bun-darwin-x64 --define "$DEFINE" --outfile dist/corami-darwin-x64
+          bun build src/main.ts --compile --target=bun-windows-x64 --define "$DEFINE" --outfile dist/corami-windows-x64.exe
+
+      - name: Create checksums.txt
+        run: |
+          cd dist
+          sha256sum corami-linux-x64 corami-linux-arm64 corami-darwin-arm64 corami-darwin-x64 corami-windows-x64.exe > checksums.txt
+          cat checksums.txt
+
+      - name: Copy the install scripts
+        run: |
+          cp scripts/install.sh dist/install.sh
+          cp scripts/install.ps1 dist/install.ps1
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: |
+            dist/corami-linux-x64
+            dist/corami-linux-arm64
+            dist/corami-darwin-arm64
+            dist/corami-darwin-x64
+            dist/corami-windows-x64.exe
+            dist/checksums.txt
+            dist/install.sh
+            dist/install.ps1
+          generate_release_notes: true

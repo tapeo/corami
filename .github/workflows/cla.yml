@@ -1,0 +1,23 @@
+name: cla
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  check:
+    if: github.event.pull_request.user.login != github.repository_owner
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that the CLA is accepted
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if printf '%s' "$BODY" | grep -qF 'I have read the Corami CLA and I agree to its terms.'; then
+            echo 'CLA accepted.'
+          else
+            echo '::error::Add "I have read the Corami CLA and I agree to its terms." to the pull request description (see CLA.md).'
+            exit 1
+          fi

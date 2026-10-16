@@ -1,0 +1,29 @@
+{
+  "name": "corami",
+  "version": "0.5.2",
+  "private": true,
+  "homepage": "https://corami.dev",
+  "type": "module",
+  "module": "src/main.ts",
+  "bin": {
+    "corami": "./src/main.ts"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "verify": "bun run lint && bun run typecheck && bun run test",
+    "bin": "bun build src/main.ts --compile --outfile dist/corami",
+    "dev:install": "bun run bin && bun scripts/dev-install.ts",
+    "bin:all": "bun build src/main.ts --compile --target=bun-linux-x64 --outfile dist/corami-linux-x64 && bun build src/main.ts --compile --target=bun-linux-arm64 --outfile dist/corami-linux-arm64 && bun build src/main.ts --compile --target=bun-darwin-arm64 --outfile dist/corami-darwin-arm64 && bun build src/main.ts --compile --target=bun-darwin-x64 --outfile dist/corami-darwin-x64 && bun build src/main.ts --compile --target=bun-windows-x64 --outfile dist/corami-windows-x64.exe"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@types/bun": "^1.3.0",
+    "typescript": "^5.9.0"
+  }
+}

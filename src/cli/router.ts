@@ -1,0 +1,71 @@
+import { type CommandSpec, heading, overview, resolveCommand, usageFor } from '@/cli/command.ts';
+import { emit, type OutputOptions, success } from '@/cli/output.ts';
+import { booleanFlag, type ParsedArgs, parseArgs } from '@/cli/parser.ts';
+import { CoramiError } from '@/core/errors.ts';
+import { VERSION } from '@/version.ts';
+
+export interface RouterOptions {
+  argv: string[];
+  commands: CommandSpec[];
+  output: OutputOptions;
+  valueFlags?: string[];
+}
+
+export async function runRouter(options: RouterOptions): Promise<number> {
+  const args = parseArgs(options.argv, { valueFlags: options.valueFlags ?? [] });
+
+  // Only a bare `--version` is the global flag: a string value, as in
+  // `corami update --version v0.3.0`, belongs to the command.
+  if (args.values.version === true) {
+    emit(success({ name: 'corami', version: VERSION }), options.output);
+    return 0;
+  }
+
+  const command = resolveCommand(options.commands, args.positionals);
+
+  if (command === undefined) {
+    if (!booleanFlag(args, 'help') && args.positionals.length > 0) {
+      throw new CoramiError({
+        code: 'usage',
+        message: `Unknown command: ${args.positionals[0] ?? ''}`,
+        fix: 'Run corami --help to see the available commands',
+      });
+    }
+
+    process.stdout.write(`${heading(`corami ${VERSION}`, options.output.color)}\n`);
+    process.stdout.write(`${overview(options.commands)}\n`);
+    return 0;
+  }
+
+  if (booleanFlag(args, 'help')) {
+    process.stdout.write(`${usageFor(command)}\n`);
+    return 0;
+  }
+
+  const result = await command.run({
+    args: withoutCommand(args, command.name),
+    output: options.output,
+  });
+
+  if (result.data !== undefined) {
+    emit(success(result.data), options.output);
+    return 0;
+  }
+
+  if (result.text !== undefined) {
+    process.stdout.write(`${result.text}\n`);
+  }
+
+  return 0;
+}
+
+function withoutCommand(args: ParsedArgs, name: string): ParsedArgs {
+  const positionals = [...args.positionals];
+  const index = positionals.indexOf(name);
+
+  if (index !== -1) {
+    positionals.splice(index, 1);
+  }
+
+  return { ...args, positionals };
+}
