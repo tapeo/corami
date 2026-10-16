@@ -1,5 +1,4 @@
 import { chmodSync, renameSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 
 import { CoramiError } from '@/core/errors.ts';
 

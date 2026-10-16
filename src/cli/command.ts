@@ -1,7 +1,6 @@
 import { styleText } from 'node:util';
 import type { OutputOptions } from '@/cli/output.ts';
 import type { ParsedArgs } from '@/cli/parser.ts';
-import { CoramiError } from '@/core/errors.ts';
 
 export interface CommandContext {
   args: ParsedArgs;
