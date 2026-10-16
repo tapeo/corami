@@ -32,25 +32,25 @@ export function afterServerSetup(facts: ServerSetupFacts): string[] {
  */
 export function afterClientSetup(projects: string[] | undefined): string[] {
   if (projects === undefined) {
-    return ['corami sync <project> to get the code of a project on this machine'];
+    return ['corami sync add <project> to get the code of a project on this machine'];
   }
 
   if (projects.length === 0) {
     return [
       `Move a project of this machine to the server: ${IMPORT}`,
-      `Or clone one on the server: ${ADD}, then corami sync <name>`,
+      `Or clone one on the server: ${ADD}, then corami sync add <name>`,
     ];
   }
 
-  return projects.map((name) => `corami sync ${name}`);
+  return projects.map((name) => `corami sync add ${name}`);
 }
 
 export function afterProjectAdd(name: string, role: Role | undefined): string[] {
   const preview = `On the server: corami serve <port> from ${serverProjectPath('~', name)} to give a preview an address`;
 
   return role === 'client'
-    ? [`corami sync ${name} to get the code on this machine`, preview]
-    : [`On each client: corami sync ${name}`, preview];
+    ? [`corami sync add ${name} to get the code on this machine`, preview]
+    : [`On each client: corami sync add ${name}`, preview];
 }
 
 export function afterSync(name: string, local: string): string[] {
@@ -74,7 +74,7 @@ export function firstSteps(role: Role | undefined): string[] {
 
   if (role === 'client') {
     return [
-      'corami sync <project> to get the code of a project',
+      'corami sync add <project> to get the code of a project',
       `${IMPORT} to move a project of this machine to the server`,
     ];
   }

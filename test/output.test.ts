@@ -85,12 +85,15 @@ describe('renderSteps', () => {
 
 describe('renderNextSteps', () => {
   test('one step on one line, several as a list, none as nothing', () => {
-    expect(renderNextSteps(['corami sync myapp'])).toEqual(['', 'Next step: corami sync myapp']);
-    expect(renderNextSteps(['corami sync a', 'corami sync b'])).toEqual([
+    expect(renderNextSteps(['corami sync add myapp'])).toEqual([
+      '',
+      'Next step: corami sync add myapp',
+    ]);
+    expect(renderNextSteps(['corami sync add a', 'corami sync add b'])).toEqual([
       '',
       'Next steps:',
-      '  corami sync a',
-      '  corami sync b',
+      '  corami sync add a',
+      '  corami sync add b',
     ]);
     expect(renderNextSteps([])).toEqual([]);
   });

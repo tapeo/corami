@@ -126,6 +126,32 @@ describe('cli', () => {
     expect(parsed.error.fix).toContain('corami project');
   });
 
+  test('asks for the action of sync, and drops the name without one', async () => {
+    const alone = await corami(['sync']);
+    const named = await corami(['sync', 'myapp']);
+    const parsed = JSON.parse(alone.stdout);
+    const namedParsed = JSON.parse(named.stdout);
+
+    expect(alone.exitCode).toBe(2);
+    expect(parsed.error.code).toBe('usage');
+    expect(parsed.error.message).toBe('Missing action for corami sync');
+    expect(parsed.error.fix).toContain('corami sync add');
+    expect(named.exitCode).toBe(2);
+    expect(namedParsed.error.code).toBe('usage');
+    expect(namedParsed.error.message).toBe('Unknown action for corami sync: myapp');
+    expect(namedParsed.error.fix).toContain('corami sync add');
+  });
+
+  test('gives sync add its flags and sync ls none', async () => {
+    const add = JSON.parse((await corami(['sync', 'add', '--help'])).stdout).data;
+    const ls = JSON.parse((await corami(['sync', 'ls', '--help'])).stdout).data;
+
+    expect(add.usage).toStartWith('corami sync add');
+    expect(add.flags.map((flag: { name: string }) => flag.name)).toContain('no-git');
+    expect(ls.usage).toBe('corami sync ls');
+    expect(ls.flags).toEqual([]);
+  });
+
   test('asks for the role when setup is called alone', async () => {
     const result = await corami(['setup']);
     const parsed = JSON.parse(result.stdout);

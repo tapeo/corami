@@ -1,18 +1,19 @@
-import { mkdirSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
+import { dirname, resolve, sep } from 'node:path';
 
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { gitSides } from '@/cli/commands/git.ts';
 import { applyRemoval, planRemoval, resolveLocalPath } from '@/cli/commands/sync-remove.ts';
-import { renderNextSteps } from '@/cli/output.ts';
+import { renderNextSteps, renderTable } from '@/cli/output.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
 import { projectDetail, projectGit, serverUserForSync } from '@/cli/server-client.ts';
-import { homeDirectory, readGlobalConfig, serverProjectPath } from '@/core/config.ts';
+import { readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { type CopyGitResult, giveCopyGit } from '@/core/git.ts';
 import { describeOrigin } from '@/core/git-follow.ts';
 import { lastChange } from '@/core/last-change.ts';
 import { afterSync } from '@/core/next-steps.ts';
+import { isFolderEmpty, localCopyTarget } from '@/core/projects.ts';
 import { CONFLICT_RESOLUTION, conflictCopies } from '@/core/sync-conflicts.ts';
 import { MutagenEngine, type SyncSession } from '@/integrations/mutagen.ts';
 
@@ -62,19 +63,11 @@ async function projectNameOf(explicit?: string): Promise<string> {
     throw new CoramiError({
       code: 'usage',
       message: 'Missing project',
-      fix: 'corami sync <project>, or run it from inside the local copy',
+      fix: 'corami sync add <project>, or run it from inside the local copy',
     });
   }
 
   return found;
-}
-
-function localPathOf(project: string, explicit?: string): string {
-  if (explicit !== undefined) {
-    return resolve(explicit);
-  }
-
-  return join(homeDirectory(), 'corami', project);
 }
 
 export interface CreateSyncOptions {
@@ -99,9 +92,22 @@ export async function createSyncFor(
   });
 
   const existing = await engine.status(options.project);
+  const target = localCopyTarget({
+    session: existing !== undefined,
+    exists: existsSync(options.localPath),
+    empty: isFolderEmpty(options.localPath),
+  });
 
-  if (existing !== undefined) {
+  if (target === 'existing' && existing !== undefined) {
     return { session: existing, local: existing.beta, created: false };
+  }
+
+  if (target === 'not-empty') {
+    throw new CoramiError({
+      code: 'usage',
+      message: `The folder ${options.localPath} exists and is not empty`,
+      fix: `Move that folder away, or create the copy elsewhere: corami sync add ${options.project} --path <folder>`,
+    });
   }
 
   mkdirSync(dirname(options.localPath), { recursive: true });
@@ -128,7 +134,7 @@ export async function createSyncFor(
 
 async function start(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
   const project = await projectNameOf(context.args.positionals[0]);
-  const localPath = localPathOf(project, stringFlag(context.args, 'path'));
+  const localPath = resolveLocalPath(project, stringFlag(context.args, 'path'));
   const explicitUser = stringFlag(context.args, 'user');
 
   if (booleanFlag(context.args, 'dry-run')) {
@@ -171,7 +177,7 @@ async function start(context: CommandContext): Promise<{ data?: unknown; text?: 
 
   if (!result.created && resolve(result.local) !== resolve(localPath)) {
     lines.push(
-      `Requested path: ${localPath}. To move it: corami sync rm ${project}, then corami sync ${project} --path ${localPath}.`,
+      `Requested path: ${localPath}. To move it: corami sync rm ${project}, then corami sync add ${project} --path ${localPath}.`,
     );
   }
 
@@ -188,6 +194,35 @@ async function start(context: CommandContext): Promise<{ data?: unknown; text?: 
   return { text: lines.join('\n') };
 }
 
+// The copies of this machine, read from the sessions of the sync engine: no
+// daemon and no git, so it answers on a machine that is away from the server.
+async function list(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
+  const engine = new MutagenEngine();
+  const copies = (await engine.list())
+    .map((session) => ({
+      project: session.project,
+      local: session.beta,
+      status: session.status,
+    }))
+    .sort((left, right) => left.project.localeCompare(right.project));
+
+  if (context.output.json) {
+    return { data: { copies } };
+  }
+
+  if (copies.length === 0) {
+    return { text: 'No local copies.' };
+  }
+
+  return {
+    text: renderTable(copies, [
+      { header: 'Project', value: (row) => row.project },
+      { header: 'Local', value: (row) => row.local },
+      { header: 'State', value: (row) => row.status },
+    ]),
+  };
+}
+
 // The local copy gets its own `.git`, cloned from the `origin` of the server
 // and on its branch. A copy that already has one is left alone.
 async function copyGit(project: string, local: string): Promise<CopyGitResult> {
@@ -197,7 +232,7 @@ async function copyGit(project: string, local: string): Promise<CopyGitResult> {
     return {
       status: 'failed',
       summary: 'Could not read the git state of the project on the server',
-      detail: `Run corami sync ${project} again to retry`,
+      detail: `Run corami sync add ${project} again to retry`,
     };
   }
 
@@ -206,7 +241,7 @@ async function copyGit(project: string, local: string): Promise<CopyGitResult> {
     return {
       status: 'skipped',
       summary: 'The server did not send the url of origin',
-      detail: `Run corami update on the server, then corami sync ${project} again`,
+      detail: `Run corami update on the server, then corami sync add ${project} again`,
     };
   }
 
@@ -377,7 +412,7 @@ async function rm(context: CommandContext): Promise<{ data?: unknown; text?: str
     text: [
       `Local copy of ${project} removed (${formatBytes(result.freedBytes)}).`,
       'The project on the server, with its git repository, is untouched.',
-      `To get it back: corami sync ${project}`,
+      `To get it back: corami sync add ${project}`,
     ].join('\n'),
   };
 }
@@ -568,21 +603,34 @@ const DRY_RUN_FLAG = { name: 'dry-run', description: 'Show what it would do' };
 export const syncCommand: CommandSpec = {
   name: 'sync',
   summary: 'Synced local copy',
-  usage:
-    'corami sync <project> [--path <folder>] [--server-path <folder>] [--user <user>] [--no-git] [--dry-run]',
-  flags: [
-    { name: 'path', value: 'folder', description: 'Path of the local copy' },
-    { name: 'server-path', value: 'folder', description: 'Path of the project on the server' },
-    {
-      name: 'user',
-      value: 'user',
-      description: 'User on the server, default the one of the configuration',
-    },
-    { name: 'no-git', description: 'Do not give the new local copy its own .git' },
-    DRY_RUN_FLAG,
-  ],
-  examples: ['corami sync myapp', 'corami sync myapp --path ~/code/myapp'],
+  usage: 'corami sync <action> [arguments]',
   actions: [
+    {
+      name: 'add',
+      summary: 'Creates the local copy and starts the session',
+      usage:
+        'corami sync add [<project>] [--path <folder>] [--server-path <folder>] [--user <user>] [--no-git] [--dry-run]',
+      flags: [
+        { name: 'path', value: 'folder', description: 'Path of the local copy' },
+        { name: 'server-path', value: 'folder', description: 'Path of the project on the server' },
+        {
+          name: 'user',
+          value: 'user',
+          description: 'User on the server, default the one of the configuration',
+        },
+        { name: 'no-git', description: 'Do not give the new local copy its own .git' },
+        DRY_RUN_FLAG,
+      ],
+      examples: ['corami sync add myapp', 'corami sync add myapp --path ~/code/myapp'],
+      run: start,
+    },
+    {
+      name: 'ls',
+      summary: 'Lists the local copies of this machine',
+      usage: 'corami sync ls',
+      examples: ['corami sync ls'],
+      run: list,
+    },
     {
       name: 'status',
       summary: 'State, conflicts, last change and git state of the two sides',
@@ -626,5 +674,4 @@ export const syncCommand: CommandSpec = {
       run: prune,
     },
   ],
-  run: start,
 };

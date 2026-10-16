@@ -34,7 +34,10 @@ describe('afterServerSetup', () => {
 
 describe('afterClientSetup', () => {
   test('lists the sync of every project of the server', () => {
-    expect(afterClientSetup(['myapp', 'site'])).toEqual(['corami sync myapp', 'corami sync site']);
+    expect(afterClientSetup(['myapp', 'site'])).toEqual([
+      'corami sync add myapp',
+      'corami sync add site',
+    ]);
   });
 
   test('offers import and add when the server has no project', () => {
@@ -46,7 +49,7 @@ describe('afterClientSetup', () => {
 
   test('falls back to the generic sync when the daemon did not answer', () => {
     expect(afterClientSetup(undefined)).toEqual([
-      'corami sync <project> to get the code of a project on this machine',
+      'corami sync add <project> to get the code of a project on this machine',
     ]);
   });
 });
@@ -55,13 +58,13 @@ describe('afterProjectAdd', () => {
   test('on a client, the copy of this machine comes first', () => {
     const steps = afterProjectAdd('myapp', 'client');
 
-    expect(steps[0]).toBe('corami sync myapp to get the code on this machine');
+    expect(steps[0]).toBe('corami sync add myapp to get the code on this machine');
     expect(steps[1]).toContain('from ~/projects/myapp');
   });
 
   test('on the server, every client takes its copy', () => {
-    expect(afterProjectAdd('myapp', 'server')[0]).toBe('On each client: corami sync myapp');
-    expect(afterProjectAdd('myapp', undefined)[0]).toBe('On each client: corami sync myapp');
+    expect(afterProjectAdd('myapp', 'server')[0]).toBe('On each client: corami sync add myapp');
+    expect(afterProjectAdd('myapp', undefined)[0]).toBe('On each client: corami sync add myapp');
   });
 });
 
@@ -81,6 +84,6 @@ describe('firstSteps', () => {
       'corami setup to make this machine the server or a client',
     ]);
     expect(firstSteps('server')[0]).toContain('corami project add <git-url>');
-    expect(firstSteps('client')[0]).toContain('corami sync <project>');
+    expect(firstSteps('client')[0]).toContain('corami sync add <project>');
   });
 });

@@ -98,7 +98,7 @@ async function watch(context: CommandContext): Promise<{ data?: unknown; text?: 
       throw new CoramiError({
         code: 'usage',
         message: 'No repository to align',
-        fix: 'corami sync <project> to create a local copy',
+        fix: 'corami sync add <project> to create a local copy',
       });
     }
 

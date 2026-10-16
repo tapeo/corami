@@ -1,4 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdirSync } from 'node:fs';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { projectsRootFor, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { PORT_RANGE_START } from '@/core/ports.ts';
@@ -10,7 +15,7 @@ import {
   validatePreviewName,
   validateTargetPort,
 } from '@/core/previews.ts';
-import { serverFolderRemoval } from '@/core/projects.ts';
+import { isFolderEmpty, localCopyTarget, serverFolderRemoval } from '@/core/projects.ts';
 
 describe('allocatePublicPort', () => {
   test('starts at the first port of the range', () => {
@@ -131,6 +136,34 @@ describe('serverFolderRemoval', () => {
   test('keeps a path that is not absolute', () => {
     expect(serverFolderRemoval('projects/myapp', root)).toBe('keep');
     expect(serverFolderRemoval('/home/corami/projects/myapp', 'projects')).toBe('keep');
+  });
+});
+
+describe('isFolderEmpty', () => {
+  test('tells an empty folder from one with something in it', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'corami-empty-'));
+    const sub = join(folder, 'sub');
+
+    expect(isFolderEmpty(folder)).toBe(true);
+    mkdirSync(sub);
+    expect(isFolderEmpty(folder)).toBe(false);
+    expect(isFolderEmpty(sub)).toBe(true);
+    expect(isFolderEmpty(join(folder, 'missing'))).toBe(false);
+  });
+});
+
+describe('localCopyTarget', () => {
+  test('an existing session wins over the folder', () => {
+    expect(localCopyTarget({ session: true, exists: true, empty: false })).toBe('existing');
+  });
+
+  test('creates the copy when the folder is missing or empty', () => {
+    expect(localCopyTarget({ session: false, exists: false, empty: true })).toBe('create');
+    expect(localCopyTarget({ session: false, exists: true, empty: true })).toBe('create');
+  });
+
+  test('leaves a folder with something else in it alone', () => {
+    expect(localCopyTarget({ session: false, exists: true, empty: false })).toBe('not-empty');
   });
 });
 

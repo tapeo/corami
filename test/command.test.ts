@@ -38,7 +38,7 @@ const status: ActionSpec = {
 const spec: CommandSpec = {
   name: 'sync',
   summary: 'Synced local copy',
-  usage: 'corami sync <project>',
+  usage: 'corami sync add <project>',
   flags: [
     { name: 'path', value: 'folder', description: 'Path of the local copy' },
     { name: 'no-git', description: 'Do not give the new local copy its own .git' },

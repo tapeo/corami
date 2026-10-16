@@ -211,7 +211,7 @@ export async function runImport(
         step: 'sync',
         status: 'skipped',
         summary: `A sync session for ${projectName} already exists at ${sync.local}`,
-        detail: `The import keeps working in ${target}. For a copy in another place: corami sync rm ${projectName}, then corami sync ${projectName} --path ${target}`,
+        detail: `The import keeps working in ${target}. For a copy in another place: corami sync rm ${projectName}, then corami sync add ${projectName} --path ${target}`,
       });
     }
   } catch (error) {
