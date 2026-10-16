@@ -6,6 +6,7 @@ import {
   DEFAULT_SERVER_USER,
   isValidServerUser,
   ownerBinary,
+  ownerOfServer,
   privilegedGroups,
   serverUser,
   stepIdentity,
@@ -67,6 +68,16 @@ describe('the account to work with', () => {
 
   test('ignores an empty answer', () => {
     expect(serverUser({ flag: '', configured: '' })).toBeUndefined();
+  });
+});
+
+describe('the account that owns the server', () => {
+  test('is the one of the configuration, never root', () => {
+    expect(ownerOfServer({ role: 'server', server_user: 'corami' })).toBe('corami');
+    expect(ownerOfServer({ role: 'server', server_user: 'root' })).toBeUndefined();
+    expect(ownerOfServer({ role: 'server' })).toBeUndefined();
+    expect(ownerOfServer({ role: 'client', server_user: 'corami' })).toBeUndefined();
+    expect(ownerOfServer(undefined)).toBeUndefined();
   });
 });
 

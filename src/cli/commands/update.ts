@@ -14,9 +14,9 @@ import {
   REPO,
   replaceBinary,
 } from '@/core/release.ts';
-import { ownerBinary } from '@/core/server-user.ts';
+import { ownerBinary, ownerOfServer } from '@/core/server-user.ts';
 import { gitWatchSpec, restartService, serviceActive } from '@/integrations/service.ts';
-import { homeDirectoryForUser, userId } from '@/integrations/systemd.ts';
+import { homeDirectoryForUser, systemctlAsUser, userId } from '@/integrations/systemd.ts';
 import { VERSION } from '@/version.ts';
 
 async function run_(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
@@ -154,15 +154,13 @@ async function copyToOwner(): Promise<boolean> {
 
 /** The account that owns the projects on this server, when one is configured. */
 async function configuredServerUser(): Promise<string | undefined> {
-  const config = await readGlobalConfig().catch(() => undefined);
-  const user = config?.role === 'server' ? config.server_user : undefined;
-
-  return user === undefined || user === 'root' ? undefined : user;
+  return ownerOfServer(await readGlobalConfig().catch(() => undefined));
 }
 
 // The daemon runs as the account that owns the projects: started as root the
 // restart goes through `runuser` with the binary of the account, as the setup
-// does for its steps.
+// does for its steps. Started as the account itself it restarts its own
+// service, because `runuser` may only be used by root.
 async function restartDaemon(): Promise<boolean> {
   const config = await readGlobalConfig().catch(() => undefined);
 
@@ -170,9 +168,9 @@ async function restartDaemon(): Promise<boolean> {
     return false;
   }
 
-  const owner = await configuredServerUser();
+  const owner = ownerOfServer(config);
 
-  if (owner !== undefined) {
+  if (owner !== undefined && owner !== userInfo().username) {
     const home = await homeDirectoryForUser(owner);
 
     if (home === undefined) {
@@ -220,9 +218,23 @@ async function restartDaemon(): Promise<boolean> {
 }
 
 // The git service runs on both roles, so the role is not checked: when the
-// service is there it is restarted; when it is not there is nothing to do.
+// service is there it is restarted; when it is not there is nothing to do. As
+// root on a server whose projects belong to another account, the service is
+// the user unit of that account, and root reaches it through `runuser`.
 async function restartGitWatch(): Promise<boolean> {
   const spec = gitWatchSpec(resolveBinary());
+  const owner = await configuredServerUser();
+
+  if (owner !== undefined && owner !== userInfo().username) {
+    const active = await systemctlAsUser(owner, ['is-active', spec.name]);
+
+    if (active.stdout.trim() !== 'active') {
+      return false;
+    }
+
+    return (await systemctlAsUser(owner, ['restart', spec.name])).ok;
+  }
+
   const active = await serviceActive(spec).catch(() => false);
 
   if (!active) {

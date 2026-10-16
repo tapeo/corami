@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { stringFlag } from '@/cli/parser.ts';
@@ -14,7 +16,7 @@ import {
 import { CoramiError } from '@/core/errors.ts';
 import { run as runCommand } from '@/core/exec.ts';
 import { findTool, MUTAGEN } from '@/core/pinned-tools.ts';
-import { canSudo, privilegedGroups } from '@/core/server-user.ts';
+import { canSudo, ownerOfServer, privilegedGroups } from '@/core/server-user.ts';
 import { daemonServiceActive } from '@/integrations/mutagen.ts';
 import {
   gitWatchSpec,
@@ -22,6 +24,7 @@ import {
   serviceDirHint,
   servicePlatform,
 } from '@/integrations/service.ts';
+import { homeDirectoryForUser, systemctlAsUser } from '@/integrations/systemd.ts';
 
 export const DOCTOR_AREAS = ['net', 'tools', 'git', 'server'] as const;
 
@@ -78,9 +81,29 @@ async function collectChecks(): Promise<CheckResult[]> {
   return groups.flat();
 }
 
+interface ServerAccount {
+  user: string;
+  home: string;
+}
+
+// Servers only, and only when this process is not the account: the home, the
+// projects and the user units of the account are then somewhere else.
+async function serverAccount(): Promise<ServerAccount | undefined> {
+  const config = await readGlobalConfig().catch(() => undefined);
+  const user = ownerOfServer(config);
+
+  if (user === undefined || user === userInfo().username) {
+    return undefined;
+  }
+
+  const home = await homeDirectoryForUser(user);
+  return home === undefined ? undefined : { user, home };
+}
+
 // Servers only: the account that owns the projects. Root would work, but a
 // wrong agent or dependency would then take the whole machine, so it is worth
-// a warning rather than nothing.
+// a warning rather than nothing. The paths are the ones of the account, which
+// are not the ones of the home of this process when doctor runs as root.
 async function checkServerAccount(): Promise<CheckResult[]> {
   const config = await readGlobalConfig().catch(() => undefined);
 
@@ -102,11 +125,13 @@ async function checkServerAccount(): Promise<CheckResult[]> {
     ];
   }
 
-  const [groups, sudo, owner, legacy] = await Promise.all([
+  const home = await homeDirectoryForUser(user);
+  const projects = home === undefined ? projectRoot() : join(home, 'corami', 'projects');
+  const legacy = join('/root', 'corami', 'projects');
+  const [groups, sudo, foreign] = await Promise.all([
     runCommand('id', ['-nG', user]),
     runCommand('sudo', ['-n', '-l', '-U', user]),
-    runCommand('stat', ['-c', '%U', projectRoot()]),
-    Bun.file(join('/root', 'corami', 'projects')).exists(),
+    runCommand('find', [projects, '!', '-user', user, '-print', '-quit']),
   ]);
   const checks: CheckResult[] = [
     {
@@ -114,11 +139,11 @@ async function checkServerAccount(): Promise<CheckResult[]> {
       id: 'server.account',
       status: 'ok',
       summary: `The projects are owned by ${user}`,
-      detail: projectRoot(),
+      detail: projects,
     },
   ];
 
-  if (legacy) {
+  if (existsSync(legacy)) {
     checks.push({
       area: 'server',
       id: 'server.legacy',
@@ -129,13 +154,16 @@ async function checkServerAccount(): Promise<CheckResult[]> {
     });
   }
 
-  if (owner.ok && owner.stdout.trim() !== '' && owner.stdout.trim() !== user) {
+  const foreignEntry = foreign.ok ? foreign.stdout.trim() : '';
+
+  if (foreignEntry !== '') {
     checks.push({
       area: 'server',
       id: 'server.owner',
       status: 'warn',
-      summary: `Some projects are owned by ${owner.stdout.trim()}, not by ${user}`,
-      fix: `chown -R ${user}:${user} ${projectRoot()}`,
+      summary: `Some files in the projects are not owned by ${user}`,
+      detail: foreignEntry,
+      fix: `chown -R ${user}:${user} ${projects}`,
     });
   }
 
@@ -166,7 +194,11 @@ async function checkServerAccount(): Promise<CheckResult[]> {
 
 async function checkGitService(): Promise<CheckResult[]> {
   const spec = gitWatchSpec(process.execPath);
-  const active = await serviceActive(spec).catch(() => false);
+  const account = await serverAccount();
+  const active =
+    account === undefined
+      ? await serviceActive(spec).catch(() => false)
+      : (await systemctlAsUser(account.user, ['is-active', spec.name])).stdout.trim() === 'active';
 
   if (active) {
     return [
@@ -179,13 +211,16 @@ async function checkGitService(): Promise<CheckResult[]> {
     ];
   }
 
+  const dir =
+    account === undefined ? serviceDirHint() : join(account.home, '.config', 'systemd', 'user');
+
   return [
     {
       area: 'git',
       id: 'git.service',
       status: 'warn',
       summary: 'git alignment service not running',
-      detail: `Expected under ${serviceDirHint()} (${servicePlatform()})`,
+      detail: `Expected under ${dir} (${servicePlatform()})`,
       fix: 'corami setup client <server> --step git-watch on a client, corami setup server --step git-watch on the server',
     },
   ];

@@ -146,6 +146,19 @@ export function accountToLeaveTo(options: {
 }
 
 /**
+ * The account that owns the projects of a server, when one is configured:
+ * undefined on a client, on a server that still works as root, and for `root`
+ * itself.
+ */
+export function ownerOfServer(
+  config: { role: string; server_user?: string | undefined } | undefined,
+): string | undefined {
+  const user = config?.role === 'server' ? config.server_user : undefined;
+
+  return user === undefined || user === 'root' ? undefined : user;
+}
+
+/**
  * True when `sudo -l -U <user>` lists at least one command, so the account can
  * use sudo. A denied account prints "not allowed" instead.
  */

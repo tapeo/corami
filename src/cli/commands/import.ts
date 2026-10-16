@@ -157,11 +157,7 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
     ...TAR_EXCLUDES,
     ...secretFiles.map((entry) => `./${entry.path}`),
   ]);
-  const remoteManifestResult = await remoteManifest(
-    host,
-    user,
-    `/root/corami/projects/${projectName}`,
-  );
+  const remoteManifestResult = await remoteManifest(host, user, serverPath);
 
   if (
     remoteManifestResult === undefined ||

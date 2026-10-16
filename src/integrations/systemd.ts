@@ -133,6 +133,35 @@ export async function isUnitActive(
   return result.ok && result.stdout.trim() === 'active';
 }
 
+/**
+ * `systemctl --user` of another account, from a process that cannot run it in
+ * its own name: `runuser` does not set the runtime directory, and that is
+ * where the user manager of the account is found.
+ */
+export async function systemctlAsUser(
+  user: string,
+  args: string[],
+): Promise<{ ok: boolean; stdout: string }> {
+  const uid = await userId(user);
+
+  if (uid === undefined) {
+    return { ok: false, stdout: '' };
+  }
+
+  const result = await run('runuser', [
+    '-u',
+    user,
+    '--',
+    'env',
+    `XDG_RUNTIME_DIR=/run/user/${uid}`,
+    'systemctl',
+    '--user',
+    ...args,
+  ]);
+
+  return { ok: result.ok, stdout: result.stdout };
+}
+
 function unitDir(scope: InstallUnitOptions['scope'], home?: string): string {
   if (scope === 'user') {
     const base = home ?? process.env.HOME ?? '';
