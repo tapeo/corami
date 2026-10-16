@@ -64,13 +64,17 @@ describe('cli', () => {
     expect(parsed.error.message).toContain('source tree');
   });
 
-  test('prints help and lists commands', async () => {
+  test('prints the help as JSON when stdout is not a tty', async () => {
     const result = await corami(['--help']);
+    const parsed = JSON.parse(result.stdout);
+
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('corami');
-    expect(result.stdout).toContain('doctor');
-    expect(result.stdout).toContain('serve');
-    expect(result.stdout).toContain('git');
+    expect(parsed.data.name).toBe('corami');
+    expect(parsed.data.global_flags.map((flag: { name: string }) => flag.name)).toEqual([
+      'json',
+      'help',
+      'version',
+    ]);
   });
 
   test('refuses an unknown flag with a usage error', async () => {
@@ -85,7 +89,22 @@ describe('cli', () => {
   test('prints per command help', async () => {
     const result = await corami(['serve', '--help']);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('corami serve <port>');
+    expect(JSON.parse(result.stdout).data.usage).toContain('corami serve <port>');
+  });
+
+  test('answers corami help like --help', async () => {
+    const asked = await corami(['help', 'sync', 'prune']);
+    const flagged = await corami(['sync', 'prune', '--help']);
+
+    expect(asked.exitCode).toBe(0);
+    expect(asked.stdout).toBe(flagged.stdout);
+    expect(JSON.parse(asked.stdout).data.command).toBe('sync prune');
+  });
+
+  test('refuses the area of doctor as a flag', async () => {
+    const result = await corami(['doctor', '--area', 'net']);
+    expect(result.exitCode).toBe(2);
+    expect(JSON.parse(result.stdout).error.message).toBe('Unknown flag for corami doctor: --area');
   });
 
   test('fails with a usage error on an unknown command', async () => {
@@ -160,19 +179,20 @@ describe('cli', () => {
 
   test('prints the help of an action with its flags only', async () => {
     const result = await corami(['sync', 'prune', '--help']);
+    const help = JSON.parse(result.stdout).data;
+    const flags = help.flags.map((flag: { name: string }) => flag.name);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('Usage: corami sync prune');
-    expect(result.stdout).toContain('--unused <duration>');
-    expect(result.stdout).not.toContain('--path');
+    expect(help.usage).toStartWith('corami sync prune');
+    expect(flags).toContain('unused');
+    expect(flags).not.toContain('path');
   });
 
   test('lists the actions in the help of a command', async () => {
-    const result = await corami(['sync', '--help']);
+    const help = JSON.parse((await corami(['sync', '--help'])).stdout).data;
 
-    expect(result.stdout).toContain('Actions:');
-    expect(result.stdout).toMatch(/^ {2}prune +\S/m);
-    expect(result.stdout).not.toContain('--unused');
+    expect(help.actions.map((action: { name: string }) => action.name)).toContain('prune');
+    expect(help.flags.map((flag: { name: string }) => flag.name)).not.toContain('unused');
   });
 
   test('asks for the action of git', async () => {
@@ -184,15 +204,14 @@ describe('cli', () => {
     expect(parsed.error.fix).toBe('Use corami git watch');
   });
 
-  test('lists every command in the help', async () => {
+  test('lists every command in the help but the daemon', async () => {
     const result = await corami(['--help']);
-    const names = (result.stdout.match(/^ {2}[a-z-]+/gm) ?? []).map((line) => line.trim());
+    const names = JSON.parse(result.stdout).data.commands.map(
+      (command: { name: string }) => command.name,
+    );
 
-    expect(names).toContain('sync');
-    expect(names).toContain('serve');
-    expect(names).not.toContain('build');
-    expect(names).not.toContain('up');
-    expect(names.length).toBeGreaterThanOrEqual(8);
+    expect(names).toEqual(['doctor', 'git', 'project', 'serve', 'setup', 'sync', 'update']);
+    expect((await corami(['daemon', '--help'])).exitCode).toBe(0);
   });
 
   test('reports the daemon as unreachable when there is none', async () => {

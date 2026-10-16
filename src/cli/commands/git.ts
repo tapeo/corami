@@ -222,7 +222,6 @@ export const gitCommand: CommandSpec = {
   name: 'git',
   summary: 'Keeps the two sides of a project aligned with origin',
   usage: 'corami git <action> [arguments]',
-  flags: [{ name: 'json', description: 'JSON output' }],
   actions: [
     {
       name: 'watch',

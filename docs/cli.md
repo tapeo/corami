@@ -1,6 +1,8 @@
 # CLI reference
 
-Commands of v1. They all accept `--json`. Without a TTY the output is JSON by default. A flag the command does not know, or a flag without its value, is a `usage` error. Envelope and exit codes are in `architecture.md`.
+Commands of v1. A command that does several things has actions, as in `corami sync prune`, and each action has its own flags. Every command accepts the global flags `--json`, `--help` and `--version`. Without a TTY the output is JSON by default, the help included. A flag the command or the action does not know, or a flag without its value, is a `usage` error. Envelope and exit codes are in `architecture.md`.
+
+`corami help [command [action]]` is the same as `--help` on the command or the action: `corami help sync prune` shows the flags of `sync prune` only.
 
 ## Index
 
@@ -128,4 +130,31 @@ corami update --check --json
 
 ```json
 { "ok": true, "data": { "current": "0.0.1", "latest": "9.9.9", "update_available": true } }
+```
+
+```bash
+corami help sync prune --json
+```
+
+```json
+{
+  "ok": true,
+  "data": {
+    "command": "sync prune",
+    "summary": "Lists and removes the copies of this client unused for a while",
+    "usage": "corami sync prune --unused <duration> [--dry-run] [--yes]",
+    "actions": [],
+    "flags": [
+      { "name": "unused", "value": "duration", "description": "Only copies idle for longer than, e.g. 30d" },
+      { "name": "dry-run", "description": "Show what it would do" },
+      { "name": "yes", "description": "Confirm the removal" }
+    ],
+    "examples": ["corami sync prune --unused 30d", "corami sync prune --unused 30d --yes"],
+    "global_flags": [
+      { "name": "json", "description": "JSON output, the default without a terminal" },
+      { "name": "help", "description": "This help, also corami help <command> [<action>]" },
+      { "name": "version", "description": "Version of corami" }
+    ]
+  }
+}
 ```

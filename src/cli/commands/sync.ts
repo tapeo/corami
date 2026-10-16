@@ -561,7 +561,6 @@ export const syncCommand: CommandSpec = {
       description: 'User on the server, default the one of the configuration',
     },
     { name: 'no-git', description: 'Do not give the new local copy its own .git' },
-    { name: 'json', description: 'JSON output' },
     DRY_RUN_FLAG,
   ],
   examples: ['corami sync myapp', 'corami sync myapp --path ~/code/myapp'],

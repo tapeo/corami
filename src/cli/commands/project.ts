@@ -166,7 +166,6 @@ export const projectCommand: CommandSpec = {
   name: 'project',
   summary: 'Manages projects',
   usage: 'corami project <action> [arguments]',
-  flags: [{ name: 'json', description: 'JSON output' }],
   actions: [
     {
       name: 'ls',

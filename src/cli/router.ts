@@ -2,8 +2,10 @@ import {
   type CommandSpec,
   checkFlags,
   heading,
+  helpData,
   missingAction,
   overview,
+  overviewData,
   resolveAction,
   resolveCommand,
   usageFor,
@@ -31,29 +33,45 @@ export async function runRouter(options: RouterOptions): Promise<number> {
     return 0;
   }
 
-  const command = resolveCommand(options.commands, args.positionals);
+  // `corami help sync prune` is `corami sync prune --help`.
+  const asked = args.positionals[0] === 'help';
+  const positionals = asked ? args.positionals.slice(1) : args.positionals;
+  const wantsHelp = asked || booleanFlag(args, 'help');
+  const command = resolveCommand(options.commands, positionals);
 
   if (command === undefined) {
-    if (!booleanFlag(args, 'help') && args.positionals.length > 0) {
+    if (positionals.length > 0) {
       throw new CoramiError({
         code: 'usage',
-        message: `Unknown command: ${args.positionals[0] ?? ''}`,
+        message: `Unknown command: ${positionals[0] ?? ''}`,
         fix: 'Run corami --help to see the available commands',
       });
     }
 
+    const data = overviewData(options.commands, VERSION);
+
+    if (options.output.json) {
+      emit(success(data), options.output);
+      return 0;
+    }
+
     process.stdout.write(`${heading(`corami ${VERSION}`, options.output.color)}\n`);
-    process.stdout.write(`${overview(options.commands)}\n`);
+    process.stdout.write(`${overview(data)}\n`);
     return 0;
   }
 
-  const rest = args.positionals.slice(1);
+  const rest = positionals.slice(1);
   const action = resolveAction(command, rest);
   const spec = action ?? command;
   const path = action === undefined ? command.name : `${command.name} ${action.name}`;
 
-  if (booleanFlag(args, 'help')) {
-    process.stdout.write(`${usageFor(spec)}\n`);
+  if (wantsHelp) {
+    if (options.output.json) {
+      emit(success(helpData(spec, path)), options.output);
+      return 0;
+    }
+
+    process.stdout.write(`${usageFor(spec, path)}\n`);
     return 0;
   }
 

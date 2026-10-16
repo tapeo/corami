@@ -2,7 +2,6 @@ import { existsSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
-import { stringFlag } from '@/cli/parser.ts';
 
 import { projectRoot, projectsRootFor, readGlobalConfig } from '@/core/config.ts';
 import {
@@ -36,7 +35,7 @@ const STATUS_LABEL: Record<CheckStatus, string> = {
 };
 
 async function run(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
-  const requested = stringFlag(context.args, 'area') ?? context.args.positionals[0];
+  const requested = context.args.positionals[0];
 
   if (requested !== undefined && !isArea(requested)) {
     throw new CoramiError({
@@ -299,11 +298,7 @@ function render(checks: CheckResult[]): string {
 export const doctorCommand: CommandSpec = {
   name: 'doctor',
   summary: 'Checks network, HTTPS, tools and services',
-  usage: 'corami doctor [area]',
-  flags: [
-    { name: 'json', description: 'JSON output' },
-    { name: 'area', value: 'area', description: `One area only: ${DOCTOR_AREAS.join(', ')}` },
-  ],
+  usage: `corami doctor [${DOCTOR_AREAS.join('|')}]`,
   examples: ['corami doctor', 'corami doctor net'],
   run,
 };

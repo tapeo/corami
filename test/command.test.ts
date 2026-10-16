@@ -5,7 +5,9 @@ import {
   allSpecs,
   type CommandSpec,
   checkFlags,
+  helpData,
   missingAction,
+  overviewData,
   resolveAction,
   usageFor,
 } from '@/cli/command.ts';
@@ -118,7 +120,7 @@ describe('checkFlags', () => {
 
 describe('usageFor', () => {
   test('lists the actions of a command', () => {
-    const text = usageFor(spec);
+    const text = usageFor(spec, 'sync');
     expect(text).toContain('Actions:');
     expect(text).toContain('  prune   Removes the copies idle for a while');
     expect(text).toContain('--path <folder>');
@@ -126,11 +128,42 @@ describe('usageFor', () => {
   });
 
   test('shows the flags of an action only', () => {
-    const text = usageFor(prune);
+    const text = usageFor(prune, 'sync prune');
     expect(text).toContain('Usage: corami sync prune --unused <duration>');
     expect(text).toContain('--unused <duration>');
     expect(text).not.toContain('--path');
     expect(text).not.toContain('Actions:');
+  });
+
+  test('ends with the global flags', () => {
+    const text = usageFor(prune, 'sync prune');
+    expect(text).toContain('Global flags:');
+    expect(text).toMatch(/--json +JSON output/);
+  });
+});
+
+describe('helpData', () => {
+  test('gives the help of an action as data', () => {
+    const help = helpData(prune, 'sync prune');
+    expect(help.command).toBe('sync prune');
+    expect(help.flags.map((flag) => flag.name)).toEqual(['unused', 'yes']);
+    expect(help.actions).toEqual([]);
+    expect(help.global_flags.map((flag) => flag.name)).toEqual(['json', 'help', 'version']);
+  });
+
+  test('names the actions of a command', () => {
+    expect(helpData(spec, 'sync').actions.map((action) => action.name)).toEqual([
+      'status',
+      'prune',
+    ]);
+  });
+});
+
+describe('overviewData', () => {
+  test('leaves the hidden commands out', () => {
+    const hidden: CommandSpec = { ...spec, name: 'daemon', hidden: true };
+    const names = overviewData([spec, hidden], '1.0.0').commands.map((command) => command.name);
+    expect(names).toEqual(['sync']);
   });
 });
 

@@ -252,7 +252,6 @@ export const updateCommand: CommandSpec = {
     { name: 'check', description: 'Only says whether a newer version exists' },
     { name: 'version', value: 'vX.Y.Z', description: 'Install one exact version' },
     { name: 'force', description: 'Reinstall even the same version' },
-    { name: 'json', description: 'JSON output' },
   ],
   examples: ['corami update --check', 'corami update'],
   run: run_,

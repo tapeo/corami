@@ -134,11 +134,7 @@ export const serveCommand: CommandSpec = {
   name: 'serve',
   summary: 'Gives a project port a stable HTTPS address on the tailnet',
   usage: 'corami serve <port> [--name <name>] [--project <project>]',
-  flags: [
-    { name: 'json', description: 'JSON output' },
-    { name: 'name', value: 'name', description: 'Preview name, default web' },
-    PROJECT_FLAG,
-  ],
+  flags: [{ name: 'name', value: 'name', description: 'Preview name, default web' }, PROJECT_FLAG],
   examples: ['corami serve 3000', 'corami serve 4100 --name api'],
   actions: [
     {

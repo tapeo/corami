@@ -398,7 +398,6 @@ export const setupCommand: CommandSpec = {
   name: 'setup',
   summary: 'Installs Corami and its services on the server or on a client',
   usage: 'corami setup [<role>] [options]',
-  flags: [{ name: 'json', description: 'JSON output' }],
   examples: ['corami setup'],
   actions: [
     {

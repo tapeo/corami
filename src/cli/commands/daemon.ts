@@ -45,7 +45,7 @@ export const daemonCommand: CommandSpec = {
   name: 'daemon',
   summary: 'Runs the server service',
   usage: 'corami daemon',
-  flags: [{ name: 'json', description: 'JSON output' }],
+  hidden: true,
   examples: ['corami daemon', 'systemctl --user start corami-daemon'],
   run,
 };

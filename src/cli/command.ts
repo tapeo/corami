@@ -43,6 +43,8 @@ export interface CommandSpec {
   flags?: FlagSpec[];
   examples?: string[];
   actions?: ActionSpec[];
+  /** Left out of the list of commands: an entry point of a service. */
+  hidden?: boolean;
   run?: RunCommand;
 }
 
@@ -95,7 +97,11 @@ export function allSpecs(commands: CommandSpec[]): Array<CommandSpec | ActionSpe
 }
 
 // The flags every command accepts: the router reads them before the command.
-const GLOBAL_FLAGS = ['help', 'version', 'json'];
+export const GLOBAL_FLAGS: FlagSpec[] = [
+  { name: 'json', description: 'JSON output, the default without a terminal' },
+  { name: 'help', description: 'This help, also corami help <command> [<action>]' },
+  { name: 'version', description: 'Version of corami' },
+];
 
 /**
  * Refuses a flag the command or the action does not declare, and a declared
@@ -114,7 +120,7 @@ export function checkFlags(
     const flag = flags.find((item) => item.name === key || item.name === `no-${key}`);
 
     if (flag === undefined) {
-      if (GLOBAL_FLAGS.includes(key)) {
+      if (GLOBAL_FLAGS.some((global) => global.name === key)) {
         continue;
       }
 
@@ -135,54 +141,100 @@ export function checkFlags(
   }
 }
 
-export function usageFor(spec: CommandSpec | ActionSpec): string {
-  const lines = [spec.summary, '', `Usage: ${spec.usage}`];
+export interface HelpData {
+  command: string;
+  summary: string;
+  usage: string;
+  actions: Array<{ name: string; summary: string }>;
+  flags: FlagSpec[];
+  examples: string[];
+  global_flags: FlagSpec[];
+}
+
+/** The help of a command or an action, as data. `path` names it: `sync prune`. */
+export function helpData(spec: CommandSpec | ActionSpec, path: string): HelpData {
   const actions = 'actions' in spec ? (spec.actions ?? []) : [];
 
-  if (actions.length > 0) {
-    const width = Math.max(...actions.map((action) => action.name.length));
-    lines.push('', 'Actions:');
+  return {
+    command: path,
+    summary: spec.summary,
+    usage: spec.usage,
+    actions: actions.map((action) => ({ name: action.name, summary: action.summary })),
+    flags: spec.flags ?? [],
+    examples: spec.examples ?? [],
+    global_flags: GLOBAL_FLAGS,
+  };
+}
 
-    for (const action of actions) {
-      lines.push(`  ${action.name.padEnd(width)}  ${action.summary}`);
-    }
+export function usageFor(spec: CommandSpec | ActionSpec, path: string): string {
+  const help = helpData(spec, path);
+  const lines = [help.summary, '', `Usage: ${help.usage}`];
+
+  if (help.actions.length > 0) {
+    lines.push(
+      '',
+      'Actions:',
+      ...columns(help.actions.map((action) => [action.name, action.summary])),
+    );
   }
 
-  if (spec.flags !== undefined && spec.flags.length > 0) {
-    lines.push('', 'Flags:');
-
-    for (const flag of spec.flags) {
-      const value = flag.value === undefined ? '' : ` <${flag.value}>`;
-      lines.push(`  --${flag.name}${value}  ${flag.description}`);
-    }
+  if (help.flags.length > 0) {
+    lines.push('', 'Flags:', ...flagLines(help.flags));
   }
 
-  if (spec.examples !== undefined && spec.examples.length > 0) {
-    lines.push('', 'Examples:');
-
-    for (const example of spec.examples) {
-      lines.push(`  ${example}`);
-    }
+  if (help.examples.length > 0) {
+    lines.push('', 'Examples:', ...help.examples.map((example) => `  ${example}`));
   }
+
+  lines.push('', 'Global flags:', ...flagLines(help.global_flags));
 
   return lines.join('\n');
 }
 
-export function overview(commands: CommandSpec[]): string {
-  const width = Math.max(...commands.map((command) => command.name.length));
-  const lines = ['Commands:'];
+export interface OverviewData {
+  name: string;
+  version: string;
+  commands: Array<{ name: string; summary: string }>;
+  global_flags: FlagSpec[];
+}
 
-  for (const command of commands) {
-    lines.push(`  ${command.name.padEnd(width)}  ${command.summary}`);
-  }
+export function overviewData(commands: CommandSpec[], version: string): OverviewData {
+  return {
+    name: 'corami',
+    version,
+    commands: commands
+      .filter((command) => command.hidden !== true)
+      .map((command) => ({ name: command.name, summary: command.summary })),
+    global_flags: GLOBAL_FLAGS,
+  };
+}
 
-  lines.push(
+export function overview(data: OverviewData): string {
+  return [
+    'Commands:',
+    ...columns(data.commands.map((command) => [command.name, command.summary])),
     '',
-    'Usage: corami <command> [arguments] [--json]',
-    'Add --help to a command for the details.',
-  );
+    'Global flags:',
+    ...flagLines(data.global_flags),
+    '',
+    'Usage: corami <command> [<action>] [arguments]',
+    'Add --help to a command or an action for the details.',
+  ].join('\n');
+}
 
-  return lines.join('\n');
+function flagLines(flags: FlagSpec[]): string[] {
+  return columns(
+    flags.map((flag) => [
+      `--${flag.name}${flag.value === undefined ? '' : ` <${flag.value}>`}`,
+      flag.description,
+    ]),
+  );
+}
+
+function columns(rows: string[][]): string[] {
+  const width = Math.max(...rows.map(([left = '']) => left.length));
+
+  return rows.map(([left = '', right = '']) => `  ${left.padEnd(width)}  ${right}`);
 }
 
 export function heading(text: string, color: boolean): string {
