@@ -9,7 +9,7 @@ Corami is the host under your agent, not the agent: OpenCode, Claude Code or any
 ## A day with Corami
 
 1. From the laptop you give the agent a task. The agent runs on the server.
-2. You close the lid. The agent keeps working, and every file you saved is already on the server, committed or not.
+2. You close the lid whenever, no commit needed: the files are always in sync, so every save is already on the server. The agent keeps working.
 3. On the phone you open the preview at its HTTPS address and keep talking to the agent.
 4. On another computer, `corami sync add myapp` brings the same files, uncommitted work included.
 
