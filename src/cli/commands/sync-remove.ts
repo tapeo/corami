@@ -42,11 +42,15 @@ export async function planRemoval(options: RemovalOptions): Promise<RemovalPlan>
     const refreshed = (await engine.status(options.project)) ?? session;
 
     if (refreshed.conflicts.length > 0) {
+      const folderGone = refreshed.conflicts.includes('');
+
       checks.push({
         step: 'conflicts',
         status: 'blocked',
-        detail: `${refreshed.conflicts.length} unresolved conflicts`,
-        paths: refreshed.conflicts.slice(0, 20),
+        detail: folderGone
+          ? `${refreshed.conflicts.length} unresolved conflicts, the folder of the project gone on one side`
+          : `${refreshed.conflicts.length} unresolved conflicts`,
+        paths: refreshed.conflicts.filter((path) => path !== '').slice(0, 20),
       });
     } else {
       checks.push({ step: 'conflicts', status: 'ok', detail: 'no conflicts' });
@@ -112,10 +116,16 @@ export async function applyRemoval(
   const blocked = plan.checks.filter((check) => check.status === 'blocked');
 
   if (blocked.length > 0 && !force) {
+    // The folder of the project gone on the server, with the files still here:
+    // the copy is all that is left of it, and the session holds a conflict on
+    // the folder itself. Deleting is not the only way out, `sync stop` keeps it.
+    const folderGone =
+      (plan.session?.conflicts.includes('') ?? false) && existsSync(plan.localPath);
+
     throw new CoramiError({
       code: blocked[0]?.step === 'conflicts' ? 'sync_conflict' : 'local_only_files',
       message: `Cannot remove the local copy of ${plan.project}: ${blocked[0]?.detail ?? ''}`,
-      fix: removalFix(plan.project, blocked[0]?.step),
+      fix: removalFix(plan.project, blocked[0]?.step, folderGone),
       details: { checks: blocked },
     });
   }
@@ -152,12 +162,16 @@ export async function applyRemoval(
   return { removed: true, freedBytes: before };
 }
 
-export function removalFix(project: string, step: string | undefined): string {
-  if (step === 'conflicts') {
-    return `See both copies of each conflict with corami sync status ${project}, then ${CONFLICT_RESOLUTION}`;
+export function removalFix(project: string, step: string | undefined, folderGone = false): string {
+  if (step !== 'conflicts') {
+    return 'Fix the reported items, or pass --force to remove it anyway';
   }
 
-  return 'Fix the reported items, or pass --force to remove it anyway';
+  if (folderGone) {
+    return `The folder of the project is gone on the server: corami sync stop ${project} keeps the files of this copy, corami sync rm ${project} --force removes them`;
+  }
+
+  return `See both copies of each conflict with corami sync status ${project}, then ${CONFLICT_RESOLUTION}`;
 }
 
 export function defaultLocalPath(project: string): string {

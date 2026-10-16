@@ -150,7 +150,7 @@ export function renderNextSteps(steps: string[]): string[] {
 export function renderOrphanCopies(orphans: Array<{ project: string; local: string }>): string[] {
   return orphans.map(
     (orphan) =>
-      `Copy of a removed project: ${orphan.project} at ${orphan.local}, close it with corami sync rm ${orphan.project}.`,
+      `Copy of a removed project: ${orphan.project} at ${orphan.local}. corami sync stop ${orphan.project} stops the sync and keeps the files.`,
   );
 }
 

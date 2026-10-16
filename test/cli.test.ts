@@ -145,11 +145,14 @@ describe('cli', () => {
   test('gives sync add its flags and sync ls none', async () => {
     const add = JSON.parse((await corami(['sync', 'add', '--help'])).stdout).data;
     const ls = JSON.parse((await corami(['sync', 'ls', '--help'])).stdout).data;
+    const stop = JSON.parse((await corami(['sync', 'stop', '--help'])).stdout).data;
 
     expect(add.usage).toStartWith('corami sync add');
     expect(add.flags.map((flag: { name: string }) => flag.name)).toContain('no-git');
     expect(ls.usage).toBe('corami sync ls');
     expect(ls.flags).toEqual([]);
+    expect(stop.usage).toBe('corami sync stop [<project>]');
+    expect(stop.flags).toEqual([]);
   });
 
   test('asks for the role when setup is called alone', async () => {

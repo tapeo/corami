@@ -2,7 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 
 import { removalFix } from '@/cli/commands/sync-remove.ts';
-import { CONFLICT_RESOLUTION, conflictCopies, endpointPath } from '@/core/sync-conflicts.ts';
+import {
+  CONFLICT_RESOLUTION,
+  conflictCopies,
+  conflictFix,
+  conflictLabel,
+  endpointPath,
+} from '@/core/sync-conflicts.ts';
 
 describe('conflict copies', () => {
   test('gives the local and the server path of each conflict', () => {
@@ -30,6 +36,20 @@ describe('conflict copies', () => {
     expect(conflictCopies({ alpha: 'vps:/srv/app', beta: '/tmp/app', conflicts: [] })).toEqual([]);
   });
 
+  test('names the folder itself when the conflict is the root deletion', () => {
+    expect(conflictLabel('')).toBe('the folder of the project itself');
+    expect(conflictLabel('app/page.tsx')).toBe('app/page.tsx');
+  });
+
+  test('gets out of a root deletion without deleting the last copy', () => {
+    const fix = conflictFix('myapp', ['']);
+
+    expect(fix).toContain('corami sync stop myapp');
+    expect(fix).toContain('corami sync rm myapp --force');
+    expect(fix).not.toContain(CONFLICT_RESOLUTION);
+    expect(conflictFix('myapp', ['app/page.tsx'])).toBe(CONFLICT_RESOLUTION);
+  });
+
   test('reads the path of an endpoint with or without a host', () => {
     expect(endpointPath('corami@vps:/home/corami/projects/myapp')).toBe(
       '/home/corami/projects/myapp',
@@ -52,5 +72,13 @@ describe('removal fix', () => {
     expect(removalFix('myapp', 'local_only')).toBe(
       'Fix the reported items, or pass --force to remove it anyway',
     );
+  });
+
+  test('on a copy whose folder is gone, stop keeps it and --force removes it', () => {
+    const fix = removalFix('myapp', 'conflicts', true);
+
+    expect(fix).toContain('corami sync stop myapp');
+    expect(fix).toContain('corami sync rm myapp --force');
+    expect(fix).not.toContain(CONFLICT_RESOLUTION);
   });
 });

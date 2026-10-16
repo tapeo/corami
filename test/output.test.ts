@@ -107,9 +107,9 @@ describe('renderNextSteps', () => {
 });
 
 describe('renderOrphanCopies', () => {
-  test('names the copy and the command that closes it', () => {
+  test('names the copy and the command that stops it', () => {
     expect(renderOrphanCopies([{ project: 'site', local: '/Users/me/corami/site' }])).toEqual([
-      'Copy of a removed project: site at /Users/me/corami/site, close it with corami sync rm site.',
+      'Copy of a removed project: site at /Users/me/corami/site. corami sync stop site stops the sync and keeps the files.',
     ]);
     expect(renderOrphanCopies([])).toEqual([]);
   });

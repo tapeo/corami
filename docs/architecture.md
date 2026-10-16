@@ -339,6 +339,8 @@ Files generated with absolute paths of the machine (`Generated.xcconfig`, `local
 
 `corami sync rm <project>` frees space on a client: it deletes **only** the local copy of that client. Project, git and previews on the server stay untouched. `corami sync add <project>` recreates it at any time.
 
+`corami sync stop <project>` is the other way out: the session of this machine goes, the files stay as a plain folder. It is what a copy whose project is gone from the server needs, because `sync rm` would be deleting the last copy of the work. Mutagen reports the missing folder on one side as a conflict on the root itself, with an empty path, so `sync status` shows it as the folder of the project and no file inside; `project import <folder>` puts that folder back on the server when the name is free.
+
 Sequence, in order:
 
 1. **Flush:** `mutagen sync flush`, so every local change reaches the server.

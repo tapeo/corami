@@ -70,9 +70,9 @@ A role and flags after `--` go to the setup. Without a terminal it installs the 
 | `corami project show <name>` | project detail: path, git, previews |
 | `corami project rm <name> --yes` | removes the project from the server, previews included. Deletes the folder only if Corami created it: one registered with `--path` stays on disk |
 
-`project add <git-url>` on a client creates the copy at `~/corami/<name>` and starts its session. Before registering the project it stops when the folder it runs in is already a clone of the url (`project import` is the command then), when a session of that name is left behind by a project removed elsewhere (close it with `sync rm` first), and when `~/corami/<name>` exists with something else in it (choose another folder with `--path`). A copy that fails, for a missing Mutagen or SSH, does not take the project away: the output says why and `corami sync add <name>` retries it. `--dry-run` shows the plan without touching anything, the server included.
+`project add <git-url>` on a client creates the copy at `~/corami/<name>` and starts its session. Before registering the project it stops when the folder it runs in is already a clone of the url (`project import` is the command then), when a session of that name is left behind by a project removed elsewhere (`sync stop` closes it and keeps the files), and when `~/corami/<name>` exists with something else in it (choose another folder with `--path`). A copy that fails, for a missing Mutagen or SSH, does not take the project away: the output says why and `corami sync add <name>` retries it. `--dry-run` shows the plan without touching anything, the server included.
 
-On a client, `project ls` also reads the sessions of the sync engine and adds a `Local` column, in JSON `local_copy` for every project and `orphan_copies` for the sessions without a project on the server. A Mutagen that does not answer leaves the column empty and the text says it, without failing the command.
+On a client, `project ls` also reads the sessions of the sync engine and adds a `Local` column, in JSON `local_copy` for every project and `orphan_copies` for the sessions without a project on the server, the copies `sync stop` closes. A Mutagen that does not answer leaves the column empty and the text says it, without failing the command.
 
 A name is taken by the `project add` or `project import` that registers it: a second one is refused, and nothing of the project already there is touched.
 
@@ -99,6 +99,7 @@ The public port is stable per preview and comes from the daemon, in the range 41
 | `corami sync status [project]` | client | state, conflicts with their local and server paths, last error, last change and git state of the two sides towards `origin` |
 | `corami sync flush [project]` | client | flushes the session queue |
 | `corami sync rm <project> [--force] [--dry-run]` | client | removes only the local copy, after the checks |
+| `corami sync stop [<project>]` | client | stops the sync of this copy and keeps the files. The way out of a copy whose project is gone from the server, where `sync rm` would be deleting the last copy of the work |
 | `corami sync prune --unused <duration> [--dry-run] [--yes]` | client | lists and removes the unused copies of this client; without `--yes` it touches nothing |
 | `corami git watch [project] [--once]` | all | the alignment cycle in the foreground: it runs as a service on the server and on every client |
 

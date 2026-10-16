@@ -288,7 +288,9 @@ async function applyLocalCopy(
 
   if (plan.decision === 'orphan-session') {
     const local = plan.session?.beta ?? localPath;
-    const fix = `corami sync rm ${project}, then corami sync add ${project}`;
+    // The stale session holds a root deletion: sync rm would block on it.
+    // Stopping is the way through, and the files of the old copy stay.
+    const fix = `corami sync stop ${project}, move ${local} away, then corami sync add ${project}`;
 
     return {
       json: { status: 'orphan-session', local, fix },

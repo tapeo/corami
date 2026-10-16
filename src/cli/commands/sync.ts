@@ -14,7 +14,7 @@ import { describeOrigin } from '@/core/git-follow.ts';
 import { lastChange } from '@/core/last-change.ts';
 import { afterSync } from '@/core/next-steps.ts';
 import { isFolderEmpty, localCopyTarget, withLocalCopies } from '@/core/projects.ts';
-import { CONFLICT_RESOLUTION, conflictCopies } from '@/core/sync-conflicts.ts';
+import { conflictCopies, conflictFix, conflictLabel } from '@/core/sync-conflicts.ts';
 import { MutagenEngine, type SyncSession } from '@/integrations/mutagen.ts';
 
 async function engineAndServer(
@@ -229,7 +229,15 @@ async function start(context: CommandContext): Promise<{ data?: unknown; text?: 
 // daemon and no git, so it answers on a machine that is away from the server.
 async function list(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
   const engine = new MutagenEngine();
-  const copies = (await engine.list())
+  const sessions = await engine.sessions();
+
+  if (sessions === undefined) {
+    return context.output.json
+      ? { data: { copies: [], local_copies: 'unavailable' } }
+      : { text: 'Mutagen did not answer: the local copies of this machine are not shown.' };
+  }
+
+  const copies = sessions
     .map((session) => ({
       project: session.project,
       local: session.beta,
@@ -335,13 +343,13 @@ async function status(context: CommandContext): Promise<{ data?: unknown; text?:
     }
 
     for (const copies of conflictCopies(session)) {
-      lines.push(`  conflict: ${copies.path}`);
+      lines.push(`  conflict: ${conflictLabel(copies.path)}`);
       lines.push(`    local: ${copies.local}`);
       lines.push(`    server: ${copies.server}`);
     }
 
     if (session.conflicts.length > 0) {
-      lines.push(`  to resolve: ${CONFLICT_RESOLUTION}`);
+      lines.push(`  to resolve: ${conflictFix(session.project, session.conflicts)}`);
     }
 
     if (session.lastError !== undefined) {
@@ -436,6 +444,9 @@ async function rm(context: CommandContext): Promise<{ data?: unknown; text?: str
   const localPath = resolveLocalPath(project, stringFlag(context.args, 'path'));
   const dryRun = booleanFlag(context.args, 'dry-run');
   const plan = await planRemoval({ project, localPath });
+  // The folder of the project is gone on the server and the files are still
+  // here: removing them removes the last copy there is.
+  const lastCopy = (plan.session?.conflicts.includes('') ?? false) && existsSync(localPath);
 
   if (dryRun) {
     return context.output.json
@@ -453,11 +464,60 @@ async function rm(context: CommandContext): Promise<{ data?: unknown; text?: str
     return { text: `No local copy to remove at ${localPath}.` };
   }
 
+  if (lastCopy) {
+    return {
+      text: [
+        `Local copy of ${project} removed (${formatBytes(result.freedBytes)}).`,
+        'The folder of the project was already gone on the server: this copy was the last one.',
+      ].join('\n'),
+    };
+  }
+
   return {
     text: [
       `Local copy of ${project} removed (${formatBytes(result.freedBytes)}).`,
       'The project on the server, with its git repository, is untouched.',
       `To get it back: corami sync add ${project}`,
+    ].join('\n'),
+  };
+}
+
+/**
+ * Stops the sync of this machine and keeps the files: the way out of a copy
+ * whose project is gone from the server, where the session holds a root
+ * deletion and `sync rm` would be deleting the last copy of the work.
+ */
+async function stop(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
+  const project = await projectNameOf(context.args.positionals[0]);
+  const { engine } = await engineAndServer();
+  const sessions = await engine.sessions();
+
+  if (sessions === undefined) {
+    throw new CoramiError({
+      code: 'capability_missing',
+      message: 'Mutagen did not answer: no way to tell whether this machine has a session',
+      fix: 'corami doctor checks the sync engine on this machine',
+    });
+  }
+
+  const session = sessions.find((entry) => entry.project === project);
+
+  if (session === undefined) {
+    return context.output.json
+      ? { data: { project, stopped: false } }
+      : { text: `No sync session for ${project} on this machine.` };
+  }
+
+  await engine.terminate(project);
+
+  if (context.output.json) {
+    return { data: { project, local: session.beta, stopped: true } };
+  }
+
+  return {
+    text: [
+      `The sync of ${project} is stopped: the files stay at ${session.beta}.`,
+      `To put that folder on the server again: corami project import ${session.beta}`,
     ].join('\n'),
   };
 }
@@ -701,6 +761,13 @@ export const syncCommand: CommandSpec = {
       ],
       examples: ['corami sync rm myapp', 'corami sync rm myapp --dry-run'],
       run: rm,
+    },
+    {
+      name: 'stop',
+      summary: 'Stops the sync of this copy and keeps the files',
+      usage: 'corami sync stop [<project>]',
+      examples: ['corami sync stop myapp'],
+      run: stop,
     },
     {
       name: 'prune',
