@@ -91,6 +91,13 @@ main() {
 
   # With `curl | sh` stdin is the script itself: the setup reads its answers
   # from the terminal. Without a role it asks which one this machine takes.
+  # The terminal comes from stdout, not /dev/tty: macOS kqueue rejects
+  # /dev/tty with EINVAL, and the setup crashes at the first question.
+  if [ -t 1 ]; then
+    "$PREFIX/corami" setup "$@" <&1
+    return
+  fi
+
   if has_terminal; then
     "$PREFIX/corami" setup "$@" < /dev/tty
     return
