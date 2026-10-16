@@ -153,6 +153,23 @@ export async function listProjects(): Promise<ProjectSummary[]> {
   return data.projects;
 }
 
+/**
+ * Whether the server still has a project with this name, undefined when the
+ * daemon does not answer within a couple of seconds. For the closing line of a
+ * command that works on a local copy: it must not wait on a server that is away.
+ */
+export async function projectOnServer(name: string): Promise<boolean | undefined> {
+  try {
+    const data = await request<{ projects: ProjectSummary[] }>('/v1/projects', {
+      signal: AbortSignal.timeout(2_000),
+    });
+
+    return data.projects.some((project) => project.name === name);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function projectDetail(name: string): Promise<Record<string, unknown>> {
   return request(`/v1/projects/${encodeURIComponent(name)}`);
 }

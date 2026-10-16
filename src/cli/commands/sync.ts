@@ -6,7 +6,13 @@ import { gitSides } from '@/cli/commands/git.ts';
 import { applyRemoval, planRemoval, resolveLocalPath } from '@/cli/commands/sync-remove.ts';
 import { renderNextSteps, renderOrphanCopies, renderTable } from '@/cli/output.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
-import { listProjects, projectDetail, projectGit, serverUserForSync } from '@/cli/server-client.ts';
+import {
+  listProjects,
+  projectDetail,
+  projectGit,
+  projectOnServer,
+  serverUserForSync,
+} from '@/cli/server-client.ts';
 import { readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { type CopyGitResult, giveCopyGit } from '@/core/git.ts';
@@ -469,6 +475,17 @@ async function rm(context: CommandContext): Promise<{ data?: unknown; text?: str
       text: [
         `Local copy of ${project} removed (${formatBytes(result.freedBytes)}).`,
         'The folder of the project was already gone on the server: this copy was the last one.',
+      ].join('\n'),
+    };
+  }
+
+  // Without a session nothing here says whether the project still exists: ask
+  // the daemon, briefly, before promising that it waits on the server.
+  if ((await projectOnServer(project)) === false) {
+    return {
+      text: [
+        `Local copy of ${project} removed (${formatBytes(result.freedBytes)}).`,
+        'The project is not on the server any more: there is nothing to sync it back from.',
       ].join('\n'),
     };
   }
