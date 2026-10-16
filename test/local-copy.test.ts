@@ -146,7 +146,13 @@ describe('mutagen parsing', () => {
       mode: 'two-way-safe',
       alpha: { protocol: 'ssh', user: 'root', host: 'vps', path: '~/projects/next-demo' },
       beta: { protocol: 'local', path: '/Users/me/corami/next-demo' },
-      conflicts: [{ path: 'app/page.tsx' }],
+      conflicts: [
+        {
+          root: 'app/page.tsx',
+          alphaChanges: [{ path: 'app/page.tsx', old: null, new: { kind: 'file' } }],
+          betaChanges: [{ path: 'app/page.tsx', old: null, new: { kind: 'file' } }],
+        },
+      ],
     },
     { name: 'other-session', status: 'watching' },
   ]);

@@ -89,7 +89,7 @@ The public port is stable per preview and comes from the daemon, in the range 41
 | Command | Where | Description |
 |---|---|---|
 | `corami sync <project> [--path <folder>] [--server-path <folder>] [--user <user>] [--no-git] [--dry-run]` | client | creates the local copy, starts the session and gives the copy its own `.git`, cloned from `origin` on the branch of the server; run again, it retries a clone that failed |
-| `corami sync status [project]` | client | state, conflicts, last error, last change and git state of the two sides towards `origin` |
+| `corami sync status [project]` | client | state, conflicts with their local and server paths, last error, last change and git state of the two sides towards `origin` |
 | `corami sync flush [project]` | client | flushes the session queue |
 | `corami sync rm <project> [--force] [--dry-run]` | client | removes only the local copy, after the checks |
 | `corami sync prune --unused <duration> [--dry-run] [--yes]` | client | lists and removes the unused copies of this client; without `--yes` it touches nothing |

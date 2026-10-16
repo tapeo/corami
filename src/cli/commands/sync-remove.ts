@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { homeDirectory } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { directorySize, findLocalOnlyFiles, localGit, rememberRemoval } from '@/core/local-copy.ts';
+import { CONFLICT_RESOLUTION } from '@/core/sync-conflicts.ts';
 import { MutagenEngine, type SyncSession } from '@/integrations/mutagen.ts';
 
 export interface RemovalCheck {
@@ -114,7 +115,7 @@ export async function applyRemoval(
     throw new CoramiError({
       code: blocked[0]?.step === 'conflicts' ? 'sync_conflict' : 'local_only_files',
       message: `Cannot remove the local copy of ${plan.project}: ${blocked[0]?.detail ?? ''}`,
-      fix: 'Fix the reported items, or pass --force to remove it anyway',
+      fix: removalFix(plan.project, blocked[0]?.step),
       details: { checks: blocked },
     });
   }
@@ -149,6 +150,14 @@ export async function applyRemoval(
   });
 
   return { removed: true, freedBytes: before };
+}
+
+export function removalFix(project: string, step: string | undefined): string {
+  if (step === 'conflicts') {
+    return `See both copies of each conflict with corami sync status ${project}, then ${CONFLICT_RESOLUTION}`;
+  }
+
+  return 'Fix the reported items, or pass --force to remove it anyway';
 }
 
 export function defaultLocalPath(project: string): string {

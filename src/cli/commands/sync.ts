@@ -13,6 +13,7 @@ import { type CopyGitResult, giveCopyGit } from '@/core/git.ts';
 import { describeOrigin } from '@/core/git-follow.ts';
 import { lastChange } from '@/core/last-change.ts';
 import { afterSync } from '@/core/next-steps.ts';
+import { CONFLICT_RESOLUTION, conflictCopies } from '@/core/sync-conflicts.ts';
 import { MutagenEngine, type SyncSession } from '@/integrations/mutagen.ts';
 
 async function engineAndServer(
@@ -229,7 +230,12 @@ async function status(context: CommandContext): Promise<{ data?: unknown; text?:
   }));
 
   if (context.output.json) {
-    return { data: { sessions: filled, git, activity } };
+    const described = filled.map((session) => ({
+      ...session,
+      conflicts: conflictCopies(session),
+    }));
+
+    return { data: { sessions: described, git, activity } };
   }
 
   if (filled.length === 0) {
@@ -248,8 +254,14 @@ async function status(context: CommandContext): Promise<{ data?: unknown; text?:
       lines.push(`  last change: ${describeAge(last.last_change)}`);
     }
 
-    for (const conflict of session.conflicts) {
-      lines.push(`  conflict: ${conflict}`);
+    for (const copies of conflictCopies(session)) {
+      lines.push(`  conflict: ${copies.path}`);
+      lines.push(`    local: ${copies.local}`);
+      lines.push(`    server: ${copies.server}`);
+    }
+
+    if (session.conflicts.length > 0) {
+      lines.push(`  to resolve: ${CONFLICT_RESOLUTION}`);
     }
 
     if (session.lastError !== undefined) {

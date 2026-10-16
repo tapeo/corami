@@ -332,7 +332,7 @@ Files generated with absolute paths of the machine (`Generated.xcconfig`, `local
 ### State and conflicts
 
 - `corami sync status --json` reads `mutagen sync list --template '{{ json . }}'` and returns state, last cycle, conflicts and the last change.
-- `corami sync resolve <path> --keep server|local` deletes the file on the losing side, which is the resolution method documented by Mutagen.
+- `corami sync status` shows the local and the server path of each conflict. To resolve one, delete the copy that should lose, on this machine or on the server: Mutagen then syncs the other one to both sides, which is the resolution method documented by Mutagen ([docs](https://mutagen.io/documentation/synchronization/)). No dedicated command: it would only wrap one deletion. The `sync_conflict` error of `sync rm` gives the same fix.
 - Sync hides behind a `SyncEngine` interface, so it can move to Syncthing if needed.
 
 ### Removing the local copy

@@ -1,0 +1,56 @@
+import { describe, expect, test } from 'bun:test';
+import { join } from 'node:path';
+
+import { removalFix } from '@/cli/commands/sync-remove.ts';
+import { CONFLICT_RESOLUTION, conflictCopies, endpointPath } from '@/core/sync-conflicts.ts';
+
+describe('conflict copies', () => {
+  test('gives the local and the server path of each conflict', () => {
+    const copies = conflictCopies({
+      alpha: 'corami@vps:/home/corami/projects/myapp',
+      beta: '/Users/me/corami/myapp',
+      conflicts: ['app/page.tsx', 'docs/notes.md'],
+    });
+
+    expect(copies).toEqual([
+      {
+        path: 'app/page.tsx',
+        local: join('/Users/me/corami/myapp', 'app/page.tsx'),
+        server: '/home/corami/projects/myapp/app/page.tsx',
+      },
+      {
+        path: 'docs/notes.md',
+        local: join('/Users/me/corami/myapp', 'docs/notes.md'),
+        server: '/home/corami/projects/myapp/docs/notes.md',
+      },
+    ]);
+  });
+
+  test('gives nothing without conflicts', () => {
+    expect(conflictCopies({ alpha: 'vps:/srv/app', beta: '/tmp/app', conflicts: [] })).toEqual([]);
+  });
+
+  test('reads the path of an endpoint with or without a host', () => {
+    expect(endpointPath('corami@vps:/home/corami/projects/myapp')).toBe(
+      '/home/corami/projects/myapp',
+    );
+    expect(endpointPath('vps:~/projects/myapp')).toBe('~/projects/myapp');
+    expect(endpointPath('/Users/me/corami/myapp')).toBe('/Users/me/corami/myapp');
+  });
+});
+
+describe('removal fix', () => {
+  test('explains how to resolve conflicts without --force', () => {
+    const fix = removalFix('myapp', 'conflicts');
+
+    expect(fix).toContain('corami sync status myapp');
+    expect(fix).toContain(CONFLICT_RESOLUTION);
+    expect(fix).not.toContain('--force');
+  });
+
+  test('keeps the generic fix for the other checks', () => {
+    expect(removalFix('myapp', 'local_only')).toBe(
+      'Fix the reported items, or pass --force to remove it anyway',
+    );
+  });
+});

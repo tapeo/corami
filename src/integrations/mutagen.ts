@@ -242,8 +242,13 @@ export function collectConflicts(record: Record<string, unknown>): string[] {
     }
 
     if (typeof item === 'object' && item !== null) {
-      const path = (item as Record<string, unknown>).path;
-      return typeof path === 'string' ? path : JSON.stringify(item);
+      const root = (item as Record<string, unknown>).root;
+
+      if (typeof root === 'string') {
+        return root;
+      }
+
+      return JSON.stringify(item);
     }
 
     return String(item);
