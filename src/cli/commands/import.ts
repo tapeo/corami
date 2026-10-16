@@ -5,7 +5,7 @@ import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { createSyncFor } from '@/cli/commands/sync.ts';
 import { renderTable } from '@/cli/output.ts';
 import { booleanFlag, stringFlag, stringListFlag } from '@/cli/parser.ts';
-import { addProject, projectDetail } from '@/cli/server-client.ts';
+import { addProject, projectDetail, serverUserForSync } from '@/cli/server-client.ts';
 import { homeDirectory, readGlobalConfig } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { run } from '@/core/exec.ts';
@@ -41,7 +41,7 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
     });
   }
 
-  const user = stringFlag(context.args, 'user') ?? 'root';
+  const user = stringFlag(context.args, 'user') ?? (await serverUserForSync());
   const projectName = stringFlag(context.args, 'name') ?? basename(target);
   const dryRun = booleanFlag(context.args, 'dry-run');
   const extraIncludes = stringListFlag(context.args, 'include');
@@ -115,7 +115,18 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
     return finish(context, steps, projectName, target, dryRun);
   }
 
-  const home = (await remoteHome(user, host)) ?? '/root';
+  const home = await remoteHome(user, host);
+
+  if (home === undefined) {
+    steps.push({
+      step: 'transfer',
+      status: 'failed',
+      summary: `Cannot read the home directory of ${user} on the server`,
+      detail: 'Check that ssh works, and that the account owns the projects',
+    });
+    return finish(context, steps, projectName, target, dryRun);
+  }
+
   const serverPath = `${home}/corami/projects/${projectName}`;
   const transferred = await transfer(
     target,
@@ -403,7 +414,11 @@ export const importCommand: CommandSpec = {
   usage: 'corami project import [folder] [--name <name>] [--include <glob>] [--dry-run]',
   flags: [
     { name: 'name', value: 'name', description: 'Project name on the server' },
-    { name: 'user', value: 'user', description: 'User on the server, default root' },
+    {
+      name: 'user',
+      value: 'user',
+      description: 'User on the server, default the one of the configuration',
+    },
     { name: 'include', value: 'glob', description: 'Local files to copy, repeatable' },
     { name: 'dry-run', description: 'Show what it would do, without copying anything' },
     { name: 'json', description: 'JSON output' },

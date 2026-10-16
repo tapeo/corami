@@ -117,6 +117,24 @@ export function privilegedGroups(groupNames: string): string[] {
 }
 
 /**
+ * The account a command run as root has to leave to: the one that owns the
+ * projects on this server. Undefined when the command may run where it is.
+ */
+export function accountToLeaveTo(options: {
+  platform: string;
+  user: string;
+  config: { role: string; server_user?: string | undefined } | undefined;
+}): string | undefined {
+  if (options.platform !== 'linux' || options.user !== 'root') {
+    return undefined;
+  }
+
+  const owner = options.config?.role === 'server' ? options.config.server_user : undefined;
+
+  return owner === undefined || owner === options.user ? undefined : owner;
+}
+
+/**
  * True when `sudo -l -U <user>` lists at least one command, so the account can
  * use sudo. A denied account prints "not allowed" instead.
  */

@@ -10,6 +10,9 @@ export interface GlobalConfig {
   role: Role;
   server_host?: string | undefined;
   owner_login?: string | undefined;
+  // On a server, the account that owns the projects and runs the services. On
+  // a client, the account to use on the server for SSH and the sync.
+  server_user?: string | undefined;
 }
 
 export interface CoramiPaths {

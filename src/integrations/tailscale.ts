@@ -117,6 +117,17 @@ export async function up(options: { hostname?: string; ssh?: boolean } = {}): Pr
   await run('tailscale', args);
 }
 
+/** Makes `user` the operator of this node, so that it can run `tailscale serve`. */
+export async function setOperator(user: string): Promise<{ ok: boolean; detail: string }> {
+  const result = await run('tailscale', ['set', `--operator=${user}`]);
+  const output = `${result.stderr}${result.stdout}`.trim();
+
+  return {
+    ok: result.ok,
+    detail: output.split('\n').slice(0, 3).join(' '),
+  };
+}
+
 export interface ServeRule {
   port: number;
   target: string;

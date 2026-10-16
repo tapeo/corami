@@ -15,6 +15,9 @@ async function run(context: CommandContext): Promise<{ data?: unknown; text?: st
     port: PORT,
     ownerLogin: config?.owner_login,
     fqdn: config?.server_host,
+    // The account the daemon runs as is the one that owns the projects: the
+    // clients read it here instead of being told.
+    user: config?.server_user,
   });
 
   if (!context.output.json) {

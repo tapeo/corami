@@ -136,6 +136,23 @@ export async function health(): Promise<Record<string, unknown>> {
   return request('/v1/health');
 }
 
+/**
+ * The account that owns the projects on the server, for the SSH of the sync
+ * and of the import: the one saved at the setup, then the one the daemon
+ * announces, then root for a server that announces nothing.
+ */
+export async function serverUserForSync(): Promise<string> {
+  const config = await readGlobalConfig().catch(() => undefined);
+
+  if (config?.server_user !== undefined) {
+    return config.server_user;
+  }
+
+  const announced = (await health().catch(() => undefined))?.user;
+
+  return typeof announced === 'string' && announced !== '' ? announced : 'root';
+}
+
 export async function listProjects(): Promise<ProjectSummary[]> {
   const data = await request<{ projects: ProjectSummary[] }>('/v1/projects');
   return data.projects;

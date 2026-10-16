@@ -32,11 +32,11 @@ async function tailscaleStatus(): Promise<TailscaleStatus> {
 export interface StepContext {
   root: boolean;
   hostname: string;
+  serverUser: string;
   daemonScope?: 'user' | 'system' | undefined;
   fqdn?: string | undefined;
   authKey?: string | undefined;
   ownerLogin?: string | undefined;
-  coramiUser?: string | undefined;
   dryRun: boolean;
 }
 
@@ -332,7 +332,7 @@ export async function stepDaemon(context: StepContext): Promise<StepResult> {
     };
   }
 
-  const user = context.coramiUser ?? 'root';
+  const user = context.serverUser;
   const lingerWorks = await enableLinger(user);
   const scope = lingerWorks ? 'user' : 'system';
   const binary = coramiBinary();
@@ -382,7 +382,7 @@ export async function stepGitWatch(context: StepContext): Promise<StepResult> {
     };
   }
 
-  const user = context.coramiUser ?? 'root';
+  const user = context.serverUser;
   const scope = context.daemonScope ?? ((await enableLinger(user)) ? 'user' : 'system');
   const home = await homeDirectoryForUser(user);
 
@@ -473,6 +473,10 @@ async function writeConfig(context: StepContext): Promise<void> {
 
   if (ownerLogin !== undefined) {
     config.owner_login = ownerLogin;
+  }
+
+  if (!context.root) {
+    config.server_user = context.serverUser;
   }
 
   await writeGlobalConfig(config);

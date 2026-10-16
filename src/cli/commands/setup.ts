@@ -1,5 +1,6 @@
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { CLIENT_STEPS, runClientSetup } from '@/cli/commands/setup-client.ts';
+import { runStepAsOwner, stepServerUser } from '@/cli/commands/setup-server-user.ts';
 import {
   firewallClosed,
   isRoot,
@@ -21,8 +22,14 @@ import {
 import { renderTable } from '@/cli/output.ts';
 import { booleanFlag, stringFlag } from '@/cli/parser.ts';
 import { canPrompt, type Prompter, terminalPrompter } from '@/cli/prompt.ts';
-import { readGlobalConfig } from '@/core/config.ts';
+import { readGlobalConfig, writeGlobalConfig } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
+import {
+  DEFAULT_SERVER_USER,
+  isValidServerUser,
+  type ServerStep,
+  stepIdentity,
+} from '@/core/server-user.ts';
 import { defaultRole, proposedOwner, roleChoices } from '@/core/setup-choices.ts';
 
 const STEP_KINDS = [
@@ -30,6 +37,7 @@ const STEP_KINDS = [
   'packages',
   'tailscale',
   'hosts',
+  'user',
   'firewall',
   'daemon',
   'git-watch',
@@ -37,7 +45,7 @@ const STEP_KINDS = [
   'summary',
 ] as const;
 
-type StepKind = (typeof STEP_KINDS)[number];
+type StepKind = ServerStep;
 
 // What each step is doing, shown in a terminal while it runs.
 const STEP_ACTIVITIES: Record<StepKind, string> = {
@@ -45,6 +53,7 @@ const STEP_ACTIVITIES: Record<StepKind, string> = {
   packages: 'Checking and installing packages',
   tailscale: 'Installing and connecting Tailscale',
   hosts: 'Checking /etc/hosts',
+  user: 'Preparing the account that owns the projects',
   firewall: 'Configuring the firewall',
   daemon: 'Installing and restarting the daemon',
   'git-watch': 'Restarting the git alignment service',
@@ -59,6 +68,7 @@ const STEP_RUNNERS: Record<StepKind, (context: StepContext) => Promise<StepResul
   packages: stepPackages,
   tailscale: stepTailscale,
   hosts: stepHostsEntry,
+  user: stepServerUser,
   firewall: stepFirewall,
   daemon: stepDaemon,
   'git-watch': stepGitWatch,
@@ -127,7 +137,11 @@ async function run(context: CommandContext): Promise<{ data?: unknown; text?: st
       continue;
     }
 
-    const runStep = () => STEP_RUNNERS[kind](stepContext);
+    // The steps of the account are handed to it: run as root they would leave
+    // their files and their services in the home of root.
+    const handoff = base.root && stepIdentity(kind) === 'owner';
+    const runStep = () =>
+      handoff ? runStepAsOwner(stepContext, kind) : STEP_RUNNERS[kind](stepContext);
     let result =
       prompter === undefined || kind === 'preflight' || kind === 'summary'
         ? await runStep()
@@ -273,7 +287,7 @@ async function offerFirewall(prompter: Prompter, context: StepContext): Promise<
 
   prompter.say('');
   prompter.say(
-    `Public SSH can be closed: you would enter with ssh ${context.coramiUser ?? 'root'}@${address}, or from the provider console.`,
+    `Public SSH can be closed: you would enter with ssh ${context.serverUser}@${address}, or from the provider console.`,
   );
 
   return prompter.confirm('Close public SSH and keep only the tailnet?', false);
@@ -281,16 +295,45 @@ async function offerFirewall(prompter: Prompter, context: StepContext): Promise<
 
 async function buildStepContext(context: CommandContext, dryRun: boolean): Promise<StepContext> {
   const existing = await readGlobalConfig().catch(() => undefined);
+  const serverUser = resolveServerUser(context, existing?.server_user);
 
-  return {
+  const built: StepContext = {
     root: isRoot(),
     hostname: stringFlag(context.args, 'hostname') ?? 'corami',
+    serverUser,
     fqdn: stringFlag(context.args, 'fqdn') ?? existing?.server_host,
     ownerLogin: stringFlag(context.args, 'owner') ?? existing?.owner_login,
     authKey: stringFlag(context.args, 'auth-key') ?? process.env.CORAMI_TAILSCALE_AUTHKEY,
-    coramiUser: stringFlag(context.args, 'user'),
     dryRun,
   };
+
+  // Root keeps in its own configuration the account that owns the projects,
+  // so that every later command run as root knows where they belong.
+  if (!dryRun && built.root && serverUser !== existing?.server_user) {
+    await writeGlobalConfig({
+      role: 'server',
+      server_user: serverUser,
+      ...(built.fqdn === undefined ? {} : { server_host: built.fqdn }),
+      ...(built.ownerLogin === undefined ? {} : { owner_login: built.ownerLogin }),
+    });
+  }
+
+  return built;
+}
+
+/** The account that owns the projects: `--user`, then the one saved before. */
+function resolveServerUser(context: CommandContext, configured: string | undefined): string {
+  const user = stringFlag(context.args, 'user') ?? configured ?? DEFAULT_SERVER_USER;
+
+  if (!isValidServerUser(user)) {
+    throw new CoramiError({
+      code: 'usage',
+      message: `"${user}" cannot be the name of the account that owns the projects`,
+      fix: 'A lowercase name of letters, digits, underscores and hyphens, at most 32 characters',
+    });
+  }
+
+  return user;
 }
 
 async function withUpdatedContext(context: StepContext, result: StepResult): Promise<StepContext> {

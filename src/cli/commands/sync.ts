@@ -5,7 +5,7 @@ import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { gitSides } from '@/cli/commands/git.ts';
 import { applyRemoval, planRemoval, resolveLocalPath } from '@/cli/commands/sync-remove.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
-import { projectDetail, projectGit } from '@/cli/server-client.ts';
+import { projectDetail, projectGit, serverUserForSync } from '@/cli/server-client.ts';
 import { homeDirectory, readGlobalConfig } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { type CopyGitResult, giveCopyGit } from '@/core/git.ts';
@@ -25,7 +25,7 @@ async function engineAndServer(): Promise<{ engine: MutagenEngine; host: string;
     });
   }
 
-  const user = process.env.CORAMI_SERVER_USER ?? 'root';
+  const user = await serverUserForSync();
 
   return { engine: new MutagenEngine(), host, user };
 }

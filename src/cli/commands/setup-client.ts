@@ -9,6 +9,7 @@ import { homeDirectory, readGlobalConfig, writeGlobalConfig } from '@/core/confi
 import { CoramiError } from '@/core/errors.ts';
 import { run } from '@/core/exec.ts';
 import { ensureTool, findTool, MUTAGEN } from '@/core/pinned-tools.ts';
+import { serverUser } from '@/core/server-user.ts';
 import { serverCandidates } from '@/core/setup-choices.ts';
 import { installDaemonService } from '@/integrations/mutagen.ts';
 import { gitWatchSpec, installService } from '@/integrations/service.ts';
@@ -28,14 +29,19 @@ type ClientStep = (typeof CLIENT_STEPS)[number];
 
 interface ClientContext {
   server: string;
-  user: string;
+  /** The account that owns the projects on the server, resolved along the way. */
+  user?: string | undefined;
   dryRun: boolean;
   skipMutagen: boolean;
   health?: Record<string, unknown> | undefined;
 }
 
 export const CLIENT_FLAGS: FlagSpec[] = [
-  { name: 'user', value: 'user', description: 'User on the server, default root' },
+  {
+    name: 'user',
+    value: 'user',
+    description: 'User on the server, default the one the server announces',
+  },
   { name: 'no-mutagen', description: 'Do not install Mutagen and its daemon service' },
   { name: 'step', value: 'step', description: `Runs a single step: ${CLIENT_STEPS.join(', ')}` },
   { name: 'dry-run', description: 'Check without installing or writing anything' },
@@ -95,10 +101,14 @@ export async function runClientSetup(
 
   const clientContext: ClientContext = {
     server: given ?? '',
-    user: stringFlag(context.args, 'user') ?? 'root',
     dryRun: booleanFlag(context.args, 'dry-run'),
     skipMutagen: negatedFlag(context.args, 'mutagen'),
   };
+
+  if (given !== undefined) {
+    clientContext.user = await resolveUser(clientContext, stringFlag(context.args, 'user'));
+  }
+
   const steps: StepResult[] = [];
   const runStep = (kind: ClientStep) => {
     const step = () => STEP_RUNNERS[kind](clientContext);
@@ -117,6 +127,7 @@ export async function runClientSetup(
     }
 
     clientContext.server = await chooseServer(prompter);
+    clientContext.user = await resolveUser(clientContext, stringFlag(context.args, 'user'));
   }
 
   for (const kind of planned) {
@@ -148,6 +159,19 @@ export async function runClientSetup(
   return {
     text: render(steps, clientContext.dryRun || only !== undefined, prompter === undefined),
   };
+}
+
+// The account that owns the projects on the server: the flag, then the one
+// saved by an earlier setup, then the one the daemon announces in its health
+// answer, then root for a server that announces nothing. The SSH of the sync
+// and the step `ssh` use it.
+async function resolveUser(context: ClientContext, flag: string | undefined): Promise<string> {
+  const configured = (await readGlobalConfig().catch(() => undefined))?.server_user;
+  const health =
+    context.health ?? (await fetchHealth(`https://${context.server}:7420`).catch(() => undefined));
+  const announced = typeof health?.user === 'string' ? health.user : undefined;
+
+  return serverUser({ flag, configured, announced }) ?? 'root';
 }
 
 // The server already configured comes first, then the machines of the tailnet
@@ -256,7 +280,8 @@ async function stepDaemon(context: ClientContext): Promise<StepResult> {
 }
 
 async function stepSsh(context: ClientContext): Promise<StepResult> {
-  const target = `${context.user}@${context.server}`;
+  const user = context.user ?? 'root';
+  const target = `${user}@${context.server}`;
   const ssh = await run('ssh', [
     '-o',
     'BatchMode=yes',
@@ -277,7 +302,7 @@ async function stepSsh(context: ClientContext): Promise<StepResult> {
     };
   }
 
-  return { step: 'ssh', status: 'done', summary: `SSH over Tailscale works as ${context.user}` };
+  return { step: 'ssh', status: 'done', summary: `SSH over Tailscale works as ${user}` };
 }
 
 async function stepMutagen(context: ClientContext): Promise<StepResult> {
@@ -353,6 +378,7 @@ async function stepConfig(context: ClientContext): Promise<StepResult> {
     ...(existing ?? { role: 'client' }),
     role: 'client',
     server_host: context.server,
+    ...(context.user === undefined ? {} : { server_user: context.user }),
     ...(typeof health?.owner_login === 'string' ? { owner_login: health.owner_login } : {}),
   });
 

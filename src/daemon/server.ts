@@ -9,6 +9,8 @@ export interface DaemonOptions {
   port: number;
   ownerLogin?: string | undefined;
   fqdn?: string | undefined;
+  /** The account that owns the projects on this server. */
+  user?: string | undefined;
 }
 
 export interface DaemonHandle {
@@ -105,6 +107,7 @@ async function healthData(options: DaemonOptions, startedAt: number) {
     version: VERSION,
     hostname: options.hostname,
     port: options.port,
+    user: options.user,
     fqdn: options.fqdn ?? ts?.dnsName,
     tailscale: {
       installed: ts?.installed ?? false,

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  accountToLeaveTo,
   canSudo,
   DEFAULT_SERVER_USER,
   isValidServerUser,
@@ -81,5 +82,27 @@ describe('privileges of the owner account', () => {
     expect(canSudo(allowed)).toBe(true);
     expect(canSudo('User corami is not allowed to run sudo on corami.')).toBe(false);
     expect(canSudo('')).toBe(false);
+  });
+});
+
+describe('commands that have to leave root', () => {
+  const server = { role: 'server', server_user: 'corami' };
+
+  test('leaves the commands of a server to the account that owns the projects', () => {
+    expect(accountToLeaveTo({ platform: 'linux', user: 'root', config: server })).toBe('corami');
+  });
+
+  test('stays put when there is nothing to hand over', () => {
+    expect(
+      accountToLeaveTo({ platform: 'linux', user: 'root', config: undefined }),
+    ).toBeUndefined();
+    expect(
+      accountToLeaveTo({ platform: 'linux', user: 'root', config: { role: 'client' } }),
+    ).toBeUndefined();
+    expect(
+      accountToLeaveTo({ platform: 'linux', user: 'root', config: { role: 'server' } }),
+    ).toBeUndefined();
+    expect(accountToLeaveTo({ platform: 'linux', user: 'corami', config: server })).toBeUndefined();
+    expect(accountToLeaveTo({ platform: 'darwin', user: 'root', config: server })).toBeUndefined();
   });
 });
