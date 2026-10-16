@@ -73,6 +73,15 @@ describe('cli', () => {
     expect(result.stdout).toContain('git');
   });
 
+  test('refuses an unknown flag with a usage error', async () => {
+    const result = await corami(['doctor', '--areaa', 'net']);
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.exitCode).toBe(2);
+    expect(parsed.error.code).toBe('usage');
+    expect(parsed.error.message).toContain('--areaa');
+  });
+
   test('prints per command help', async () => {
     const result = await corami(['serve', '--help']);
     expect(result.exitCode).toBe(0);

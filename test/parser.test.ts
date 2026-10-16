@@ -40,6 +40,18 @@ describe('parseArgs', () => {
     expect(booleanFlag(args, 'yes')).toBe(true);
   });
 
+  test('gives a short flag its value when the long one takes it', () => {
+    const args = parseArgs(['sync', '-p', '/tmp/x'], { valueFlags: ['path'] });
+    expect(stringFlag(args, 'path')).toBe('/tmp/x');
+    expect(args.positionals).toEqual(['sync']);
+  });
+
+  test('gives the value to the last letter of a group of short flags', () => {
+    const args = parseArgs(['-yp', '/tmp/x'], { valueFlags: ['path'] });
+    expect(booleanFlag(args, 'yes')).toBe(true);
+    expect(stringFlag(args, 'path')).toBe('/tmp/x');
+  });
+
   test('collects repeated flags', () => {
     const args = parseArgs(['--include', 'a', '--include', 'b'], { valueFlags: ['include'] });
     expect(stringListFlag(args, 'include')).toEqual(['a', 'b']);

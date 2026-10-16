@@ -1,4 +1,4 @@
-import type { CommandContext, CommandSpec } from '@/cli/command.ts';
+import type { CommandContext } from '@/cli/command.ts';
 import { renderTable } from '@/cli/output.ts';
 import { booleanFlag, stringFlag } from '@/cli/parser.ts';
 import { CoramiError } from '@/core/errors.ts';
@@ -21,7 +21,9 @@ interface GitStepResult {
   detail?: string | undefined;
 }
 
-async function execute(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
+export async function runGitSetup(
+  context: CommandContext,
+): Promise<{ data?: unknown; text?: string }> {
   const providerId = stringFlag(context.args, 'provider') ?? 'github';
   const provider = PROVIDERS[providerId];
 
@@ -51,7 +53,7 @@ async function execute(context: CommandContext): Promise<{ data?: unknown; text?
   await generateKey('corami');
   results.push({
     step: 'key',
-    status: existed ? 'done' : 'done',
+    status: 'done',
     summary: existed ? 'Key already present' : 'Key created',
     detail: publicKeyPath(),
   });
@@ -140,18 +142,3 @@ function output(
 
   return { text: lines.join('\n') };
 }
-
-export const setupGitCommand: CommandSpec = {
-  name: 'setup-git',
-  summary: 'Configures git and the SSH key of the server',
-  usage: 'corami setup git [--provider <github|gitlab|bitbucket>]',
-  flags: [
-    { name: 'provider', value: 'name', description: 'Provider: github, gitlab, bitbucket' },
-    { name: 'identity-name', value: 'name', description: 'Name for the commits' },
-    { name: 'identity-email', value: 'email', description: 'Email for the commits' },
-    { name: 'dry-run', description: 'Show what it would do' },
-    { name: 'json', description: 'JSON output' },
-  ],
-  examples: ['corami setup git', 'corami setup git --provider gitlab'],
-  run: execute,
-};

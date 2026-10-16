@@ -1,5 +1,6 @@
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { CLIENT_STEPS, runClientSetup } from '@/cli/commands/setup-client.ts';
+import { runGitSetup } from '@/cli/commands/setup-git.ts';
 import { runStepAsOwner, stepServerUser } from '@/cli/commands/setup-server-user.ts';
 import {
   firewallClosed,
@@ -31,6 +32,7 @@ import {
   stepIdentity,
 } from '@/core/server-user.ts';
 import { defaultRole, proposedOwner, roleChoices } from '@/core/setup-choices.ts';
+import { PROVIDERS } from '@/integrations/ssh.ts';
 
 const STEP_KINDS = [
   'preflight',
@@ -83,8 +85,7 @@ async function run(context: CommandContext): Promise<{ data?: unknown; text?: st
     (prompter === undefined ? undefined : await chooseRole(prompter));
 
   if (target === 'git') {
-    const { setupGitCommand } = await import('@/cli/commands/setup-git.ts');
-    return setupGitCommand.run({
+    return runGitSetup({
       ...context,
       args: { ...context.args, positionals: context.args.positionals.slice(1) },
     });
@@ -412,7 +413,7 @@ export const setupCommand: CommandSpec = {
     {
       name: 'user',
       value: 'user',
-      description: 'Server: user that runs the daemon. Client: user on the server. Default root',
+      description: `Server: account that owns the projects, default ${DEFAULT_SERVER_USER}. Client: account on the server, default the one the daemon announces`,
     },
     {
       name: 'step',
@@ -421,6 +422,13 @@ export const setupCommand: CommandSpec = {
     },
     { name: 'firewall', description: 'Server: closes public SSH, enter with Tailscale SSH' },
     { name: 'no-mutagen', description: 'Client: do not install Mutagen and its daemon service' },
+    {
+      name: 'provider',
+      value: 'name',
+      description: `Git: provider, default github. One of ${Object.keys(PROVIDERS).join(', ')}`,
+    },
+    { name: 'identity-name', value: 'name', description: 'Git: name for the commits' },
+    { name: 'identity-email', value: 'email', description: 'Git: email for the commits' },
     { name: 'dry-run', description: 'Show what it would do' },
     { name: 'json', description: 'JSON output' },
   ],
@@ -431,6 +439,7 @@ export const setupCommand: CommandSpec = {
     'corami setup server --step daemon',
     'corami setup client corami.tail1a2b3c.ts.net',
     'corami setup client corami.tail1a2b3c.ts.net --step mutagen-daemon',
+    'corami setup git --provider gitlab',
   ],
   run,
 };

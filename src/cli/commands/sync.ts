@@ -13,7 +13,9 @@ import { describeOrigin } from '@/core/git-follow.ts';
 import { lastChange } from '@/core/last-change.ts';
 import { MutagenEngine, type SyncSession } from '@/integrations/mutagen.ts';
 
-async function engineAndServer(): Promise<{ engine: MutagenEngine; host: string; user: string }> {
+async function engineAndServer(
+  explicitUser?: string,
+): Promise<{ engine: MutagenEngine; host: string; user: string }> {
   const config = await readGlobalConfig();
   const host = config?.server_host;
 
@@ -25,7 +27,7 @@ async function engineAndServer(): Promise<{ engine: MutagenEngine; host: string;
     });
   }
 
-  const user = await serverUserForSync();
+  const user = explicitUser ?? (await serverUserForSync());
 
   return { engine: new MutagenEngine(), host, user };
 }
@@ -76,12 +78,14 @@ export interface CreateSyncOptions {
   project: string;
   localPath: string;
   serverPath?: string | undefined;
+  /** The account on the server, `--user`: default the one of the configuration. */
+  user?: string | undefined;
 }
 
 export async function createSyncFor(
   options: CreateSyncOptions,
 ): Promise<{ session: SyncSession | undefined; local: string; created: boolean }> {
-  const { engine, host, user } = await engineAndServer();
+  const { engine, host, user } = await engineAndServer(options.user);
 
   const detail = await projectDetail(options.project).catch(() => {
     throw new CoramiError({
@@ -122,9 +126,10 @@ export async function createSyncFor(
 async function start(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
   const project = await projectNameOf(context.args.positionals[0]);
   const localPath = localPathOf(project, stringFlag(context.args, 'path'));
+  const explicitUser = stringFlag(context.args, 'user');
 
   if (booleanFlag(context.args, 'dry-run')) {
-    const { host, user } = await engineAndServer();
+    const { host, user } = await engineAndServer(explicitUser);
     const plan = {
       project,
       server: `${user}@${host}:${serverProjectPath('~', project)}`,
@@ -137,6 +142,7 @@ async function start(context: CommandContext): Promise<{ data?: unknown; text?: 
     project,
     localPath,
     serverPath: stringFlag(context.args, 'server-path'),
+    user: explicitUser,
   });
   const gitResult = negatedFlag(context.args, 'git')
     ? ({ status: 'skipped', summary: 'Skipped with --no-git' } satisfies CopyGitResult)
@@ -546,6 +552,11 @@ export const syncCommand: CommandSpec = {
   flags: [
     { name: 'path', value: 'folder', description: 'Path of the local copy' },
     { name: 'server-path', value: 'folder', description: 'Path of the project on the server' },
+    {
+      name: 'user',
+      value: 'user',
+      description: 'User on the server, default the one of the configuration',
+    },
     { name: 'no-git', description: 'Do not give the new local copy its own .git' },
     { name: 'json', description: 'JSON output' },
     { name: 'force', description: 'Proceeds even with conflicts or local-only files' },

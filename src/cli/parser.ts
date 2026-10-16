@@ -86,10 +86,24 @@ export function parseArgs(argv: string[], options: ParseOptions = {}): ParsedArg
     }
 
     if (token.startsWith('-') && token.length > 1) {
-      for (const letter of token.slice(1)) {
+      const letters = token.slice(1);
+      const last = letters.at(-1) ?? '';
+      const next = argv[index + 1];
+
+      for (const letter of letters.slice(0, -1)) {
         setBoolean(values, SHORT_ALIASES[letter] ?? letter, true);
       }
 
+      // Only the last letter of a group can take a value, as in `-yp folder`.
+      const name = SHORT_ALIASES[last] ?? last;
+
+      if (valueFlags.has(name) && next !== undefined && !next.startsWith('-')) {
+        appendValue(values, name, next);
+        index += 2;
+        continue;
+      }
+
+      setBoolean(values, name, true);
       index += 1;
       continue;
     }

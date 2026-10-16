@@ -1,4 +1,11 @@
-import { type CommandSpec, heading, overview, resolveCommand, usageFor } from '@/cli/command.ts';
+import {
+  type CommandSpec,
+  checkFlags,
+  heading,
+  overview,
+  resolveCommand,
+  usageFor,
+} from '@/cli/command.ts';
 import { emit, type OutputOptions, success } from '@/cli/output.ts';
 import { booleanFlag, type ParsedArgs, parseArgs } from '@/cli/parser.ts';
 import { ownerToSwitchTo } from '@/core/config.ts';
@@ -42,6 +49,8 @@ export async function runRouter(options: RouterOptions): Promise<number> {
     process.stdout.write(`${usageFor(command)}\n`);
     return 0;
   }
+
+  checkFlags(command, args.values);
 
   const owner = await accountToLeaveTo(command.name);
 

@@ -1,6 +1,7 @@
 import { styleText } from 'node:util';
 import type { OutputOptions } from '@/cli/output.ts';
-import type { ParsedArgs } from '@/cli/parser.ts';
+import type { FlagValue, ParsedArgs } from '@/cli/parser.ts';
+import { CoramiError } from '@/core/errors.ts';
 
 export interface CommandContext {
   args: ParsedArgs;
@@ -38,6 +39,42 @@ export function resolveCommand(
   }
 
   return commands.find((command) => command.name === first);
+}
+
+// The flags every command accepts: the router reads them before the command.
+const GLOBAL_FLAGS = ['help', 'version', 'json'];
+
+/**
+ * Refuses a flag the command does not declare, and a declared flag that needs
+ * a value and has none, so that a typo or a lost value is never ignored.
+ */
+export function checkFlags(command: CommandSpec, values: Record<string, FlagValue>): void {
+  const flags = command.flags ?? [];
+
+  for (const [key, value] of Object.entries(values)) {
+    // `--no-git` is parsed as `git` set to false.
+    const spec = flags.find((flag) => flag.name === key || flag.name === `no-${key}`);
+
+    if (spec === undefined) {
+      if (GLOBAL_FLAGS.includes(key)) {
+        continue;
+      }
+
+      throw new CoramiError({
+        code: 'usage',
+        message: `Unknown flag for corami ${command.name}: ${key.length === 1 ? '-' : '--'}${key}`,
+        fix: `Run corami ${command.name} --help to see its flags`,
+      });
+    }
+
+    if (spec.value !== undefined && typeof value === 'boolean') {
+      throw new CoramiError({
+        code: 'usage',
+        message: `Missing value for --${spec.name}`,
+        fix: `Write --${spec.name} <${spec.value}>`,
+      });
+    }
+  }
 }
 
 export function usageFor(command: CommandSpec): string {

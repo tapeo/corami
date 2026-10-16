@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
-import type { CommandContext, CommandSpec } from '@/cli/command.ts';
+import type { CommandContext } from '@/cli/command.ts';
 import { createSyncFor } from '@/cli/commands/sync.ts';
 import { renderTable } from '@/cli/output.ts';
 import { booleanFlag, stringFlag, stringListFlag } from '@/cli/parser.ts';
@@ -28,7 +28,9 @@ interface ImportStep {
   detail?: string | undefined;
 }
 
-async function run_(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
+export async function runImport(
+  context: CommandContext,
+): Promise<{ data?: unknown; text?: string }> {
   const target = resolve(context.args.positionals[0] ?? process.cwd());
   const config = await readGlobalConfig();
   const host = config?.server_host;
@@ -206,7 +208,7 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
   let localCopy = target;
 
   try {
-    const sync = await createSyncFor({ project: projectName, localPath: target, serverPath });
+    const sync = await createSyncFor({ project: projectName, localPath: target, serverPath, user });
     localCopy = sync.local;
 
     if (!sync.created && resolve(sync.local) !== resolve(target)) {
@@ -404,22 +406,3 @@ function finish(
 
   return { text: lines.join('\n') };
 }
-
-export const importCommand: CommandSpec = {
-  name: 'import',
-  summary: 'Moves a project that lives locally to the server',
-  usage: 'corami project import [folder] [--name <name>] [--include <glob>] [--dry-run]',
-  flags: [
-    { name: 'name', value: 'name', description: 'Project name on the server' },
-    {
-      name: 'user',
-      value: 'user',
-      description: 'User on the server, default the one of the configuration',
-    },
-    { name: 'include', value: 'glob', description: 'Local files to copy, repeatable' },
-    { name: 'dry-run', description: 'Show what it would do, without copying anything' },
-    { name: 'json', description: 'JSON output' },
-  ],
-  examples: ['corami project import ~/dev/myapp', 'corami project import . --name myapp --dry-run'],
-  run: run_,
-};

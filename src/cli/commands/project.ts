@@ -1,6 +1,7 @@
 import { basename, resolve } from 'node:path';
 
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
+import { runImport } from '@/cli/commands/import.ts';
 import { renderTable } from '@/cli/output.ts';
 import { booleanFlag, stringFlag } from '@/cli/parser.ts';
 import {
@@ -161,17 +162,23 @@ async function rm(context: CommandContext): Promise<{ data?: unknown; text?: str
 export const projectCommand: CommandSpec = {
   name: 'project',
   summary: 'Manages projects',
-  usage: 'corami project <ls|show|add|rm> [arguments]',
+  usage: 'corami project <ls|show|add|import|rm> [arguments]',
   flags: [
     { name: 'json', description: 'JSON output' },
-    { name: 'name', value: 'name', description: 'Project name (--name=<name>)' },
+    { name: 'name', value: 'name', description: 'Add, import: project name on the server' },
     {
       name: 'path',
       value: 'folder',
-      description: 'Register an existing folder, without cloning',
+      description: 'Add: register an existing folder, without cloning',
     },
-    { name: 'yes', description: 'Confirm the removal' },
-    { name: 'dry-run', description: 'Show what it would do, without doing it' },
+    { name: 'include', value: 'glob', description: 'Import: local files to copy, repeatable' },
+    {
+      name: 'user',
+      value: 'user',
+      description: 'Import: user on the server, default the one of the configuration',
+    },
+    { name: 'yes', description: 'Rm: confirm the removal' },
+    { name: 'dry-run', description: 'Add, import: show what it would do, without doing it' },
   ],
   examples: [
     'corami project ls',
@@ -179,6 +186,7 @@ export const projectCommand: CommandSpec = {
     'corami project add git@github.com:me/myapp.git',
     'corami project add --path ~/dev/myapp',
     'corami project import ~/dev/myapp',
+    'corami project import . --name myapp --include .env.local --dry-run',
     'corami project rm myapp --yes',
   ],
   run: async (context) => {
@@ -195,17 +203,15 @@ export const projectCommand: CommandSpec = {
         return show(rest);
       case 'add':
         return add(rest);
-      case 'import': {
-        const { importCommand } = await import('@/cli/commands/import.ts');
-        return importCommand.run(rest);
-      }
+      case 'import':
+        return runImport(rest);
       case 'rm':
         return rm(rest);
       default:
         throw new CoramiError({
           code: 'usage',
           message: `Unknown action: ${action ?? ''}`,
-          fix: 'Use corami project ls, show, add or rm',
+          fix: 'Use corami project ls, show, add, import or rm',
         });
     }
   },

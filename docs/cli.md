@@ -1,6 +1,6 @@
 # CLI reference
 
-Commands of v1. They all accept `--json`. Without a TTY the output is JSON by default. Envelope and exit codes are in `architecture.md`.
+Commands of v1. They all accept `--json`. Without a TTY the output is JSON by default. A flag the command does not know, or a flag without its value, is a `usage` error. Envelope and exit codes are in `architecture.md`.
 
 ## Index
 
@@ -17,13 +17,14 @@ Commands of v1. They all accept `--json`. Without a TTY the output is JSON by de
 |---|---|---|
 | `corami setup` | all | in a terminal: asks what the machine is, then runs the setup of that role |
 | `corami setup server [--owner <login>] [--user <user>]` | server, as root | idempotent setup: Tailscale, the account that owns the projects, HTTPS, the `corami-daemon` and `corami-git-watch` services |
+| `corami setup server [--hostname <name>] [--auth-key <key>] [--fqdn <name>]` | server, as root | the name of the machine on Tailscale (`corami` by default), a Tailscale authentication key instead of the login link, the MagicDNS name when already known |
 | `corami setup server --firewall` | server | closes public SSH: you enter with Tailscale SSH |
 | `corami setup server --step <step>` | server | runs a single step: `preflight`, `packages`, `tailscale`, `hosts`, `user`, `firewall`, `daemon`, `git-watch`, `serve`, `summary` |
 | `corami setup client [server] [--user <user>]` | client | idempotent setup: checks Tailscale, daemon and SSH, installs Mutagen, the Mutagen daemon service and `corami-git-watch`, saves the configuration |
 | `corami setup client <server> --step <step>` | client | runs a single step: `tailscale`, `daemon`, `ssh`, `mutagen`, `mutagen-daemon`, `config`, `git-watch` |
-| `corami setup git [--provider github\|gitlab\|bitbucket]` | server, as the account | SSH key of the server, check and rewriting of HTTPS remotes |
+| `corami setup git [--provider github\|gitlab\|bitbucket] [--identity-name <name>] [--identity-email <email>]` | server, as the account | SSH key of the server, check and rewriting of HTTPS remotes; with `--identity-email` it also sets the git identity of the account, `Corami` as the name by default |
 | `corami doctor [area]` | all | checks with remedies. Areas: `net`, `tools`, `git`, `server` |
-| `corami update [--check]` | all | updates the binary from the GitHub release, with a sum check; on the server it restarts the daemon, and as root it also replaces the binary of the account |
+| `corami update [--check] [--version vX.Y.Z] [--force]` | all | updates the binary from the GitHub release, with a sum check, or installs one exact version; `--force` installs the same version again; on the server it restarts the daemon, and as root it also replaces the binary of the account |
 
 In a terminal the setups ask what the flags do not say, and only that:
 
@@ -63,7 +64,7 @@ A project is added to the server once, with `project add` or `project import`, a
 |---|---|
 | `corami project add <git-url> [--name <name>]` | clones on the server, from any machine |
 | `corami project add --path <folder>` | on the server: registers a folder already there, without moving it |
-| `corami project import [folder]` | on a client: moves a local project to the server, with git history and env files; the folder becomes the synced copy. Files that look like keys stay on the client, in the backup folder |
+| `corami project import [folder] [--name <name>] [--include <glob>] [--user <user>] [--dry-run]` | on a client: moves a local project to the server, with git history and env files; the folder becomes the synced copy. Files that look like keys stay on the client, in the backup folder. `--include` copies more files not tracked by git, repeatable |
 | `corami project ls` | list with the previews of each project |
 | `corami project show <name>` | project detail: path, git, previews |
 | `corami project rm <name> --yes` | removes the project from the server, previews included |
@@ -86,7 +87,7 @@ The public port is stable per preview and comes from the daemon, in the range 41
 
 | Command | Where | Description |
 |---|---|---|
-| `corami sync <project> [--path <folder>] [--no-git]` | client | creates the local copy, starts the session and gives the copy its own `.git`, cloned from `origin` on the branch of the server; run again, it retries a clone that failed |
+| `corami sync <project> [--path <folder>] [--server-path <folder>] [--user <user>] [--no-git] [--dry-run]` | client | creates the local copy, starts the session and gives the copy its own `.git`, cloned from `origin` on the branch of the server; run again, it retries a clone that failed |
 | `corami sync status [project]` | client | state, conflicts, last error, last change and git state of the two sides towards `origin` |
 | `corami sync flush [project]` | client | flushes the session queue |
 | `corami sync rm <project> [--force] [--dry-run]` | client | removes only the local copy, after the checks |

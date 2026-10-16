@@ -301,7 +301,7 @@ export const doctorCommand: CommandSpec = {
   summary: 'Checks network, HTTPS, tools and services',
   usage: 'corami doctor [area]',
   flags: [
-    { name: 'json', description: 'Output JSON' },
+    { name: 'json', description: 'JSON output' },
     { name: 'area', value: 'area', description: `One area only: ${DOCTOR_AREAS.join(', ')}` },
   ],
   examples: ['corami doctor', 'corami doctor net'],

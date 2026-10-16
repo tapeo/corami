@@ -128,7 +128,7 @@ export const serveCommand: CommandSpec = {
   name: 'serve',
   summary: 'Gives a project port a stable HTTPS address on the tailnet',
   usage:
-    'corami serve <port> [--name <name>] [--project <project>] | corami serve ls | corami serve rm <name>',
+    'corami serve <port> [--name <name>] [--project <project>] | corami serve ls [project] | corami serve rm <name> [--project <project>]',
   flags: [
     { name: 'json', description: 'JSON output' },
     { name: 'name', value: 'name', description: 'Preview name, default web' },
