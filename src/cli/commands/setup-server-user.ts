@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import type { StepContext, StepResult } from '@/cli/commands/setup-steps.ts';
 import { run } from '@/core/exec.ts';
-import { isValidServerUser, type ServerStep } from '@/core/server-user.ts';
+import { isValidServerUser, ownerBinary, type ServerStep } from '@/core/server-user.ts';
 import { homeDirectoryForUser, userId } from '@/integrations/systemd.ts';
 import { setOperator } from '@/integrations/tailscale.ts';
 
@@ -106,9 +106,9 @@ export async function stepServerUser(context: StepContext): Promise<StepResult> 
 }
 
 /**
- * The step of the account to run again as the account itself, with its home
- * and its runtime directory in the environment, and the result read from the
- * JSON envelope of the new process.
+ * The step of the account to run again as the account itself, with its own
+ * binary, its home and its runtime directory in the environment, and the
+ * result read from the JSON envelope of the new process.
  */
 export async function runStepAsOwner(context: StepContext, step: ServerStep): Promise<StepResult> {
   const user = context.serverUser;
@@ -118,7 +118,7 @@ export async function runStepAsOwner(context: StepContext, step: ServerStep): Pr
     '-u',
     user,
     '--',
-    process.execPath,
+    ownerBinary(home),
     'setup',
     'server',
     '--step',
@@ -136,7 +136,10 @@ export async function runStepAsOwner(context: StepContext, step: ServerStep): Pr
     args.push('--owner', context.ownerLogin);
   }
 
+  // From the home of the account: the setup usually starts in the one of root,
+  // which the account cannot enter.
   const result = await run('runuser', args, {
+    cwd: home,
     env: {
       HOME: home,
       ...(uid === undefined ? {} : { XDG_RUNTIME_DIR: `/run/user/${uid}` }),
@@ -239,7 +242,7 @@ async function waitForRuntimeDir(user: string): Promise<string | undefined> {
 // never runs the one of root.
 async function copyBinary(home: string): Promise<string | undefined> {
   const source = process.execPath;
-  const target = join(home, '.corami', 'bin', 'corami');
+  const target = ownerBinary(home);
 
   if (source === target || !(await Bun.file(source).exists())) {
     return undefined;

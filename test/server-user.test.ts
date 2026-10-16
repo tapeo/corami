@@ -5,6 +5,7 @@ import {
   canSudo,
   DEFAULT_SERVER_USER,
   isValidServerUser,
+  ownerBinary,
   privilegedGroups,
   serverUser,
   stepIdentity,
@@ -46,6 +47,13 @@ describe('step identities', () => {
     expect(stepIdentity('git-watch')).toBe('owner');
     expect(stepIdentity('serve')).toBe('owner');
     expect(stepIdentity('summary')).toBe('owner');
+  });
+});
+
+describe('the binary of the account', () => {
+  test('is the copied one under the home of the account, never the one of root', () => {
+    expect(ownerBinary('/home/corami')).toBe('/home/corami/.corami/bin/corami');
+    expect(ownerBinary('/root')).toBe('/root/.corami/bin/corami');
   });
 });
 

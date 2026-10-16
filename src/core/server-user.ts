@@ -3,7 +3,18 @@
 // Its setup runs as root, the steps that belong to the account are run again
 // as it. The decisions are pure; the commands live in the steps.
 
+import { join } from 'node:path';
+
 export const DEFAULT_SERVER_USER = 'corami';
+
+/**
+ * The binary of the account: the setup copies the one of root here, and the
+ * account runs this one, because it cannot read the binary of root, which
+ * lives under the home of root.
+ */
+export function ownerBinary(home: string): string {
+  return join(home, '.corami', 'bin', 'corami');
+}
 
 // The steps of `corami setup server` that need root, the others run as the
 // owner account. `user` creates the account itself. `firewall` and `serve`

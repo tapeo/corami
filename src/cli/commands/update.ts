@@ -1,6 +1,5 @@
 import { realpathSync } from 'node:fs';
 import { userInfo } from 'node:os';
-import { join } from 'node:path';
 
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { booleanFlag, stringFlag } from '@/cli/parser.ts';
@@ -15,6 +14,7 @@ import {
   REPO,
   replaceBinary,
 } from '@/core/release.ts';
+import { ownerBinary } from '@/core/server-user.ts';
 import { gitWatchSpec, restartService, serviceActive } from '@/integrations/service.ts';
 import { homeDirectoryForUser, userId } from '@/integrations/systemd.ts';
 import { VERSION } from '@/version.ts';
@@ -143,7 +143,7 @@ async function copyToOwner(): Promise<boolean> {
     return false;
   }
 
-  const target = join(home, '.corami', 'bin', 'corami');
+  const target = ownerBinary(home);
 
   if (!(await Bun.file(target).exists())) {
     return false;
@@ -161,7 +161,8 @@ async function configuredServerUser(): Promise<string | undefined> {
 }
 
 // The daemon runs as the account that owns the projects: started as root the
-// restart goes through `runuser`, as the setup does for its steps.
+// restart goes through `runuser` with the binary of the account, as the setup
+// does for its steps.
 async function restartDaemon(): Promise<boolean> {
   const config = await readGlobalConfig().catch(() => undefined);
 
@@ -173,6 +174,11 @@ async function restartDaemon(): Promise<boolean> {
 
   if (owner !== undefined) {
     const home = await homeDirectoryForUser(owner);
+
+    if (home === undefined) {
+      return false;
+    }
+
     const uid = await userId(owner);
     const result = await run(
       'runuser',
@@ -180,7 +186,7 @@ async function restartDaemon(): Promise<boolean> {
         '-u',
         owner,
         '--',
-        resolveBinary(),
+        ownerBinary(home),
         'setup',
         'server',
         '--step',
@@ -190,8 +196,9 @@ async function restartDaemon(): Promise<boolean> {
         '--json',
       ],
       {
+        cwd: home,
         env: {
-          ...(home === undefined ? {} : { HOME: home }),
+          HOME: home,
           ...(uid === undefined ? {} : { XDG_RUNTIME_DIR: `/run/user/${uid}` }),
         },
         timeoutMs: 2 * 60_000,
