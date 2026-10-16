@@ -75,7 +75,7 @@ async function open(context: CommandContext): Promise<{ data?: unknown; text?: s
 }
 
 async function ls(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
-  const project = context.args.positionals[0] ?? stringFlag(context.args, 'project');
+  const project = context.args.positionals[0];
   const previews = (await listPreviews()).filter(
     (preview) => project === undefined || preview.project === project,
   );
@@ -124,36 +124,38 @@ async function rm(context: CommandContext): Promise<{ data?: unknown; text?: str
   };
 }
 
+const PROJECT_FLAG = {
+  name: 'project',
+  value: 'project',
+  description: 'Project name, derived from the folder',
+};
+
 export const serveCommand: CommandSpec = {
   name: 'serve',
   summary: 'Gives a project port a stable HTTPS address on the tailnet',
-  usage:
-    'corami serve <port> [--name <name>] [--project <project>] | corami serve ls [project] | corami serve rm <name> [--project <project>]',
+  usage: 'corami serve <port> [--name <name>] [--project <project>]',
   flags: [
     { name: 'json', description: 'JSON output' },
     { name: 'name', value: 'name', description: 'Preview name, default web' },
-    { name: 'project', value: 'project', description: 'Project name, derived from the folder' },
+    PROJECT_FLAG,
   ],
-  examples: [
-    'corami serve 3000',
-    'corami serve 4100 --name api',
-    'corami serve ls',
-    'corami serve rm web',
+  examples: ['corami serve 3000', 'corami serve 4100 --name api'],
+  actions: [
+    {
+      name: 'ls',
+      summary: 'Lists the registered addresses and whether they respond',
+      usage: 'corami serve ls [<project>]',
+      examples: ['corami serve ls', 'corami serve ls myapp'],
+      run: ls,
+    },
+    {
+      name: 'rm',
+      summary: 'Removes an address and its record',
+      usage: 'corami serve rm <name> [--project <project>]',
+      flags: [PROJECT_FLAG],
+      examples: ['corami serve rm web', 'corami serve rm api --project myapp'],
+      run: rm,
+    },
   ],
-  run: async (context) => {
-    const action = context.args.positionals[0];
-    const rest: CommandContext = {
-      ...context,
-      args: { ...context.args, positionals: context.args.positionals.slice(1) },
-    };
-
-    switch (action) {
-      case 'ls':
-        return ls(rest);
-      case 'rm':
-        return rm(rest);
-      default:
-        return open(context);
-    }
-  },
+  run: open,
 };
