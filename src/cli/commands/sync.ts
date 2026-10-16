@@ -4,6 +4,7 @@ import { dirname, join, resolve, sep } from 'node:path';
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { gitSides } from '@/cli/commands/git.ts';
 import { applyRemoval, planRemoval, resolveLocalPath } from '@/cli/commands/sync-remove.ts';
+import { renderNextSteps } from '@/cli/output.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
 import { projectDetail, projectGit, serverUserForSync } from '@/cli/server-client.ts';
 import { homeDirectory, readGlobalConfig, serverProjectPath } from '@/core/config.ts';
@@ -11,6 +12,7 @@ import { CoramiError } from '@/core/errors.ts';
 import { type CopyGitResult, giveCopyGit } from '@/core/git.ts';
 import { describeOrigin } from '@/core/git-follow.ts';
 import { lastChange } from '@/core/last-change.ts';
+import { afterSync } from '@/core/next-steps.ts';
 import { MutagenEngine, type SyncSession } from '@/integrations/mutagen.ts';
 
 async function engineAndServer(
@@ -176,6 +178,10 @@ async function start(context: CommandContext): Promise<{ data?: unknown; text?: 
 
   if (gitResult.detail !== undefined) {
     lines.push(`  ${gitResult.detail}`);
+  }
+
+  if (result.created) {
+    lines.push(...renderNextSteps(afterSync(project, result.local)));
   }
 
   return { text: lines.join('\n') };

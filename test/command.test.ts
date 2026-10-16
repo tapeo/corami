@@ -7,6 +7,7 @@ import {
   checkFlags,
   helpData,
   missingAction,
+  overview,
   overviewData,
   resolveAction,
   usageFor,
@@ -164,6 +165,15 @@ describe('overviewData', () => {
     const hidden: CommandSpec = { ...spec, name: 'daemon', hidden: true };
     const names = overviewData([spec, hidden], '1.0.0').commands.map((command) => command.name);
     expect(names).toEqual(['sync']);
+  });
+
+  test('says what Corami is and where to start', () => {
+    const text = overview(overviewData([spec], '1.0.0'), ['corami setup']);
+    const lines = text.split('\n');
+
+    expect(lines[0]).toStartWith('Remote dev host for agents');
+    expect(lines.slice(2, 4)).toEqual(['Start here:', '  corami setup']);
+    expect(overview(overviewData([spec], '1.0.0'))).not.toContain('Start here:');
   });
 });
 

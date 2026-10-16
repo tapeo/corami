@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { failure, renderSteps, renderTable, success } from '@/cli/output.ts';
+import { failure, renderNextSteps, renderSteps, renderTable, success } from '@/cli/output.ts';
 import { CoramiError, exitCodeFor, toCoramiError } from '@/core/errors.ts';
 
 describe('envelope', () => {
@@ -80,5 +80,18 @@ describe('renderSteps', () => {
 
     expect(lines[0]?.split('\n')[0]).toMatch(/^Step +Result +Detail$/);
     expect(lines.slice(1)).toEqual(['key: ~/.ssh/id_ed25519.pub']);
+  });
+});
+
+describe('renderNextSteps', () => {
+  test('one step on one line, several as a list, none as nothing', () => {
+    expect(renderNextSteps(['corami sync myapp'])).toEqual(['', 'Next step: corami sync myapp']);
+    expect(renderNextSteps(['corami sync a', 'corami sync b'])).toEqual([
+      '',
+      'Next steps:',
+      '  corami sync a',
+      '  corami sync b',
+    ]);
+    expect(renderNextSteps([])).toEqual([]);
   });
 });

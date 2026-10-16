@@ -1,0 +1,86 @@
+import { describe, expect, test } from 'bun:test';
+
+import {
+  afterClientSetup,
+  afterImport,
+  afterProjectAdd,
+  afterServerSetup,
+  afterSync,
+  firstSteps,
+} from '@/core/next-steps.ts';
+
+const FQDN = 'corami.tail1a2b3c.ts.net';
+
+describe('afterServerSetup', () => {
+  test('sends root to the account that owns the projects', () => {
+    const steps = afterServerSetup({ fqdn: FQDN, user: 'corami', root: true });
+
+    expect(steps[0]).toBe(`Work as corami from now on: ssh corami@${FQDN}`);
+    expect(steps[1]).toContain(`corami setup client ${FQDN}`);
+    expect(steps[2]).toContain('corami project import <folder>');
+  });
+
+  test('says nothing about the account when the setup ran as the account', () => {
+    const steps = afterServerSetup({ fqdn: FQDN, user: 'corami', root: false });
+
+    expect(steps).toHaveLength(2);
+    expect(steps.join('\n')).not.toContain('ssh corami@');
+  });
+
+  test('says nothing about the account when root owns the projects', () => {
+    expect(afterServerSetup({ fqdn: FQDN, user: 'root', root: true })).toHaveLength(2);
+  });
+});
+
+describe('afterClientSetup', () => {
+  test('lists the sync of every project of the server', () => {
+    expect(afterClientSetup(['myapp', 'site'])).toEqual(['corami sync myapp', 'corami sync site']);
+  });
+
+  test('offers import and add when the server has no project', () => {
+    const steps = afterClientSetup([]);
+
+    expect(steps[0]).toContain('corami project import <folder>');
+    expect(steps[1]).toContain('corami project add <git-url>');
+  });
+
+  test('falls back to the generic sync when the daemon did not answer', () => {
+    expect(afterClientSetup(undefined)).toEqual([
+      'corami sync <project> to get the code of a project on this machine',
+    ]);
+  });
+});
+
+describe('afterProjectAdd', () => {
+  test('on a client, the copy of this machine comes first', () => {
+    const steps = afterProjectAdd('myapp', 'client');
+
+    expect(steps[0]).toBe('corami sync myapp to get the code on this machine');
+    expect(steps[1]).toContain('from ~/projects/myapp');
+  });
+
+  test('on the server, every client takes its copy', () => {
+    expect(afterProjectAdd('myapp', 'server')[0]).toBe('On each client: corami sync myapp');
+    expect(afterProjectAdd('myapp', undefined)[0]).toBe('On each client: corami sync myapp');
+  });
+});
+
+describe('afterSync and afterImport', () => {
+  test('point to the local copy and to the preview', () => {
+    const steps = afterSync('myapp', '/Users/me/corami/myapp');
+
+    expect(steps[0]).toContain('Open /Users/me/corami/myapp');
+    expect(steps[1]).toContain('corami serve <port> from ~/projects/myapp');
+    expect(afterImport('myapp')).toEqual([steps[1] ?? '']);
+  });
+});
+
+describe('firstSteps', () => {
+  test('follows the role of the machine', () => {
+    expect(firstSteps(undefined)).toEqual([
+      'corami setup to make this machine the server or a client',
+    ]);
+    expect(firstSteps('server')[0]).toContain('corami project add <git-url>');
+    expect(firstSteps('client')[0]).toContain('corami sync <project>');
+  });
+});

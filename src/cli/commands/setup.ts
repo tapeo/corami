@@ -20,11 +20,12 @@ import {
   stepSummary,
   stepTailscale,
 } from '@/cli/commands/setup-steps.ts';
-import { renderSteps } from '@/cli/output.ts';
+import { renderNextSteps, renderSteps } from '@/cli/output.ts';
 import { booleanFlag, stringFlag } from '@/cli/parser.ts';
 import { canPrompt, type Prompter, terminalPrompter } from '@/cli/prompt.ts';
 import { readGlobalConfig, writeGlobalConfig } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
+import { afterServerSetup } from '@/core/next-steps.ts';
 import {
   DEFAULT_SERVER_USER,
   isValidServerUser,
@@ -177,7 +178,12 @@ async function runServerSetup(
     return { data: { fqdn: stepContext.fqdn, steps: results } };
   }
 
-  return { text: render(results, stepContext.fqdn, prompter === undefined) };
+  return {
+    text: render(results, stepContext, {
+      withSteps: prompter === undefined,
+      partial: dryRun || only !== undefined,
+    }),
+  };
 }
 
 async function chooseRole(prompter: Prompter): Promise<string> {
@@ -350,10 +356,17 @@ async function withUpdatedContext(context: StepContext, result: StepResult): Pro
 
 // `withSteps` is false in a terminal, where every step was printed as it
 // ended: only the closing notes are left.
-function render(results: StepResult[], fqdn: string | undefined, withSteps: boolean): string {
+// `withSteps` is false in a terminal, where every step was printed as it
+// ended. `partial` is a dry run or a single step: no next steps then.
+function render(
+  results: StepResult[],
+  context: StepContext,
+  options: { withSteps: boolean; partial: boolean },
+): string {
   const lines: string[] = [];
+  const fqdn = context.fqdn;
 
-  if (withSteps) {
+  if (options.withSteps) {
     lines.push(...renderSteps(results));
   }
 
@@ -369,12 +382,20 @@ function render(results: StepResult[], fqdn: string | undefined, withSteps: bool
     );
   }
 
-  if (fqdn !== undefined) {
-    lines.push(
-      '',
-      `The daemon answers at https://${fqdn}:7420`,
-      `To connect a client, run there: corami setup client ${fqdn}`,
-    );
+  const completed = results.every(
+    (result) => result.status !== 'failed' && result.status !== 'waiting',
+  );
+
+  if (fqdn !== undefined && completed) {
+    lines.push('', `The daemon answers at https://${fqdn}:7420`);
+
+    if (!options.partial) {
+      lines.push(
+        ...renderNextSteps(
+          afterServerSetup({ fqdn, user: context.serverUser, root: context.root }),
+        ),
+      );
+    }
   }
 
   return lines.join('\n');

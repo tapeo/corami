@@ -156,6 +156,7 @@ corami/
       pinned-tools.ts     version and sha256 of Mutagen
       local-copy.ts       single list of regenerable paths, used by sync, import and sync rm
       git.ts, git-align.ts, git-follow.ts
+      next-steps.ts       pure functions: the commands shown at the end of a first run
       paths and helper modules: doctor, errors, exec,
       last-change, release, state, transfer
     integrations/
@@ -491,6 +492,7 @@ previews(project, name, public_port, target_port, created_at)
 ## CLI output contract
 
 - With a TTY stdout: tables and text. Without a TTY or with `--json`: JSON.
+- The text of the commands of a first run (`setup`, `project add`, `project import`, `sync`, `corami` alone) ends with the commands to run next, chosen by the pure functions of `src/core/next-steps.ts` from the role of the machine and the projects of the server. The JSON does not carry them.
 - Envelope:
 
 ```json
@@ -575,7 +577,7 @@ One binary, two setups. In a terminal they ask what the flags leave out (role, o
 7. `daemon`: `loginctl enable-linger`, then the `corami-daemon` unit as a systemd user service of the account, with the owner login and the FQDN in its environment. It writes the global config with `role: server` and `server_user` in the home of the account. Without user services it falls back to a system unit with `User=` and the home of the account.
 8. `git-watch`: the git alignment service, in the same scope as the daemon.
 9. `serve`: `tailscale serve` for port 7420, run as the account. It fails, with the remedy, when the HTTPS certificates are not enabled in the Tailscale console.
-10. `summary`: the daemon is running; its address and the `corami setup client <fqdn>` command for the clients. Without `--owner` it warns that every tailnet member can reach the daemon.
+10. `summary`: the daemon is running. The text then gives its address and the next steps: entering as the account, `corami setup client <fqdn>` on the laptop, the first project. Without `--owner` it warns that every tailnet member can reach the daemon.
 
 Root keeps its own configuration with `server_user`, the account that owns the projects. A command that would write under the home of root on such a server (`project add`, `serve`, `setup git`) stops and says to run it as that account; `setup` and `update` run the steps of the account again as the account, and `doctor` reads.
 

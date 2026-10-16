@@ -133,6 +133,19 @@ export function renderSteps(steps: StepRow[]): string[] {
   return lines;
 }
 
+/** The closing lines that say what to run next, after an empty line. */
+export function renderNextSteps(steps: string[]): string[] {
+  if (steps.length === 0) {
+    return [];
+  }
+
+  if (steps.length === 1) {
+    return ['', `Next step: ${steps[0]}`];
+  }
+
+  return ['', 'Next steps:', ...steps.map((step) => `  ${step}`)];
+}
+
 export function reportError(error: unknown, options: OutputOptions): number {
   const coramiError = toCoramiError(error);
   emit(failure(coramiError), options);

@@ -2,7 +2,7 @@ import { basename, resolve } from 'node:path';
 
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { runImport } from '@/cli/commands/import.ts';
-import { renderTable } from '@/cli/output.ts';
+import { renderNextSteps, renderTable } from '@/cli/output.ts';
 import { booleanFlag, stringFlag } from '@/cli/parser.ts';
 import {
   addProject,
@@ -11,7 +11,9 @@ import {
   projectDetail,
   removeProject,
 } from '@/cli/server-client.ts';
+import { readGlobalConfig } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
+import { afterProjectAdd } from '@/core/next-steps.ts';
 
 async function ls(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
   const projects = await listProjects();
@@ -111,10 +113,12 @@ async function add(context: CommandContext): Promise<{ data?: unknown; text?: st
     return { data: project };
   }
 
+  const role = (await readGlobalConfig().catch(() => undefined))?.role;
+
   return {
     text: [
       `Project ${derivedName} added on the server.`,
-      `On each client: corami sync ${derivedName}. On the server: corami serve <port> to give a preview an address`,
+      ...renderNextSteps(afterProjectAdd(derivedName, role)),
     ].join('\n'),
   };
 }

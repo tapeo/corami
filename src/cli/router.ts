@@ -12,8 +12,9 @@ import {
 } from '@/cli/command.ts';
 import { emit, type OutputOptions, success } from '@/cli/output.ts';
 import { booleanFlag, parseArgs } from '@/cli/parser.ts';
-import { ownerToSwitchTo } from '@/core/config.ts';
+import { ownerToSwitchTo, readGlobalConfig } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
+import { firstSteps } from '@/core/next-steps.ts';
 import { VERSION } from '@/version.ts';
 
 export interface RouterOptions {
@@ -55,8 +56,10 @@ export async function runRouter(options: RouterOptions): Promise<number> {
       return 0;
     }
 
+    const role = (await readGlobalConfig().catch(() => undefined))?.role;
+
     process.stdout.write(`${heading(`corami ${VERSION}`, options.output.color)}\n`);
-    process.stdout.write(`${overview(data)}\n`);
+    process.stdout.write(`${overview(data, firstSteps(role))}\n`);
     return 0;
   }
 
