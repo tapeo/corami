@@ -137,6 +137,53 @@ describe('cli', () => {
     expect(parsed.error.fix).toContain('git-watch');
   });
 
+  test('refuses the flag of another action', async () => {
+    for (const [argv, flag, path] of [
+      [['project', 'ls', '--include', 'x'], '--include', 'project ls'],
+      [['serve', 'rm', 'web', '--name', 'x'], '--name', 'serve rm'],
+      [['serve', 'ls', '--project', 'x'], '--project', 'serve ls'],
+      [
+        ['setup', 'client', 'corami.example.ts.net', '--hostname', 'x'],
+        '--hostname',
+        'setup client',
+      ],
+      [['setup', '--owner', 'me@example.com'], '--owner', 'setup'],
+    ] as const) {
+      const result = await corami([...argv]);
+      const parsed = JSON.parse(result.stdout);
+
+      expect(result.exitCode).toBe(2);
+      expect(parsed.error.message).toBe(`Unknown flag for corami ${path}: ${flag}`);
+      expect(parsed.error.fix).toBe(`Run corami ${path} --help to see its flags`);
+    }
+  });
+
+  test('prints the help of an action with its flags only', async () => {
+    const result = await corami(['sync', 'prune', '--help']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('Usage: corami sync prune');
+    expect(result.stdout).toContain('--unused <duration>');
+    expect(result.stdout).not.toContain('--path');
+  });
+
+  test('lists the actions in the help of a command', async () => {
+    const result = await corami(['sync', '--help']);
+
+    expect(result.stdout).toContain('Actions:');
+    expect(result.stdout).toMatch(/^ {2}prune +\S/m);
+    expect(result.stdout).not.toContain('--unused');
+  });
+
+  test('asks for the action of git', async () => {
+    const result = await corami(['git']);
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.exitCode).toBe(2);
+    expect(parsed.error.message).toBe('Missing action for corami git');
+    expect(parsed.error.fix).toBe('Use corami git watch');
+  });
+
   test('lists every command in the help', async () => {
     const result = await corami(['--help']);
     const names = (result.stdout.match(/^ {2}[a-z-]+/gm) ?? []).map((line) => line.trim());
