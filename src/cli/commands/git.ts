@@ -204,6 +204,13 @@ async function watch(context: CommandContext): Promise<{ data?: unknown; text?: 
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
+    // A signal already aborted never fires `abort` again: a SIGTERM received
+    // during the cycle would otherwise wait the whole minute.
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+
     const timer = setTimeout(done, ms);
     signal.addEventListener('abort', done, { once: true });
 
