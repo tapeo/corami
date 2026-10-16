@@ -138,8 +138,9 @@ async function run(context: CommandContext): Promise<{ data?: unknown; text?: st
     }
 
     // The steps of the account are handed to it: run as root they would leave
-    // their files and their services in the home of root.
-    const handoff = base.root && stepIdentity(kind) === 'owner';
+    // their files and their services in the home of root. A dry run executes
+    // nothing, and the account may not exist yet.
+    const handoff = base.root && !dryRun && stepIdentity(kind) === 'owner';
     const runStep = () =>
       handoff ? runStepAsOwner(stepContext, kind) : STEP_RUNNERS[kind](stepContext);
     let result =

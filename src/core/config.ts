@@ -1,8 +1,9 @@
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 
 import { CoramiError } from '@/core/errors.ts';
 import { fileExists } from '@/core/exec.ts';
+import { accountToLeaveTo } from '@/core/server-user.ts';
 
 export type Role = 'server' | 'client';
 
@@ -120,4 +121,20 @@ export async function requireServerRole(): Promise<GlobalConfig> {
   }
 
   return config;
+}
+
+/**
+ * The account a command run as root has to leave to: the one that owns the
+ * projects on this server. Undefined when the command may run where it is.
+ * The decision is in `src/core/server-user.ts`, the reading of the
+ * configuration here, next to the other ones.
+ */
+export async function ownerToSwitchTo(): Promise<string | undefined> {
+  const config = await readGlobalConfig().catch(() => undefined);
+
+  return accountToLeaveTo({
+    platform: process.platform,
+    user: userInfo().username,
+    config,
+  });
 }

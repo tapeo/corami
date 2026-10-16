@@ -1,7 +1,7 @@
 import { type CommandSpec, heading, overview, resolveCommand, usageFor } from '@/cli/command.ts';
-import { ownerToSwitchTo } from '@/cli/commands/setup-server-user.ts';
 import { emit, type OutputOptions, success } from '@/cli/output.ts';
 import { booleanFlag, type ParsedArgs, parseArgs } from '@/cli/parser.ts';
+import { ownerToSwitchTo } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { VERSION } from '@/version.ts';
 

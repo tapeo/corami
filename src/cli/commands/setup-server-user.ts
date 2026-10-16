@@ -2,9 +2,8 @@ import { userInfo } from 'node:os';
 import { join } from 'node:path';
 
 import type { StepContext, StepResult } from '@/cli/commands/setup-steps.ts';
-import { readGlobalConfig } from '@/core/config.ts';
 import { run } from '@/core/exec.ts';
-import { accountToLeaveTo, isValidServerUser, type ServerStep } from '@/core/server-user.ts';
+import { isValidServerUser, type ServerStep } from '@/core/server-user.ts';
 import { homeDirectoryForUser, userId } from '@/integrations/systemd.ts';
 import { setOperator } from '@/integrations/tailscale.ts';
 
@@ -303,20 +302,6 @@ async function ownerOf(home: string): Promise<string> {
 async function groupOf(home: string): Promise<string> {
   const result = await run('stat', ['-c', '%G', home]);
   return result.ok && result.stdout.trim() !== '' ? result.stdout.trim() : '0';
-}
-
-/**
- * The account a command run as root has to leave to: the one that owns the
- * projects on this server. Undefined when the command may run where it is.
- */
-export async function ownerToSwitchTo(): Promise<string | undefined> {
-  const config = await readGlobalConfig().catch(() => undefined);
-
-  return accountToLeaveTo({
-    platform: process.platform,
-    user: userInfo().username,
-    config,
-  });
 }
 
 // `/home/<user>`, where `useradd` puts the home of a created account.
