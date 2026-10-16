@@ -78,37 +78,32 @@ const STEP_RUNNERS: Record<StepKind, (context: StepContext) => Promise<StepResul
   summary: stepSummary,
 };
 
+function prompterFor(context: CommandContext): Prompter | undefined {
+  return canPrompt(context.output) ? terminalPrompter() : undefined;
+}
+
+// `corami setup` without a role: in a terminal it asks what the machine is.
 async function run(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
-  const prompter = canPrompt(context.output) ? terminalPrompter() : undefined;
-  const target =
-    context.args.positionals[0] ??
-    (prompter === undefined ? undefined : await chooseRole(prompter));
+  const prompter = prompterFor(context);
+  const given = context.args.positionals[0];
 
-  if (target === 'git') {
-    return runGitSetup({
-      ...context,
-      args: { ...context.args, positionals: context.args.positionals.slice(1) },
-    });
-  }
-
-  if (target === 'client') {
-    return runClientSetup(
-      {
-        ...context,
-        args: { ...context.args, positionals: context.args.positionals.slice(1) },
-      },
-      prompter,
-    );
-  }
-
-  if (target !== 'server') {
+  if (given !== undefined || prompter === undefined) {
     throw new CoramiError({
       code: 'usage',
-      message: target === undefined ? 'Missing setup role' : `Unknown setup target: ${target}`,
+      message: given === undefined ? 'Missing setup role' : `Unknown setup target: ${given}`,
       fix: 'On the Linux server: corami setup server. On a client: corami setup client <server>',
     });
   }
 
+  const role = await chooseRole(prompter);
+
+  return role === 'client' ? runClientSetup(context, prompter) : runServerSetup(context, prompter);
+}
+
+async function runServerSetup(
+  context: CommandContext,
+  prompter: Prompter | undefined,
+): Promise<{ data?: unknown; text?: string }> {
   const dryRun = booleanFlag(context.args, 'dry-run');
   const only = stringFlag(context.args, 'step');
   const withFirewall = booleanFlag(context.args, 'firewall');
@@ -397,49 +392,90 @@ function render(results: StepResult[], fqdn: string | undefined, withSteps: bool
   return lines.join('\n');
 }
 
+const DRY_RUN_FLAG = { name: 'dry-run', description: 'Show what it would do' };
+
 export const setupCommand: CommandSpec = {
   name: 'setup',
   summary: 'Installs Corami and its services on the server or on a client',
-  usage: 'corami setup [server|client|git] [options]',
-  flags: [
+  usage: 'corami setup [<role>] [options]',
+  flags: [{ name: 'json', description: 'JSON output' }],
+  examples: ['corami setup'],
+  actions: [
     {
-      name: 'hostname',
-      value: 'name',
-      description: 'Server: machine name on Tailscale, default corami',
+      name: 'server',
+      summary: 'Sets up the Linux server: Tailscale, the account of the projects, HTTPS, services',
+      usage: 'corami setup server [--owner <login>] [--user <user>] [--firewall] [--step <step>]',
+      flags: [
+        {
+          name: 'hostname',
+          value: 'name',
+          description: 'Machine name on Tailscale, default corami',
+        },
+        { name: 'owner', value: 'login', description: 'Allowed Tailscale login' },
+        { name: 'auth-key', value: 'key', description: 'Tailscale authentication key' },
+        { name: 'fqdn', value: 'name', description: 'MagicDNS name, when already known' },
+        {
+          name: 'user',
+          value: 'user',
+          description: `Account that owns the projects, default ${DEFAULT_SERVER_USER}`,
+        },
+        {
+          name: 'step',
+          value: 'step',
+          description: `Runs a single step: ${STEP_KINDS.join(', ')}`,
+        },
+        { name: 'firewall', description: 'Closes public SSH, enter with Tailscale SSH' },
+        DRY_RUN_FLAG,
+      ],
+      examples: [
+        'corami setup server --owner me@example.com',
+        'corami setup server --firewall',
+        'corami setup server --step daemon',
+      ],
+      run: (context) => runServerSetup(context, prompterFor(context)),
     },
-    { name: 'owner', value: 'login', description: 'Server: allowed Tailscale login' },
-    { name: 'auth-key', value: 'key', description: 'Server: Tailscale authentication key' },
-    { name: 'fqdn', value: 'name', description: 'Server: MagicDNS name, when already known' },
     {
-      name: 'user',
-      value: 'user',
-      description: `Server: account that owns the projects, default ${DEFAULT_SERVER_USER}. Client: account on the server, default the one the daemon announces`,
+      name: 'client',
+      summary: 'Connects this machine to the server: SSH, Mutagen and its services',
+      usage: 'corami setup client [<server>] [--user <user>] [--step <step>] [--no-mutagen]',
+      flags: [
+        {
+          name: 'user',
+          value: 'user',
+          description: 'Account on the server, default the one the daemon announces',
+        },
+        {
+          name: 'step',
+          value: 'step',
+          description: `Runs a single step: ${CLIENT_STEPS.join(', ')}`,
+        },
+        { name: 'no-mutagen', description: 'Do not install Mutagen and its daemon service' },
+        DRY_RUN_FLAG,
+      ],
+      examples: [
+        'corami setup client corami.tail1a2b3c.ts.net',
+        'corami setup client corami.tail1a2b3c.ts.net --step mutagen-daemon',
+      ],
+      run: (context) => runClientSetup(context, prompterFor(context)),
     },
     {
-      name: 'step',
-      value: 'step',
-      description: `Runs a single step. Server: ${STEP_KINDS.join(', ')}. Client: ${CLIENT_STEPS.join(', ')}`,
+      name: 'git',
+      summary: 'Gives the server account its SSH key for the git provider',
+      usage:
+        'corami setup git [--provider <name>] [--identity-name <name>] [--identity-email <email>]',
+      flags: [
+        {
+          name: 'provider',
+          value: 'name',
+          description: `Provider, default github. One of ${Object.keys(PROVIDERS).join(', ')}`,
+        },
+        { name: 'identity-name', value: 'name', description: 'Name for the commits' },
+        { name: 'identity-email', value: 'email', description: 'Email for the commits' },
+        DRY_RUN_FLAG,
+      ],
+      examples: ['corami setup git', 'corami setup git --provider gitlab'],
+      run: runGitSetup,
     },
-    { name: 'firewall', description: 'Server: closes public SSH, enter with Tailscale SSH' },
-    { name: 'no-mutagen', description: 'Client: do not install Mutagen and its daemon service' },
-    {
-      name: 'provider',
-      value: 'name',
-      description: `Git: provider, default github. One of ${Object.keys(PROVIDERS).join(', ')}`,
-    },
-    { name: 'identity-name', value: 'name', description: 'Git: name for the commits' },
-    { name: 'identity-email', value: 'email', description: 'Git: email for the commits' },
-    { name: 'dry-run', description: 'Show what it would do' },
-    { name: 'json', description: 'JSON output' },
-  ],
-  examples: [
-    'corami setup',
-    'corami setup server --owner me@example.com',
-    'corami setup server --firewall',
-    'corami setup server --step daemon',
-    'corami setup client corami.tail1a2b3c.ts.net',
-    'corami setup client corami.tail1a2b3c.ts.net --step mutagen-daemon',
-    'corami setup git --provider gitlab',
   ],
   run,
 };
