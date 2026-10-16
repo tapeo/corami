@@ -2,12 +2,14 @@ import {
   type CommandSpec,
   checkFlags,
   heading,
+  missingAction,
   overview,
+  resolveAction,
   resolveCommand,
   usageFor,
 } from '@/cli/command.ts';
 import { emit, type OutputOptions, success } from '@/cli/output.ts';
-import { booleanFlag, type ParsedArgs, parseArgs } from '@/cli/parser.ts';
+import { booleanFlag, parseArgs } from '@/cli/parser.ts';
 import { ownerToSwitchTo } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { VERSION } from '@/version.ts';
@@ -45,12 +47,21 @@ export async function runRouter(options: RouterOptions): Promise<number> {
     return 0;
   }
 
+  const rest = args.positionals.slice(1);
+  const action = resolveAction(command, rest);
+  const spec = action ?? command;
+  const path = action === undefined ? command.name : `${command.name} ${action.name}`;
+
   if (booleanFlag(args, 'help')) {
-    process.stdout.write(`${usageFor(command)}\n`);
+    process.stdout.write(`${usageFor(spec)}\n`);
     return 0;
   }
 
-  checkFlags(command, args.values);
+  checkFlags(spec, args.values, path);
+
+  if (spec.run === undefined) {
+    throw missingAction(command, rest[0]);
+  }
 
   const owner = await accountToLeaveTo(command.name);
 
@@ -62,8 +73,9 @@ export async function runRouter(options: RouterOptions): Promise<number> {
     });
   }
 
-  const result = await command.run({
-    args: withoutCommand(args, command.name),
+  // The command and the action that were named leave the arguments.
+  const result = await spec.run({
+    args: { ...args, positionals: action === undefined ? rest : rest.slice(1) },
     output: options.output,
   });
 
@@ -77,17 +89,6 @@ export async function runRouter(options: RouterOptions): Promise<number> {
   }
 
   return 0;
-}
-
-function withoutCommand(args: ParsedArgs, name: string): ParsedArgs {
-  const positionals = [...args.positionals];
-  const index = positionals.indexOf(name);
-
-  if (index !== -1) {
-    positionals.splice(index, 1);
-  }
-
-  return { ...args, positionals };
 }
 
 // The commands that may run as root on a server: `setup` runs the steps of the

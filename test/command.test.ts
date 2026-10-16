@@ -1,9 +1,36 @@
 import { describe, expect, test } from 'bun:test';
 
-import { type CommandSpec, checkFlags } from '@/cli/command.ts';
+import {
+  type ActionSpec,
+  allSpecs,
+  type CommandSpec,
+  checkFlags,
+  missingAction,
+  resolveAction,
+  usageFor,
+} from '@/cli/command.ts';
+import { allCommands } from '@/cli/commands/index.ts';
 import { parseArgs } from '@/cli/parser.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { valueFlags } from '@/main.ts';
+
+const prune: ActionSpec = {
+  name: 'prune',
+  summary: 'Removes the copies idle for a while',
+  usage: 'corami sync prune --unused <duration>',
+  flags: [
+    { name: 'unused', value: 'duration', description: 'Only copies idle for longer than this' },
+    { name: 'yes', description: 'Confirm the removal' },
+  ],
+  run: () => ({}),
+};
+
+const status: ActionSpec = {
+  name: 'status',
+  summary: 'Shows the state of the sync',
+  usage: 'corami sync status [<project>]',
+  run: () => ({}),
+};
 
 const spec: CommandSpec = {
   name: 'sync',
@@ -13,14 +40,18 @@ const spec: CommandSpec = {
     { name: 'path', value: 'folder', description: 'Path of the local copy' },
     { name: 'no-git', description: 'Do not give the new local copy its own .git' },
     { name: 'force', description: 'Proceeds even with conflicts' },
-    { name: 'json', description: 'JSON output' },
   ],
+  actions: [status, prune],
   run: () => ({}),
 };
 
-function usageMessage(argv: string[]): string | undefined {
+function usageMessage(
+  argv: string[],
+  target: CommandSpec | ActionSpec = spec,
+  path = 'sync',
+): string | undefined {
   try {
-    checkFlags(spec, parseArgs(argv, { valueFlags: ['path'] }).values);
+    checkFlags(target, parseArgs(argv, { valueFlags: ['path', 'unused'] }).values, path);
     return undefined;
   } catch (error) {
     expect(error).toBeInstanceOf(CoramiError);
@@ -28,6 +59,34 @@ function usageMessage(argv: string[]): string | undefined {
     return (error as CoramiError).message;
   }
 }
+
+describe('resolveAction', () => {
+  test('finds the action named by the first argument', () => {
+    expect(resolveAction(spec, ['prune', '--unused', '30d'])).toBe(prune);
+    expect(resolveAction(spec, ['status', 'myapp'])).toBe(status);
+  });
+
+  test('leaves to the command an argument that names no action', () => {
+    expect(resolveAction(spec, ['myapp'])).toBeUndefined();
+    expect(resolveAction(spec, [])).toBeUndefined();
+    expect(resolveAction(spec, ['myapp', 'prune'])).toBeUndefined();
+  });
+
+  test('finds nothing in a command without actions', () => {
+    const { actions: _, ...plain } = spec;
+    expect(resolveAction(plain, ['prune'])).toBeUndefined();
+  });
+});
+
+describe('missingAction', () => {
+  test('names the actions of the command', () => {
+    const missing = missingAction(spec, undefined);
+    expect(missing.code).toBe('usage');
+    expect(missing.message).toBe('Missing action for corami sync');
+    expect(missing.fix).toBe('Use corami sync status or prune');
+    expect(missingAction(spec, 'nope').message).toBe('Unknown action for corami sync: nope');
+  });
+});
 
 describe('checkFlags', () => {
   test('accepts the declared flags, their negation and the global ones', () => {
@@ -47,6 +106,32 @@ describe('checkFlags', () => {
     expect(usageMessage(['myapp', '--path'])).toBe('Missing value for --path');
     expect(usageMessage(['myapp', '--path', '--force'])).toBe('Missing value for --path');
   });
+
+  test('takes the flags of the action only', () => {
+    expect(usageMessage(['--unused', '30d', '-y'], prune, 'sync prune')).toBe(undefined);
+    expect(usageMessage(['--path', '/tmp/x'], prune, 'sync prune')).toBe(
+      'Unknown flag for corami sync prune: --path',
+    );
+    expect(usageMessage(['--unused', '30d'])).toBe('Unknown flag for corami sync: --unused');
+  });
+});
+
+describe('usageFor', () => {
+  test('lists the actions of a command', () => {
+    const text = usageFor(spec);
+    expect(text).toContain('Actions:');
+    expect(text).toContain('  prune   Removes the copies idle for a while');
+    expect(text).toContain('--path <folder>');
+    expect(text).not.toContain('--unused');
+  });
+
+  test('shows the flags of an action only', () => {
+    const text = usageFor(prune);
+    expect(text).toContain('Usage: corami sync prune --unused <duration>');
+    expect(text).toContain('--unused <duration>');
+    expect(text).not.toContain('--path');
+    expect(text).not.toContain('Actions:');
+  });
 });
 
 describe('valueFlags', () => {
@@ -55,6 +140,25 @@ describe('valueFlags', () => {
 
     for (const name of ['provider', 'identity-name', 'identity-email', 'include', 'user']) {
       expect(names).toContain(name);
+    }
+  });
+
+  // The arguments are read once for every command: a name that takes a value
+  // somewhere and none elsewhere would eat the next argument of the second.
+  test('gives each flag name one meaning across commands and actions', () => {
+    const takesValue = new Map<string, boolean>();
+
+    for (const item of allSpecs(allCommands())) {
+      for (const flag of item.flags ?? []) {
+        const seen = takesValue.get(flag.name);
+        const current = flag.value !== undefined;
+
+        expect({ flag: flag.name, takesValue: current }).toEqual({
+          flag: flag.name,
+          takesValue: seen ?? current,
+        });
+        takesValue.set(flag.name, current);
+      }
     }
   });
 });
