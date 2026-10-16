@@ -5,7 +5,7 @@ Corami does not back anything up: it is yours to choose. The server is the sourc
 ## What the sync already protects
 
 - **Committed work** is on `origin`.
-- **Uncommitted work** is on every client that synced the project: `corami sync <project>` keeps a real copy on the disk of each machine, both ways.
+- **Uncommitted work** is on every client that synced the project: `corami sync add <project>` keeps a real copy on the disk of each machine, both ways.
 - **What is not protected:** a project that no client ever synced. Its files exist only on the server. Sync it once from your laptop, or include the server in a backup.
 
 ## What to save
@@ -96,6 +96,6 @@ With `loginctl enable-linger` (the Corami setup does it) the timer runs with no 
 2. Restore the folders: `~/projects` from the snapshot or with `restic restore --target /`, then `~/.ssh` and `~/.corami/config.json`.
 3. Add the projects back to the registry if you restored `state.db` and it is from an older version, or when you did not restore it: `corami project add --path ~/projects/<project>`.
 4. On the server, restart the dev servers (a user service, `docker compose up -d`) and register their addresses: `corami serve <port>`.
-5. On every client, `corami sync <project>` and `corami update`.
+5. On every client, `corami sync add <project>` and `corami update`.
 
-The projects are folders: the clients of a restored server find the sync sessions again by running `corami sync`, and git realigns itself through `corami-git-watch`.
+The projects are folders: the clients of a restored server find the sync sessions again by running `corami sync add <project>`, and git realigns itself through `corami-git-watch`.

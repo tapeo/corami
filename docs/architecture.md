@@ -229,7 +229,7 @@ Every remote access goes over HTTPS. A preview in HTTP on a name that is not `lo
 A project is a folder on the server plus a row in `projects(name, path, repo_url, created_at)`. `corami project add` clones or registers a folder, `corami project import` moves one from a client, `corami project rm` removes it (folder, previews and row).
 
 - **The name is the key.** `~/projects/<name>` on the server, `~/corami/<name>` on every client, `corami-<name>` for the Mutagen session.
-- **No file in the repository.** `corami serve` finds the project with `projectForPath` (`src/core/previews.ts`): the longest registered path that contains the current folder. From a client, `corami sync` uses the sync sessions instead.
+- **No file in the repository.** `corami serve` finds the project with `projectForPath` (`src/core/previews.ts`): the longest registered path that contains the current folder. From a client, the sync commands use the sync sessions instead.
 - **One instance per project,** in the main folder. Worktrees created by the harness are not registered.
 
 ## Previews
@@ -296,7 +296,7 @@ The instructions to give the agents are a block to copy into `AGENTS.md`, in the
 
 ### Mutagen session
 
-One session per project, created by the client with `corami sync <project>`:
+One session per project, created by `corami sync add <project>` on a client, or by `project add <git-url>` there, which runs the same thing for the first copy:
 
 ```bash
 mutagen sync create \
@@ -337,7 +337,7 @@ Files generated with absolute paths of the machine (`Generated.xcconfig`, `local
 
 ### Removing the local copy
 
-`corami sync rm <project>` frees space on a client: it deletes **only** the local copy of that client. Project, git and previews on the server stay untouched. `corami sync <project>` recreates it at any time.
+`corami sync rm <project>` frees space on a client: it deletes **only** the local copy of that client. Project, git and previews on the server stay untouched. `corami sync add <project>` recreates it at any time.
 
 Sequence, in order:
 
@@ -404,7 +404,7 @@ corami git watch [proj]          # the cycle of the service, in the foreground: 
 corami git watch [proj] --once   # one cycle only, without staying in listen mode
 ```
 
-- **The `.git` of a new local copy:** `corami sync <project>` gives the copy its own repository. It reads the url of `origin` and the branch of the server from `GET /v1/projects/<p>/git/state`, clones without checkout into a temporary folder next to the copy and moves the `.git` in. When the branch of the server exists on `origin` the copy goes on it, otherwise it stays on the default branch and the command says so. `git reset` then rebuilds the index from `HEAD` without touching the files, which are the ones of the sync. The clone uses the git credentials of the client, never prompts, and when it fails the files are synced anyway: `corami sync <project>` run again retries, and does nothing on a copy that already has its `.git`. `--no-git` skips it. From there the git watch service works on its own.
+- **The `.git` of a new local copy:** `corami sync add <project>` gives the copy its own repository. It reads the url of `origin` and the branch of the server from `GET /v1/projects/<p>/git/state`, clones without checkout into a temporary folder next to the copy and moves the `.git` in. When the branch of the server exists on `origin` the copy goes on it, otherwise it stays on the default branch and the command says so. `git reset` then rebuilds the index from `HEAD` without touching the files, which are the ones of the sync. The clone uses the git credentials of the client, never prompts, and when it fails the files are synced anyway: `corami sync add <project>` run again retries, and does nothing on a copy that already has its `.git`. `--no-git` skips it. From there the git watch service works on its own.
 - **Removing the local copy:** `corami sync rm` stops when the local `.git` has commits or stashes that exist in no remote. With a single remote, `origin`, git counts by itself: a commit the side has already pushed does not block, one never pushed does.
 - The alignment arrives at the next cycle, within a minute, not at the instant of the commit.
 
@@ -431,7 +431,7 @@ corami git watch [proj] --once   # one cycle only, without staying in listen mod
 5. **Verification:** `corami` computes a sha256 manifest of the transferred files on both sides and compares the output of `git for-each-ref` and `git stash list`. When something does not match, it stops with an error and the local folder stays intact.
 6. **Git cleanup on the server:** `git worktree prune` (local worktrees are not imported and are listed in the summary). A warning when `.git/config` contains absolute paths or a credential helper of the local machine.
 7. **Registration:** the project is added to the registry, like `corami project add`.
-8. **Converting the local folder:** renamed to `<dir>.corami-backup-<date>`, then `corami sync <project> --path <dir>` creates the synced copy at the same path, so IDE and habits do not change. After the sync, the `.git` of the renamed folder (which is never moved: it stays complete) is copied into the new local copy, so the local side and the server side each have their own repository. Right after, the local copy runs `git fetch` on `origin` and aligns with a mixed reset, when needed.
+8. **Converting the local folder:** renamed to `<dir>.corami-backup-<date>`, then the synced copy is created at the same path, as `corami sync add <project> --path <dir>` would, so IDE and habits do not change. After the sync, the `.git` of the renamed folder (which is never moved: it stays complete) is copied into the new local copy, so the local side and the server side each have their own repository. Right after, the local copy runs `git fetch` on `origin` and aligns with a mixed reset, when needed.
 9. **Summary:** files moved per category, the key files left on the client, worktrees not imported, path of the renamed folder. It is never deleted automatically.
 
 ### Git on the server

@@ -66,11 +66,7 @@ corami project import ~/dev/myapp                 # only on this laptop, uncommi
 corami project add git@github.com:me/myapp.git    # on GitHub, GitLab or another git remote
 ```
 
-`project import` moves the project to the server and turns the folder into the synced copy, with a backup next to it; files that look like keys stay on the laptop. After `project add`, take the local copy:
-
-```bash
-corami sync myapp          # ~/corami/myapp, synced both ways
-```
+`project import` moves the project to the server and turns the folder into the synced copy, with a backup next to it; files that look like keys stay on the laptop. `project add` clones on the server and brings the copy of this laptop too, in `~/corami/myapp`; `--no-sync` asks for the project alone. Run it from a folder that is already a clone of the repository and it stops instead, pointing at `project import`: the project is already here, and the import is what turns that folder into the synced copy.
 
 That is all: no configuration file. The project lives in `~/projects/myapp` on the server, and every file you save on either side reaches the other within seconds. Dependencies and build outputs (`node_modules`, `build`, `Pods`...) are not synced, and neither are files that look like secrets (`.env`, keystores): each machine keeps its own.
 
@@ -151,7 +147,7 @@ Open that address from any device in your tailnet, phone included. It is stable:
 Every file you save reaches the server within seconds, so when you close the laptop your work is already there, committed or not. On another computer, install Corami as in [step 2](#2-laptop), then:
 
 ```bash
-corami sync myapp
+corami sync add myapp
 ```
 
 The files arrive, uncommitted changes included, and the copy gets its own `.git` on the branch of the server. Run the install command of the project when you need the dependencies.

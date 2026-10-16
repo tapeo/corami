@@ -59,16 +59,20 @@ A role and flags after `--` go to the setup. Without a terminal it installs the 
 
 ## Projects
 
-A project is added to the server once, with `project add` or `project import`, and every client then takes its local copy with `corami sync <project>`. The [quick start](quickstart.md#3-your-first-project) shows which command fits where the project is today.
+`project` acts on the server, `sync` on the copy of this machine. A project is added to the server once, with `project add` or `project import`, and every client then takes its copy with `corami sync add`. `project rm` removes it from the server, previews included, and on a client it closes the copy of that machine first: the files stay where they are, the session does not. `sync rm` is the other way round: it frees the disk of this machine and leaves the server alone. The [quick start](quickstart.md#3-your-first-project) shows which command fits where the project is today.
 
 | Command | Description |
 |---|---|
-| `corami project add <git-url> [--name <name>]` | clones on the server, from any machine |
-| `corami project add --path <folder>` | on the server: registers a folder already there, without moving it |
+| `corami project add <git-url> [--name <name>] [--no-sync] [--dry-run]` | clones on the server; on a client it creates the copy of this machine in the same command, unless `--no-sync` |
+| `corami project add --path <folder> [--dry-run]` | on the server: registers a folder already there, without moving it. A client refuses it: `project import` moves a folder of this machine instead |
 | `corami project import [folder] [--name <name>] [--include <glob>] [--user <user>] [--dry-run]` | on a client: moves a local project to the server, with git history and env files; the folder becomes the synced copy. Files that look like keys stay on the client, in the backup folder. `--include` copies more files not tracked by git, repeatable |
 | `corami project ls` | list with the previews of each project |
 | `corami project show <name>` | project detail: path, git, previews |
 | `corami project rm <name> --yes` | removes the project from the server, previews included. Deletes the folder only if Corami created it: one registered with `--path` stays on disk |
+
+`project add <git-url>` on a client creates the copy at `~/corami/<name>` and starts its session. Before registering the project it stops when the folder it runs in is already a clone of the url (`project import` is the command then), when a session of that name is left behind by a project removed elsewhere (close it with `sync rm` first), and when `~/corami/<name>` exists with something else in it (choose another folder with `--path`). A copy that fails, for a missing Mutagen or SSH, does not take the project away: the output says why and `corami sync add <name>` retries it. `--dry-run` shows the plan without touching anything, the server included.
+
+On a client, `project ls` also reads the sessions of the sync engine and adds a `Local` column, in JSON `local_copy` for every project and `orphan_copies` for the sessions without a project on the server. A Mutagen that does not answer leaves the column empty and the text says it, without failing the command.
 
 A name is taken by the `project add` or `project import` that registers it: a second one is refused, and nothing of the project already there is touched.
 
@@ -90,7 +94,8 @@ The public port is stable per preview and comes from the daemon, in the range 41
 
 | Command | Where | Description |
 |---|---|---|
-| `corami sync <project> [--path <folder>] [--server-path <folder>] [--user <user>] [--no-git] [--dry-run]` | client | creates the local copy, starts the session and gives the copy its own `.git`, cloned from `origin` on the branch of the server; run again, it retries a clone that failed |
+| `corami sync add [<project>] [--path <folder>] [--server-path <folder>] [--user <user>] [--no-git] [--dry-run]` | client | creates the local copy, starts the session and gives the copy its own `.git`, cloned from `origin` on the branch of the server; run again, it retries a clone that failed. On a client, the first project runs it from `project add` |
+| `corami sync ls` | client | the copies of this machine, from the sessions of the engine: no daemon and no git. With the daemon reachable it marks the copies whose project is not on the server |
 | `corami sync status [project]` | client | state, conflicts with their local and server paths, last error, last change and git state of the two sides towards `origin` |
 | `corami sync flush [project]` | client | flushes the session queue |
 | `corami sync rm <project> [--force] [--dry-run]` | client | removes only the local copy, after the checks |
