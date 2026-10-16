@@ -202,9 +202,12 @@ async function planLocalCopy(input: LocalCopyInput): Promise<LocalCopyResult> {
   return { decision, session };
 }
 
-async function sessionFor(project: string): Promise<SyncSession | undefined> {
+async function sessionFor(
+  project: string,
+  engine = new MutagenEngine(),
+): Promise<SyncSession | undefined> {
   try {
-    return await new MutagenEngine().status(project);
+    return await engine.status(project);
   } catch {
     return undefined;
   }
@@ -323,16 +326,58 @@ async function rm(context: CommandContext): Promise<{ data?: unknown; text?: str
     });
   }
 
-  const result = await removeProject(name);
+  // The session of this client goes first: the server deletes the folder of
+  // the project, and the copy should not be there when it happens. The
+  // sessions of the other clients stay where they are.
+  const role = (await readGlobalConfig().catch(() => undefined))?.role;
+  const engine = new MutagenEngine();
+  const session = role === 'client' ? await sessionFor(name, engine) : undefined;
 
-  if (context.output.json) {
-    return { data: result };
+  if (session !== undefined) {
+    await engine.terminate(name);
   }
 
-  const lines = [`Project ${name} removed.`];
+  let result: Record<string, unknown>;
 
-  if (result.folder === 'kept' && typeof result.path === 'string') {
+  try {
+    result = await removeProject(name);
+  } catch (error) {
+    if (session === undefined) {
+      throw error;
+    }
+
+    // The project is still on the server, the copy of this machine is closed:
+    // say both, and how to reopen it.
+    const message = error instanceof Error ? error.message : String(error);
+
+    throw new CoramiError({
+      code: error instanceof CoramiError ? error.code : 'generic',
+      message: `${message}. The sync of this machine is closed`,
+      fix: `corami sync add ${name} to reopen it`,
+    });
+  }
+
+  const keptFolder = result.folder === 'kept' && typeof result.path === 'string';
+  const localCopy = session === undefined ? null : { local: session.beta, session_closed: true };
+
+  if (context.output.json) {
+    return { data: { ...result, local_copy: localCopy } };
+  }
+
+  const lines = [`Project ${name} removed from the server.`];
+
+  if (keptFolder) {
     lines.push(`Folder kept at ${result.path}: it was registered with --path.`);
+  }
+
+  if (localCopy !== null) {
+    lines.push(`Local files kept at ${localCopy.local}: the sync of this machine is closed.`);
+
+    if (!keptFolder) {
+      lines.push(
+        'They are now the only copy of the uncommitted work. Remove that folder before adding the project again with the same name.',
+      );
+    }
   }
 
   return { text: lines.join('\n') };
@@ -408,7 +453,8 @@ export const projectCommand: CommandSpec = {
     },
     {
       name: 'rm',
-      summary: 'Removes a project from the server, previews included',
+      summary:
+        'Removes a project from the server, previews included, and closes the copy of this client',
       usage: 'corami project rm <name> --yes',
       flags: [{ name: 'yes', description: 'Confirm the removal' }],
       examples: ['corami project rm myapp --yes'],
