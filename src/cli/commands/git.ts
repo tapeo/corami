@@ -221,29 +221,16 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 export const gitCommand: CommandSpec = {
   name: 'git',
   summary: 'Keeps the two sides of a project aligned with origin',
-  usage: 'corami git watch [<project>] [--once]',
-  flags: [
-    { name: 'json', description: 'JSON output' },
-    { name: 'once', description: 'One cycle only, without staying in listen mode' },
+  usage: 'corami git <action> [arguments]',
+  flags: [{ name: 'json', description: 'JSON output' }],
+  actions: [
+    {
+      name: 'watch',
+      summary: 'Runs the alignment cycle in the foreground, as the service does',
+      usage: 'corami git watch [<project>] [--once]',
+      flags: [{ name: 'once', description: 'One cycle only, without staying in listen mode' }],
+      examples: ['corami git watch', 'corami git watch myapp --once'],
+      run: watch,
+    },
   ],
-  examples: ['corami git watch', 'corami git watch myapp --once'],
-  run: (context) => {
-    const action = context.args.positionals[0];
-    const rest: CommandContext = {
-      ...context,
-      args: { ...context.args, positionals: context.args.positionals.slice(1) },
-    };
-
-    switch (action) {
-      case undefined:
-      case 'watch':
-        return watch(rest);
-      default:
-        throw new CoramiError({
-          code: 'usage',
-          message: `Unknown command: git ${action}`,
-          fix: 'corami git watch [<project>] [--once]',
-        });
-    }
-  },
 };
