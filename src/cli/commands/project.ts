@@ -1,9 +1,12 @@
+import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { runImport } from '@/cli/commands/import.ts';
+import { createLocalCopy } from '@/cli/commands/sync.ts';
+import { resolveLocalPath } from '@/cli/commands/sync-remove.ts';
 import { renderNextSteps, renderTable } from '@/cli/output.ts';
-import { booleanFlag, stringFlag } from '@/cli/parser.ts';
+import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
 import {
   addProject,
   listProjects,
@@ -11,9 +14,12 @@ import {
   projectDetail,
   removeProject,
 } from '@/cli/server-client.ts';
-import { readGlobalConfig } from '@/core/config.ts';
+import { type Role, readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { afterProjectAdd } from '@/core/next-steps.ts';
+import { type LocalCopyPlan, planProjectAdd, repositoryAt } from '@/core/project-add.ts';
+import { isFolderEmpty } from '@/core/projects.ts';
+import { MutagenEngine, type SyncSession } from '@/integrations/mutagen.ts';
 
 async function ls(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
   const projects = await listProjects();
@@ -82,11 +88,12 @@ function renderDetail(detail: Record<string, unknown>): string {
 
 async function add(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
   const url = context.args.positionals[0];
-  const localPath = stringFlag(context.args, 'path');
-  const name = stringFlag(context.args, 'name');
+  const path = stringFlag(context.args, 'path');
+  const nameFlag = stringFlag(context.args, 'name');
+  const noSync = negatedFlag(context.args, 'sync');
   const dryRun = booleanFlag(context.args, 'dry-run');
 
-  if (url === undefined && localPath === undefined) {
+  if (url === undefined && path === undefined) {
     throw new CoramiError({
       code: 'usage',
       message: 'Missing repository URL or --path',
@@ -95,32 +102,194 @@ async function add(context: CommandContext): Promise<{ data?: unknown; text?: st
   }
 
   const derivedName =
-    name ?? (url === undefined ? basename(resolve(localPath ?? '.')) : deriveName(url));
+    nameFlag ?? (url === undefined ? basename(resolve(path ?? '.')) : deriveName(url));
+  const role = (await readGlobalConfig().catch(() => undefined))?.role;
+  const localPath = resolveLocalPath(derivedName);
+  const plan = await planLocalCopy({
+    role,
+    url,
+    path,
+    explicitName: nameFlag,
+    noSync,
+    project: derivedName,
+    localPath,
+  });
 
   if (dryRun) {
-    return {
-      data: { name: derivedName, url, path: localPath, cloned: false, dry_run: true },
+    const data = {
+      name: derivedName,
+      url,
+      path,
+      cloned: false,
+      dry_run: true,
+      local_copy: plan.decision,
     };
+
+    return context.output.json
+      ? { data }
+      : {
+          text: [
+            `Project ${derivedName} would be added on the server.`,
+            ...dryRunText(plan, localPath),
+          ].join('\n'),
+        };
   }
 
   const project = await addProject(
     url === undefined
-      ? { name: derivedName, path: resolve(localPath ?? '.') }
+      ? { name: derivedName, path: resolve(path ?? '.') }
       : { name: derivedName, url },
   );
+  const serverPath =
+    typeof project.path === 'string' ? project.path : serverProjectPath('~', derivedName);
+  const copy = await applyLocalCopy(plan, derivedName, localPath, serverPath);
 
   if (context.output.json) {
-    return { data: project };
+    return { data: { ...project, local_copy: copy.json } };
   }
 
-  const role = (await readGlobalConfig().catch(() => undefined))?.role;
+  const lines = [`Project ${derivedName} added on the server.`, ...copy.text];
+  lines.push(
+    ...renderNextSteps(
+      afterProjectAdd(derivedName, {
+        role,
+        ...(copy.local === undefined ? {} : { local: copy.local }),
+        serverPath,
+      }),
+    ),
+  );
 
-  return {
-    text: [
-      `Project ${derivedName} added on the server.`,
-      ...renderNextSteps(afterProjectAdd(derivedName, role)),
-    ].join('\n'),
-  };
+  return { text: lines.join('\n') };
+}
+
+interface LocalCopyInput {
+  role: Role | undefined;
+  url?: string | undefined;
+  path?: string | undefined;
+  explicitName?: string | undefined;
+  noSync: boolean;
+  project: string;
+  localPath: string;
+}
+
+interface LocalCopyResult {
+  decision: LocalCopyPlan;
+  session?: SyncSession | undefined;
+}
+
+// The state `planProjectAdd` decides on, gathered here: the repository of the
+// folder we run in, the session of the sync engine, the folder of the copy.
+async function planLocalCopy(input: LocalCopyInput): Promise<LocalCopyResult> {
+  const onClient = input.role === 'client';
+  const needsCopy = onClient && !input.noSync && input.url !== undefined;
+  const cwdRepository =
+    onClient && input.url !== undefined ? await repositoryAt(process.cwd()) : undefined;
+  const session = needsCopy ? await sessionFor(input.project) : undefined;
+  const decision = planProjectAdd({
+    role: input.role,
+    url: input.url,
+    path: input.path,
+    explicitName: input.explicitName,
+    noSync: input.noSync,
+    cwdRepository,
+    session: session !== undefined,
+    target: {
+      exists: existsSync(input.localPath),
+      empty: isFolderEmpty(input.localPath),
+    },
+  });
+
+  return { decision, session };
+}
+
+async function sessionFor(project: string): Promise<SyncSession | undefined> {
+  try {
+    return await new MutagenEngine().status(project);
+  } catch {
+    return undefined;
+  }
+}
+
+interface AppliedCopy {
+  json: Record<string, unknown> | null;
+  text: string[];
+  /** The local copy, when this command created one. */
+  local?: string | undefined;
+}
+
+// The copy is created after the project is on the server: one that fails does
+// not take the project away, it is reported and `sync add` retries it.
+async function applyLocalCopy(
+  plan: LocalCopyResult,
+  project: string,
+  localPath: string,
+  serverPath: string,
+): Promise<AppliedCopy> {
+  if (plan.decision === 'create') {
+    try {
+      const copy = await createLocalCopy({ project, localPath, serverPath });
+
+      return {
+        json: { status: 'created', local: copy.local, git: copy.git },
+        text: [
+          `Local copy at ${copy.local}.`,
+          `git: ${copy.git.summary}`,
+          ...(copy.git.detail === undefined ? [] : [`  ${copy.git.detail}`]),
+        ],
+        local: copy.local,
+      };
+    } catch (error) {
+      const summary = error instanceof Error ? error.message : String(error);
+      const fix = `corami sync add ${project}`;
+
+      return {
+        json: { status: 'failed', summary, fix },
+        text: [`Local copy failed: ${summary}`, `To try again: ${fix}.`],
+      };
+    }
+  }
+
+  if (plan.decision === 'orphan-session') {
+    const local = plan.session?.beta ?? localPath;
+    const fix = `corami sync rm ${project}, then corami sync add ${project}`;
+
+    return {
+      json: { status: 'orphan-session', local, fix },
+      text: [
+        `Local copy not created: a sync session for ${project} already exists at ${local}, from a project that was removed from the server.`,
+        `To start over: ${fix}.`,
+      ],
+    };
+  }
+
+  if (plan.decision === 'target-not-empty') {
+    const fix = `Move that folder away, or create the copy elsewhere: corami sync add ${project} --path <folder>`;
+
+    return {
+      json: { status: 'target-not-empty', local: localPath, fix },
+      text: [`Local copy not created: ${localPath} exists and is not empty.`, `${fix}.`],
+    };
+  }
+
+  return { json: null, text: [] };
+}
+
+function dryRunText(plan: LocalCopyResult, localPath: string): string[] {
+  if (plan.decision === 'create') {
+    return [`Local copy would be created at ${localPath}.`];
+  }
+
+  if (plan.decision === 'orphan-session') {
+    return [
+      `Local copy not created: a sync session already exists at ${plan.session?.beta ?? localPath}.`,
+    ];
+  }
+
+  if (plan.decision === 'target-not-empty') {
+    return [`Local copy not created: ${localPath} exists and is not empty.`];
+  }
+
+  return [];
 }
 
 function deriveName(url: string): string {
@@ -194,7 +363,8 @@ export const projectCommand: CommandSpec = {
     {
       name: 'add',
       summary: 'Clones a repository on the server, or registers a folder already there',
-      usage: 'corami project add <git-url> [--name <name>] | corami project add --path <folder>',
+      usage:
+        'corami project add <git-url> [--name <name>] [--no-sync] [--dry-run] | corami project add --path <folder>',
       flags: [
         NAME_FLAG,
         {
@@ -202,10 +372,15 @@ export const projectCommand: CommandSpec = {
           value: 'folder',
           description: 'Register an existing folder of the server, without cloning',
         },
+        {
+          name: 'no-sync',
+          description: 'Do not create the local copy of this machine',
+        },
         DRY_RUN_FLAG,
       ],
       examples: [
         'corami project add git@github.com:me/myapp.git',
+        'corami project add git@github.com:me/myapp.git --no-sync',
         'corami project add --path ~/projects/myapp',
       ],
       run: add,

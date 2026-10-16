@@ -45,25 +45,42 @@ export function afterClientSetup(projects: string[] | undefined): string[] {
   return projects.map((name) => `corami sync add ${name}`);
 }
 
-export function afterProjectAdd(name: string, role: Role | undefined): string[] {
-  const preview = `On the server: corami serve <port> from ${serverProjectPath('~', name)} to give a preview an address`;
-
-  return role === 'client'
-    ? [`corami sync add ${name} to get the code on this machine`, preview]
-    : [`On each client: corami sync add ${name}`, preview];
+export interface ProjectAddFacts {
+  role: Role | undefined;
+  /** The local copy just created, when there is one. */
+  local?: string | undefined;
+  /** The folder of the project on the server, when it is not `~/projects/<name>`. */
+  serverPath?: string | undefined;
 }
 
-export function afterSync(name: string, local: string): string[] {
+/**
+ * On a client, the copy of this machine was either created, and then it leads
+ * to `afterSync`, or the output already says why it was not; on a server,
+ * every client takes its copy.
+ */
+export function afterProjectAdd(name: string, facts: ProjectAddFacts): string[] {
+  if (facts.role === 'client') {
+    return facts.local === undefined ? [] : afterSync(name, facts.local, facts.serverPath);
+  }
+
+  return [`On each client: corami sync add ${name}`, previewStep(name, facts.serverPath)];
+}
+
+export function afterSync(name: string, local: string, serverPath?: string): string[] {
   return [
     `Open ${local}: every save reaches the server within seconds`,
-    `On the server: corami serve <port> from ${serverProjectPath('~', name)} to give a preview an address`,
+    previewStep(name, serverPath),
   ];
 }
 
-export function afterImport(name: string): string[] {
-  return [
-    `On the server: corami serve <port> from ${serverProjectPath('~', name)} to give a preview an address`,
-  ];
+export function afterImport(name: string, serverPath?: string): string[] {
+  return [previewStep(name, serverPath)];
+}
+
+/** The preview of a project, from the folder the server keeps it in. */
+function previewStep(name: string, serverPath?: string): string {
+  const folder = serverPath ?? serverProjectPath('~', name);
+  return `On the server: corami serve <port> from ${folder} to give a preview an address`;
 }
 
 /** The way in for `corami` without a command, from the role of this machine. */

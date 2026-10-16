@@ -55,16 +55,33 @@ describe('afterClientSetup', () => {
 });
 
 describe('afterProjectAdd', () => {
-  test('on a client, the copy of this machine comes first', () => {
-    const steps = afterProjectAdd('myapp', 'client');
+  test('on a client with a copy, it leads to the copy and to the preview', () => {
+    const steps = afterProjectAdd('myapp', { role: 'client', local: '/Users/me/corami/myapp' });
 
-    expect(steps[0]).toBe('corami sync add myapp to get the code on this machine');
+    expect(steps[0]).toContain('Open /Users/me/corami/myapp');
     expect(steps[1]).toContain('from ~/projects/myapp');
   });
 
+  test('on a client without a copy, it adds nothing', () => {
+    expect(afterProjectAdd('myapp', { role: 'client' })).toEqual([]);
+  });
+
   test('on the server, every client takes its copy', () => {
-    expect(afterProjectAdd('myapp', 'server')[0]).toBe('On each client: corami sync add myapp');
-    expect(afterProjectAdd('myapp', undefined)[0]).toBe('On each client: corami sync add myapp');
+    expect(afterProjectAdd('myapp', { role: 'server' })[0]).toBe(
+      'On each client: corami sync add myapp',
+    );
+    expect(afterProjectAdd('myapp', { role: undefined })[0]).toBe(
+      'On each client: corami sync add myapp',
+    );
+  });
+
+  test('the preview starts from the folder of the server', () => {
+    const steps = afterProjectAdd('myapp', {
+      role: 'server',
+      serverPath: '/srv/manual/myapp',
+    });
+
+    expect(steps[1]).toContain('from /srv/manual/myapp');
   });
 });
 
@@ -75,6 +92,13 @@ describe('afterSync and afterImport', () => {
     expect(steps[0]).toContain('Open /Users/me/corami/myapp');
     expect(steps[1]).toContain('corami serve <port> from ~/projects/myapp');
     expect(afterImport('myapp')).toEqual([steps[1] ?? '']);
+  });
+
+  test('both take the folder of the project on the server', () => {
+    expect(afterSync('myapp', '/Users/me/corami/myapp', '/srv/code/myapp')[1]).toContain(
+      'from /srv/code/myapp',
+    );
+    expect(afterImport('myapp', '/srv/code/myapp')[0]).toContain('from /srv/code/myapp');
   });
 });
 

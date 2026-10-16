@@ -252,7 +252,7 @@ export async function runImport(
     });
   }
 
-  return finish(context, steps, projectName, target, dryRun);
+  return finish(context, steps, projectName, target, dryRun, serverPath);
 }
 
 export async function remoteHome(user: string, host: string): Promise<string | undefined> {
@@ -371,6 +371,7 @@ function finish(
   project: string,
   target: string,
   dryRun: boolean,
+  serverPath?: string,
 ): { data?: unknown; text?: string } {
   if (context.output.json) {
     return { data: { project, local: target, dry_run: dryRun, steps } };
@@ -381,7 +382,7 @@ function finish(
   const failed = steps.some((step) => step.status === 'failed');
 
   if (!failed && !dryRun) {
-    lines.push(...renderNextSteps(afterImport(project)));
+    lines.push(...renderNextSteps(afterImport(project, serverPath)));
   }
 
   return { text: lines.join('\n') };

@@ -78,9 +78,12 @@ export interface CreateSyncOptions {
   user?: string | undefined;
 }
 
-export async function createSyncFor(
-  options: CreateSyncOptions,
-): Promise<{ session: SyncSession | undefined; local: string; created: boolean }> {
+export async function createSyncFor(options: CreateSyncOptions): Promise<{
+  session: SyncSession | undefined;
+  local: string;
+  created: boolean;
+  serverPath: string;
+}> {
   const { engine, host, user } = await engineAndServer(options.user);
 
   const detail = await projectDetail(options.project).catch(() => {
@@ -91,6 +94,12 @@ export async function createSyncFor(
     });
   });
 
+  // The folder the server keeps the project in: `project add --path` leaves it
+  // where it was.
+  const serverPath =
+    options.serverPath ??
+    (typeof detail.path === 'string' ? detail.path : serverProjectPath('~', options.project));
+
   const existing = await engine.status(options.project);
   const target = localCopyTarget({
     session: existing !== undefined,
@@ -99,7 +108,7 @@ export async function createSyncFor(
   });
 
   if (target === 'existing' && existing !== undefined) {
-    return { session: existing, local: existing.beta, created: false };
+    return { session: existing, local: existing.beta, created: false, serverPath };
   }
 
   if (target === 'not-empty') {
@@ -116,11 +125,7 @@ export async function createSyncFor(
     project: options.project,
     serverHost: host,
     serverUser: user,
-    // The folder the server keeps the project in: `project add --path` leaves
-    // it where it was.
-    serverPath:
-      options.serverPath ??
-      (typeof detail.path === 'string' ? detail.path : serverProjectPath('~', options.project)),
+    serverPath,
     localPath: options.localPath,
     ignore: [],
   });
@@ -129,7 +134,34 @@ export async function createSyncFor(
     session: await engine.status(options.project),
     local: options.localPath,
     created: true,
+    serverPath,
   };
+}
+
+export interface CreateLocalCopyOptions extends CreateSyncOptions {
+  /** false with `--no-git`: the copy stays without a repository of its own. */
+  git?: boolean;
+}
+
+/**
+ * The local copy with its `.git`: what `sync add` and `project add` run. The
+ * import stays on `createSyncFor`, because the `.git` of its copy comes from
+ * the folder it renames.
+ */
+export async function createLocalCopy(options: CreateLocalCopyOptions): Promise<{
+  session: SyncSession | undefined;
+  local: string;
+  created: boolean;
+  serverPath: string;
+  git: CopyGitResult;
+}> {
+  const result = await createSyncFor(options);
+  const git =
+    options.git === false
+      ? ({ status: 'skipped', summary: 'Skipped with --no-git' } satisfies CopyGitResult)
+      : await copyGit(options.project, result.local);
+
+  return { ...result, git };
 }
 
 async function start(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
@@ -147,15 +179,14 @@ async function start(context: CommandContext): Promise<{ data?: unknown; text?: 
     return context.output.json ? { data: plan } : { text: JSON.stringify(plan, null, 2) };
   }
 
-  const result = await createSyncFor({
+  const result = await createLocalCopy({
     project,
     localPath,
     serverPath: stringFlag(context.args, 'server-path'),
     user: explicitUser,
+    git: !negatedFlag(context.args, 'git'),
   });
-  const gitResult = negatedFlag(context.args, 'git')
-    ? ({ status: 'skipped', summary: 'Skipped with --no-git' } satisfies CopyGitResult)
-    : await copyGit(project, result.local);
+  const gitResult = result.git;
 
   if (context.output.json) {
     return {
@@ -188,7 +219,7 @@ async function start(context: CommandContext): Promise<{ data?: unknown; text?: 
   }
 
   if (result.created) {
-    lines.push(...renderNextSteps(afterSync(project, result.local)));
+    lines.push(...renderNextSteps(afterSync(project, result.local, result.serverPath)));
   }
 
   return { text: lines.join('\n') };

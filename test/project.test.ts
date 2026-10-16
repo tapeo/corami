@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { projectsRootFor, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
+import { git } from '@/core/git.ts';
 import { PORT_RANGE_START } from '@/core/ports.ts';
 import {
   allocatePublicPort,
@@ -15,6 +16,7 @@ import {
   validatePreviewName,
   validateTargetPort,
 } from '@/core/previews.ts';
+import { planProjectAdd, repositoryAt, sameRepository } from '@/core/project-add.ts';
 import { isFolderEmpty, localCopyTarget, serverFolderRemoval } from '@/core/projects.ts';
 
 describe('allocatePublicPort', () => {
@@ -164,6 +166,131 @@ describe('localCopyTarget', () => {
 
   test('leaves a folder with something else in it alone', () => {
     expect(localCopyTarget({ session: false, exists: true, empty: false })).toBe('not-empty');
+  });
+});
+
+describe('sameRepository', () => {
+  test('reads one repository from the scp, ssh and https forms', () => {
+    const ssh = 'git@github.com:me/myapp.git';
+
+    expect(sameRepository(ssh, 'https://github.com/me/myapp')).toBe(true);
+    expect(sameRepository(ssh, 'ssh://git@github.com/me/myapp')).toBe(true);
+    expect(sameRepository(ssh, 'ssh://git@github.com:2222/me/myapp.git')).toBe(true);
+    expect(sameRepository(ssh, 'https://GitHub.com/me/myapp/')).toBe(true);
+    expect(sameRepository(ssh, 'https://me@github.com/me/myapp')).toBe(true);
+    expect(sameRepository('github.com:me/myapp.git', ssh)).toBe(true);
+  });
+
+  test('tells apart another project, another host and another case', () => {
+    const ssh = 'git@github.com:me/myapp.git';
+
+    expect(sameRepository(ssh, 'git@github.com:me/other.git')).toBe(false);
+    expect(sameRepository(ssh, 'git@gitlab.com:me/myapp.git')).toBe(false);
+    // Two paths of a git server can differ by case: a false positive would
+    // stop the command on a folder that is not the project.
+    expect(sameRepository(ssh, 'git@github.com:me/MyApp.git')).toBe(false);
+  });
+
+  test('compares two local paths without a host', () => {
+    expect(sameRepository('/srv/git/myapp.git', '/srv/git/myapp/')).toBe(true);
+    expect(sameRepository('file:///srv/git/myapp.git', '/srv/git/myapp')).toBe(true);
+    expect(sameRepository('/srv/git/myapp', '/srv/git/other')).toBe(false);
+    expect(sameRepository('/srv/git/myapp', 'git@github.com:me/myapp.git')).toBe(false);
+  });
+});
+
+describe('repositoryAt', () => {
+  test('answers with the root of the clone, from a subfolder too', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-repo-'));
+    await git(root, ['init', '--quiet', '--initial-branch=main']);
+    await git(root, ['remote', 'add', 'origin', 'git@github.com:me/myapp.git']);
+
+    const sub = join(root, 'apps', 'web');
+    mkdirSync(sub, { recursive: true });
+
+    // git answers with the physical path: a temporary folder can be a link.
+    expect(await repositoryAt(sub)).toEqual({
+      root: realpathSync(root),
+      origin: 'git@github.com:me/myapp.git',
+    });
+    expect(await repositoryAt(join(root, 'missing'))).toBeUndefined();
+  });
+});
+
+describe('planProjectAdd', () => {
+  const client = {
+    role: 'client' as const,
+    url: 'git@github.com:me/myapp.git',
+    noSync: false,
+    session: false,
+    target: { exists: false, empty: true },
+  };
+
+  test('creates the copy on a client, in a folder that is missing or empty', () => {
+    expect(planProjectAdd(client)).toBe('create');
+    expect(planProjectAdd({ ...client, target: { exists: true, empty: true } })).toBe('create');
+  });
+
+  test('refuses --path on a client, and takes it on the server', () => {
+    const asClient = () => planProjectAdd({ ...client, url: undefined, path: '/srv/code/myapp' });
+
+    expect(asClient).toThrow(CoramiError);
+
+    try {
+      asClient();
+      expect.unreachable();
+    } catch (error) {
+      expect((error as CoramiError).fix).toContain('corami project import');
+    }
+
+    expect(
+      planProjectAdd({ ...client, role: 'server', url: undefined, path: '/srv/code/myapp' }),
+    ).toBe('skipped');
+  });
+
+  test('stops on a clone of the same url, naming the folder to import', () => {
+    const cwdRepository = { root: '/Users/me/dev/myapp', origin: 'https://github.com/me/myapp' };
+
+    expect(() => planProjectAdd({ ...client, cwdRepository })).toThrow(CoramiError);
+
+    try {
+      planProjectAdd({ ...client, cwdRepository, explicitName: 'shop' });
+      expect.unreachable();
+    } catch (error) {
+      const fix = (error as CoramiError).fix ?? '';
+
+      expect(fix).toContain('corami project import /Users/me/dev/myapp');
+      expect(fix).toContain('--name shop');
+    }
+  });
+
+  test('the clone check runs also with --no-sync', () => {
+    const cwdRepository = { root: '/Users/me/dev/myapp', origin: 'git@github.com:me/myapp.git' };
+
+    expect(() => planProjectAdd({ ...client, noSync: true, cwdRepository })).toThrow(CoramiError);
+  });
+
+  test('leaves the orphan session alone instead of reusing it', () => {
+    expect(planProjectAdd({ ...client, session: true })).toBe('orphan-session');
+  });
+
+  test('does not sync into a folder with something else in it', () => {
+    expect(planProjectAdd({ ...client, target: { exists: true, empty: false } })).toBe(
+      'target-not-empty',
+    );
+  });
+
+  test('does nothing on a server, with --no-sync or without a url', () => {
+    expect(planProjectAdd({ ...client, role: 'server' })).toBe('skipped');
+    expect(planProjectAdd({ ...client, role: undefined })).toBe('skipped');
+    expect(planProjectAdd({ ...client, noSync: true })).toBe('skipped');
+    expect(planProjectAdd({ ...client, url: undefined })).toBe('skipped');
+  });
+
+  test('a clone of another repository does not stop the command', () => {
+    const cwdRepository = { root: '/Users/me/dev/other', origin: 'git@github.com:me/other.git' };
+
+    expect(planProjectAdd({ ...client, cwdRepository })).toBe('create');
   });
 });
 
