@@ -43,7 +43,7 @@ Implementation details of v1.
   - [SQLite tables](#sqlite-tables)
 - [CLI output contract](#cli-output-contract)
 - [Harness](#harness)
-  - [Recipe: opencode and OpenChamber](#recipe-opencode-and-openchamber)
+  - [Recipe](#recipe)
 - [Install and updates](#install-and-updates)
   - [Distribution: GitHub only](#distribution-github-only)
   - [`install.sh`](#installsh)
@@ -289,7 +289,7 @@ Corami ships no checker: the preview is a normal HTTPS page, and the agent opens
 
 ### Instructions for the agent
 
-The instructions to give the agents are a block to copy into `AGENTS.md`, in the [quick start](quickstart.md#6-verifying-what-an-agent-produced) and in [previews.md](previews.md#instructions-for-the-agent). Corami no longer writes the file by itself.
+The instructions to give the agents are a block to copy into `AGENTS.md`, in the [quick start](quickstart.md#tell-the-agent-about-corami). Corami no longer writes the file by itself.
 
 ## Sync
 
@@ -513,21 +513,15 @@ Stable error codes: `capability_missing`, `server_unreachable`, `sync_conflict`,
 Corami does not install, configure or start the harness, and it has no code dedicated to any harness. The user picks whatever they prefer. Corami offers only what any harness needs:
 
 - projects on the server and previews, all usable from the CLI with JSON output;
-- the instructions for the agent in the [quick start](quickstart.md#6-verifying-what-an-agent-produced), to copy into `AGENTS.md`;
+- the instructions for the agent in the [quick start](quickstart.md#tell-the-agent-about-corami), to copy into `AGENTS.md`;
 - HTTPS on the tailnet through `tailscale serve`, which the user uses directly;
 - a place where the harness data lives, that the user's backup can include.
 
 **Run the harness on the server.** The sessions then live on the always-on machine: a client closes, another opens, and the work is there, half way through a task. The clients are windows on the server (`opencode attach`, a web UI), not a second place where agents run. A harness on a client keeps its sessions only on that client.
 
-### Recipe: opencode and OpenChamber
+### Recipe
 
-In the user documentation, ready to copy. The first published recipe:
-
-1. Install opencode with the official script and run `opencode auth login`.
-2. Create a user systemd service that runs `opencode serve --hostname 127.0.0.1 --port 4096`, with `OPENCODE_SERVER_PASSWORD` set.
-3. Expose it: `tailscale serve --bg --https=4096 http://127.0.0.1:4096`. From a terminal: `opencode attach https://<fqdn>:4096` ([docs](https://opencode.ai/docs/cli/#attach)).
-4. Same steps for OpenChamber, with its port.
-5. Save `~/.local/share/opencode` with your backup, if you want the session history (see [backup.md](backup.md)).
+The recipe for opencode, ready to copy, is in the [quick start](quickstart.md#4-your-agent-always-on): a user systemd service that runs `opencode serve --hostname 127.0.0.1 --port 4096` with `OPENCODE_SERVER_PASSWORD` set, a `tailscale serve` rule, `opencode attach https://<fqdn>:4096` from a client ([docs](https://opencode.ai/docs/cli/#attach)). OpenChamber takes the same steps with its port, and `~/.local/share/opencode` goes in the backup when the session history matters (see [backup.md](backup.md)).
 
 Other harnesses: same shape. A service on `127.0.0.1`, a `tailscale serve` rule, any paths to save. Terminal-only harnesses (e.g. Claude Code) are used over SSH on the server, in a persistent session like tmux.
 
