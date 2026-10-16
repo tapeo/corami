@@ -160,7 +160,13 @@ async function rm(context: CommandContext): Promise<{ data?: unknown; text?: str
     return { data: result };
   }
 
-  return { text: `Project ${name} removed.` };
+  const lines = [`Project ${name} removed.`];
+
+  if (result.folder === 'kept' && typeof result.path === 'string') {
+    lines.push(`Folder kept at ${result.path}: it was registered with --path.`);
+  }
+
+  return { text: lines.join('\n') };
 }
 
 const NAME_FLAG = { name: 'name', value: 'name', description: 'Project name on the server' };

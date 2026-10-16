@@ -68,7 +68,9 @@ A project is added to the server once, with `project add` or `project import`, a
 | `corami project import [folder] [--name <name>] [--include <glob>] [--user <user>] [--dry-run]` | on a client: moves a local project to the server, with git history and env files; the folder becomes the synced copy. Files that look like keys stay on the client, in the backup folder. `--include` copies more files not tracked by git, repeatable |
 | `corami project ls` | list with the previews of each project |
 | `corami project show <name>` | project detail: path, git, previews |
-| `corami project rm <name> --yes` | removes the project from the server, previews included |
+| `corami project rm <name> --yes` | removes the project from the server, previews included. Deletes the folder only if Corami created it: one registered with `--path` stays on disk |
+
+A name is taken by the `project add` or `project import` that registers it: a second one is refused, and nothing of the project already there is touched.
 
 There is no configuration file in the repository: Corami knows a project by its folder.
 

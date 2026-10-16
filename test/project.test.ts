@@ -10,6 +10,7 @@ import {
   validatePreviewName,
   validateTargetPort,
 } from '@/core/previews.ts';
+import { serverFolderRemoval } from '@/core/projects.ts';
 
 describe('allocatePublicPort', () => {
   test('starts at the first port of the range', () => {
@@ -92,6 +93,44 @@ describe('the projects of a server', () => {
   test('a project keeps the POSIX path of the server, on every client', () => {
     expect(serverProjectPath('/home/corami', 'myapp')).toBe('/home/corami/projects/myapp');
     expect(serverProjectPath('~', 'myapp')).toBe('~/projects/myapp');
+  });
+});
+
+describe('serverFolderRemoval', () => {
+  const root = '/home/corami/projects';
+
+  test('deletes a project folder inside the root', () => {
+    expect(serverFolderRemoval('/home/corami/projects/myapp', root)).toBe('delete');
+  });
+
+  test('deletes a folder nested deeper', () => {
+    expect(serverFolderRemoval('/home/corami/projects/team/myapp', root)).toBe('delete');
+  });
+
+  test('deletes the folder when the path has a trailing slash', () => {
+    expect(serverFolderRemoval('/home/corami/projects/myapp/', root)).toBe('delete');
+  });
+
+  test('keeps the root itself', () => {
+    expect(serverFolderRemoval(root, root)).toBe('keep');
+    expect(serverFolderRemoval(`${root}/`, root)).toBe('keep');
+  });
+
+  test('keeps a folder outside the root', () => {
+    expect(serverFolderRemoval('/home/corami/code/myapp', root)).toBe('keep');
+  });
+
+  test('keeps a sibling with a shared prefix', () => {
+    expect(serverFolderRemoval('/home/corami/projects-old/myapp', root)).toBe('keep');
+  });
+
+  test('keeps a path that leaves the root with ..', () => {
+    expect(serverFolderRemoval('/home/corami/projects/../secrets', root)).toBe('keep');
+  });
+
+  test('keeps a path that is not absolute', () => {
+    expect(serverFolderRemoval('projects/myapp', root)).toBe('keep');
+    expect(serverFolderRemoval('/home/corami/projects/myapp', 'projects')).toBe('keep');
   });
 });
 

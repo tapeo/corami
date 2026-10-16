@@ -8,6 +8,7 @@ import { gitOriginUrl, readGitState } from '@/core/git.ts';
 import { gitStateJson } from '@/core/git-align.ts';
 import { gitOriginState, originStatusJson } from '@/core/git-follow.ts';
 import { validatePreviewName, validateTargetPort } from '@/core/previews.ts';
+import { serverFolderRemoval } from '@/core/projects.ts';
 import { deleteProject, getProject, listProjects, upsertProject } from '@/core/state.ts';
 import {
   applyPreview,
@@ -237,6 +238,15 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
   }
 
   const target = path ?? join(projectRoot(), name);
+  const existing = getProject(name);
+
+  if (existing !== undefined) {
+    throw new CoramiError({
+      code: 'project_exists',
+      message: `Already a project named ${name} on the server: ${existing.path}`,
+      fix: `corami project ls to see it, or corami project rm ${name} --yes to remove it first`,
+    });
+  }
 
   if (url === undefined && path !== undefined && !existsSync(path)) {
     throw new CoramiError({
@@ -275,10 +285,24 @@ async function removeProject(name: string): Promise<ApiResult> {
   }
 
   await removeProjectPreviews(name);
-  await run('rm', ['-rf', row.path]);
+
+  // The folder of a project registered with `project add --path` is not ours:
+  // it leaves the registry and stays where it is.
+  const removal = serverFolderRemoval(row.path, projectRoot());
+
+  if (removal === 'delete') {
+    await run('rm', ['-rf', row.path]);
+  }
+
   deleteProject(name);
 
-  return { status: 200, body: { ok: true, data: { removed: name } } };
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      data: { removed: name, folder: removal === 'delete' ? 'deleted' : 'kept', path: row.path },
+    },
+  };
 }
 
 async function readBody(request: Request): Promise<Record<string, unknown>> {
