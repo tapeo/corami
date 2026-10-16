@@ -39,6 +39,22 @@ export async function userId(user: string): Promise<number | undefined> {
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
+/**
+ * The home directory of an account, from the passwd database: the home of the
+ * account a unit runs as, which is not the home of the process that installs
+ * the unit when the setup runs as root.
+ */
+export async function homeDirectoryForUser(user: string): Promise<string | undefined> {
+  const result = await run('getent', ['passwd', user]);
+
+  if (!result.ok) {
+    return undefined;
+  }
+
+  const home = result.stdout.trim().split(':')[5] ?? '';
+  return home === '' ? undefined : home;
+}
+
 export function renderUnit(spec: UnitSpec): string {
   const lines = [
     '[Unit]',
@@ -73,6 +89,8 @@ export interface InstallUnitOptions {
   scope: 'system' | 'user';
   spec: UnitSpec;
   unitDir?: string | undefined;
+  /** The home of the account a user unit belongs to, when installing one. */
+  home?: string | undefined;
 }
 
 export function scopeEnv(scope: InstallUnitOptions['scope']): Record<string, string | undefined> {
@@ -94,7 +112,7 @@ export async function installUnit(
 ): Promise<{ path: string; scope: InstallUnitOptions['scope'] }> {
   const scopeArgs = options.scope === 'user' ? ['--user'] : [];
   const env = scopeEnv(options.scope);
-  const dir = options.unitDir ?? unitDir(options.scope);
+  const dir = options.unitDir ?? unitDir(options.scope, options.home);
   const path = join(dir, `${options.spec.name}.service`);
 
   await run('mkdir', ['-p', dir]);
@@ -115,10 +133,10 @@ export async function isUnitActive(
   return result.ok && result.stdout.trim() === 'active';
 }
 
-function unitDir(scope: InstallUnitOptions['scope']): string {
+function unitDir(scope: InstallUnitOptions['scope'], home?: string): string {
   if (scope === 'user') {
-    const home = process.env.HOME ?? '';
-    return join(home, '.config', 'systemd', 'user');
+    const base = home ?? process.env.HOME ?? '';
+    return join(base, '.config', 'systemd', 'user');
   }
 
   return '/etc/systemd/system';

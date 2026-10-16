@@ -14,9 +14,10 @@ export interface ServiceSpec {
   restart?: boolean | undefined;
   // Linux only: 'user' (default, as on the clients) or 'system' when user
   // services are not available. `systemdUser` becomes `User=` in the system
-  // unit.
+  // unit, `systemdHome` is the home a user unit belongs to.
   systemdScope?: 'user' | 'system' | undefined;
   systemdUser?: string | undefined;
+  systemdHome?: string | undefined;
   // macOS only: where launchd writes what the service prints. On Linux the
   // output goes to the journal on its own.
   logFile?: string | undefined;
@@ -137,6 +138,7 @@ export async function installService(spec: ServiceSpec): Promise<ServiceResult> 
   if (platform === 'linux') {
     const unit = await installUnit({
       scope: spec.systemdScope ?? 'user',
+      ...(spec.systemdHome === undefined ? {} : { home: spec.systemdHome }),
       spec: {
         name: spec.name,
         description: spec.description,

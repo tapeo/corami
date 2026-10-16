@@ -6,7 +6,12 @@ import { type GlobalConfig, paths, readGlobalConfig, writeGlobalConfig } from '@
 import { run, runOrThrow } from '@/core/exec.ts';
 import { isTailnetOnlyFirewall } from '@/core/setup-choices.ts';
 import { gitWatchSpec, installService } from '@/integrations/service.ts';
-import { enableLinger, installUnit, isUnitActive, userId } from '@/integrations/systemd.ts';
+import {
+  enableLinger,
+  homeDirectoryForUser,
+  installUnit,
+  isUnitActive,
+} from '@/integrations/systemd.ts';
 import {
   serveHttps,
   type TailscaleStatus,
@@ -331,13 +336,25 @@ export async function stepDaemon(context: StepContext): Promise<StepResult> {
   const lingerWorks = await enableLinger(user);
   const scope = lingerWorks ? 'user' : 'system';
   const binary = coramiBinary();
+  const home = await homeDirectoryForUser(user);
+
+  if (scope === 'system' && home === undefined) {
+    return {
+      step: 'daemon',
+      status: 'failed',
+      summary: `No account ${user} on this machine`,
+      detail: 'Run the setup as root, which creates the account',
+    };
+  }
+
   const result = await installUnit({
     scope,
+    ...(scope === 'user' && home !== undefined ? { home } : {}),
     spec: {
       name: 'corami-daemon',
       description: 'Corami daemon',
       execStart: `${binary} daemon`,
-      environment: scope === 'user' ? {} : { HOME: process.env.HOME ?? '/root' },
+      environment: scope === 'user' ? {} : { HOME: home ?? '' },
       ...(scope === 'system' ? { user } : {}),
     },
   });
@@ -367,8 +384,20 @@ export async function stepGitWatch(context: StepContext): Promise<StepResult> {
 
   const user = context.coramiUser ?? 'root';
   const scope = context.daemonScope ?? ((await enableLinger(user)) ? 'user' : 'system');
+  const home = await homeDirectoryForUser(user);
+
+  if (scope === 'system' && home === undefined) {
+    return {
+      step: 'git-watch',
+      status: 'failed',
+      summary: `No account ${user} on this machine`,
+      detail: 'Run the setup as root, which creates the account',
+    };
+  }
+
   const result = await installService({
     ...gitWatchSpec(coramiBinary(), scope),
+    ...(scope === 'user' && home !== undefined ? { systemdHome: home } : {}),
     ...(scope === 'system' ? { systemdUser: user } : {}),
   });
 
