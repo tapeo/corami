@@ -1,10 +1,5 @@
 import type { FlagValue } from '@/cli/parser.ts';
-import {
-  CoramiError,
-  type CoramiErrorOptions,
-  type ErrorCode,
-  toCoramiError,
-} from '@/core/errors.ts';
+import { type CoramiError, type ErrorCode, toCoramiError } from '@/core/errors.ts';
 
 export interface SuccessEnvelope<T> {
   ok: true;
@@ -109,10 +104,6 @@ export function renderTable<T>(rows: T[], columns: TableColumn<T>[]): string {
   );
 
   return [header, ...body].join('\n');
-}
-
-export function fail(options: CoramiErrorOptions): never {
-  throw new CoramiError(options);
 }
 
 export function reportError(error: unknown, options: OutputOptions): number {

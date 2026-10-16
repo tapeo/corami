@@ -1,11 +1,8 @@
-import { CoramiError } from '@/core/errors.ts';
-
 export type FlagValue = string | boolean | string[];
 
 export interface ParsedArgs {
   values: Record<string, FlagValue>;
   positionals: string[];
-  rest: string[];
 }
 
 export interface ParseOptions {
@@ -45,14 +42,14 @@ export function parseArgs(argv: string[], options: ParseOptions = {}): ParsedArg
   const valueFlags = new Set(options.valueFlags ?? []);
   const values: Record<string, FlagValue> = {};
   const positionals: string[] = [];
-  const rest: string[] = [];
   let index = 0;
 
   while (index < argv.length) {
     const token = argv[index] ?? '';
 
+    // After `--` every word is an argument, also one that starts with `-`.
     if (token === '--') {
-      rest.push(...argv.slice(index + 1));
+      positionals.push(...argv.slice(index + 1));
       break;
     }
 
@@ -112,7 +109,7 @@ export function parseArgs(argv: string[], options: ParseOptions = {}): ParsedArg
     index += 1;
   }
 
-  return { values, positionals, rest };
+  return { values, positionals };
 }
 
 export function stringFlag(args: ParsedArgs, name: string): string | undefined {
@@ -159,17 +156,4 @@ export function stringListFlag(args: ParsedArgs, name: string): string[] {
 
 export function negatedFlag(args: ParsedArgs, name: string): boolean {
   return args.values[name] === false;
-}
-
-export function requirePositional(args: ParsedArgs, index: number, name: string): string {
-  const value = args.positionals[index];
-
-  if (value === undefined) {
-    throw new CoramiError({
-      code: 'usage',
-      message: `Missing argument: ${name}`,
-    });
-  }
-
-  return value;
 }

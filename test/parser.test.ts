@@ -1,13 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import {
-  booleanFlag,
-  parseArgs,
-  requirePositional,
-  stringFlag,
-  stringListFlag,
-} from '@/cli/parser.ts';
-import { CoramiError } from '@/core/errors.ts';
+import { booleanFlag, parseArgs, stringFlag, stringListFlag } from '@/cli/parser.ts';
 
 describe('parseArgs', () => {
   test('collects positionals', () => {
@@ -62,10 +55,10 @@ describe('parseArgs', () => {
     expect(stringListFlag(args, 'include')).toEqual(['a', 'b']);
   });
 
-  test('keeps everything after -- as rest', () => {
+  test('takes everything after -- as arguments', () => {
     const args = parseArgs(['sync', '--', 'a', '-b']);
-    expect(args.positionals).toEqual(['sync']);
-    expect(args.rest).toEqual(['a', '-b']);
+    expect(args.positionals).toEqual(['sync', 'a', '-b']);
+    expect(args.values).toEqual({});
   });
 
   test('does not consume the next token for an undeclared flag', () => {
@@ -78,21 +71,5 @@ describe('parseArgs', () => {
     const args = parseArgs(['--name', 'shop-app'], { valueFlags: ['name'] });
     expect(stringFlag(args, 'name')).toBe('shop-app');
     expect(args.positionals).toEqual([]);
-  });
-});
-
-describe('requirePositional', () => {
-  test('returns the value', () => {
-    expect(requirePositional(parseArgs(['up', 'shop-app']), 1, 'project')).toBe('shop-app');
-  });
-
-  test('throws a usage error when missing', () => {
-    try {
-      requirePositional(parseArgs(['up']), 1, 'project');
-      throw new Error('expected the call to throw');
-    } catch (error) {
-      expect(error).toBeInstanceOf(CoramiError);
-      expect((error as CoramiError).code).toBe('usage');
-    }
   });
 });
