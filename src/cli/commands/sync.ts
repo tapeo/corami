@@ -4,16 +4,16 @@ import { dirname, resolve, sep } from 'node:path';
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { gitSides } from '@/cli/commands/git.ts';
 import { applyRemoval, planRemoval, resolveLocalPath } from '@/cli/commands/sync-remove.ts';
-import { renderNextSteps, renderTable } from '@/cli/output.ts';
+import { renderNextSteps, renderOrphanCopies, renderTable } from '@/cli/output.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
-import { projectDetail, projectGit, serverUserForSync } from '@/cli/server-client.ts';
+import { listProjects, projectDetail, projectGit, serverUserForSync } from '@/cli/server-client.ts';
 import { readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { type CopyGitResult, giveCopyGit } from '@/core/git.ts';
 import { describeOrigin } from '@/core/git-follow.ts';
 import { lastChange } from '@/core/last-change.ts';
 import { afterSync } from '@/core/next-steps.ts';
-import { isFolderEmpty, localCopyTarget } from '@/core/projects.ts';
+import { isFolderEmpty, localCopyTarget, withLocalCopies } from '@/core/projects.ts';
 import { CONFLICT_RESOLUTION, conflictCopies } from '@/core/sync-conflicts.ts';
 import { MutagenEngine, type SyncSession } from '@/integrations/mutagen.ts';
 
@@ -237,8 +237,19 @@ async function list(context: CommandContext): Promise<{ data?: unknown; text?: s
     }))
     .sort((left, right) => left.project.localeCompare(right.project));
 
+  // The projects of the server tell the copies of a project that is gone from
+  // the others. Without an answer the command still lists the sessions.
+  const projects = await listProjects().catch(() => undefined);
+  const orphans =
+    projects === undefined
+      ? []
+      : withLocalCopies(
+          projects,
+          copies.map((copy) => ({ project: copy.project, local: copy.local })),
+        ).orphan_copies;
+
   if (context.output.json) {
-    return { data: { copies } };
+    return { data: projects === undefined ? { copies } : { copies, orphan_copies: orphans } };
   }
 
   if (copies.length === 0) {
@@ -246,11 +257,14 @@ async function list(context: CommandContext): Promise<{ data?: unknown; text?: s
   }
 
   return {
-    text: renderTable(copies, [
-      { header: 'Project', value: (row) => row.project },
-      { header: 'Local', value: (row) => row.local },
-      { header: 'State', value: (row) => row.status },
-    ]),
+    text: [
+      renderTable(copies, [
+        { header: 'Project', value: (row) => row.project },
+        { header: 'Local', value: (row) => row.local },
+        { header: 'State', value: (row) => row.status },
+      ]),
+      ...renderOrphanCopies(orphans),
+    ].join('\n'),
   };
 }
 

@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 
-import { failure, renderNextSteps, renderSteps, renderTable, success } from '@/cli/output.ts';
+import {
+  failure,
+  renderNextSteps,
+  renderOrphanCopies,
+  renderSteps,
+  renderTable,
+  success,
+} from '@/cli/output.ts';
 import { CoramiError, exitCodeFor, toCoramiError } from '@/core/errors.ts';
 
 describe('envelope', () => {
@@ -96,5 +103,14 @@ describe('renderNextSteps', () => {
       '  corami sync add b',
     ]);
     expect(renderNextSteps([])).toEqual([]);
+  });
+});
+
+describe('renderOrphanCopies', () => {
+  test('names the copy and the command that closes it', () => {
+    expect(renderOrphanCopies([{ project: 'site', local: '/Users/me/corami/site' }])).toEqual([
+      'Copy of a removed project: site at /Users/me/corami/site, close it with corami sync rm site.',
+    ]);
+    expect(renderOrphanCopies([])).toEqual([]);
   });
 });

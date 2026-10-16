@@ -17,7 +17,12 @@ import {
   validateTargetPort,
 } from '@/core/previews.ts';
 import { planProjectAdd, repositoryAt, sameRepository } from '@/core/project-add.ts';
-import { isFolderEmpty, localCopyTarget, serverFolderRemoval } from '@/core/projects.ts';
+import {
+  isFolderEmpty,
+  localCopyTarget,
+  serverFolderRemoval,
+  withLocalCopies,
+} from '@/core/projects.ts';
 
 describe('allocatePublicPort', () => {
   test('starts at the first port of the range', () => {
@@ -166,6 +171,38 @@ describe('localCopyTarget', () => {
 
   test('leaves a folder with something else in it alone', () => {
     expect(localCopyTarget({ session: false, exists: true, empty: false })).toBe('not-empty');
+  });
+});
+
+describe('withLocalCopies', () => {
+  const projects = [
+    { name: 'myapp', path: '/home/corami/projects/myapp' },
+    { name: 'site', path: '/home/corami/projects/site' },
+  ];
+
+  test('gives every project the copy of this machine, or null', () => {
+    const listed = withLocalCopies(projects, [
+      { project: 'myapp', local: '/Users/me/corami/myapp' },
+    ]);
+
+    expect(listed.projects).toEqual([
+      {
+        name: 'myapp',
+        path: '/home/corami/projects/myapp',
+        local_copy: '/Users/me/corami/myapp',
+      },
+      { name: 'site', path: '/home/corami/projects/site', local_copy: null },
+    ]);
+    expect(listed.orphan_copies).toEqual([]);
+  });
+
+  test('reports the copies of a project that is not on the server', () => {
+    const listed = withLocalCopies(projects, [
+      { project: 'gone', local: '/Users/me/corami/gone' },
+      { project: 'myapp', local: '/Users/me/corami/myapp' },
+    ]);
+
+    expect(listed.orphan_copies).toEqual([{ project: 'gone', local: '/Users/me/corami/gone' }]);
   });
 });
 

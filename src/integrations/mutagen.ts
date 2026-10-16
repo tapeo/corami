@@ -131,11 +131,25 @@ export class MutagenEngine implements SyncEngine {
   }
 
   async list(): Promise<SyncSession[]> {
-    const binary = await this.path();
+    return (await this.sessions()) ?? [];
+  }
+
+  /**
+   * The sessions of the engine, undefined when it did not answer: no binary,
+   * no daemon, or output that is not JSON. `list` reads that as no session at
+   * all; a command that reports them says it instead.
+   */
+  async sessions(): Promise<SyncSession[] | undefined> {
+    const binary = await this.path().catch(() => undefined);
+
+    if (binary === undefined) {
+      return undefined;
+    }
+
     const result = await run(binary, ['sync', 'list', '--template', '{{ json . }}']);
 
     if (!result.ok) {
-      return [];
+      return undefined;
     }
 
     return parseSessions(result.stdout);

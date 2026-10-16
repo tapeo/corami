@@ -146,6 +146,14 @@ export function renderNextSteps(steps: string[]): string[] {
   return ['', 'Next steps:', ...steps.map((step) => `  ${step}`)];
 }
 
+/** The copies whose project is not on the server, one line each. */
+export function renderOrphanCopies(orphans: Array<{ project: string; local: string }>): string[] {
+  return orphans.map(
+    (orphan) =>
+      `Copy of a removed project: ${orphan.project} at ${orphan.local}, close it with corami sync rm ${orphan.project}.`,
+  );
+}
+
 export function reportError(error: unknown, options: OutputOptions): number {
   const coramiError = toCoramiError(error);
   emit(failure(coramiError), options);

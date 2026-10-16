@@ -50,3 +50,30 @@ export function localCopyTarget(state: {
 
   return 'create';
 }
+
+/**
+ * The projects of the server with the copy of this machine, if there is one,
+ * plus the copies whose project is not on the server: a project removed from
+ * another client leaves the session of this one behind.
+ */
+export function withLocalCopies<T extends { name: string }>(
+  projects: T[],
+  sessions: Array<{ project: string; local: string }>,
+): {
+  projects: Array<T & { local_copy: string | null }>;
+  orphan_copies: Array<{ project: string; local: string }>;
+} {
+  const copies = new Map(sessions.map((session) => [session.project, session.local]));
+  const names = new Set(projects.map((project) => project.name));
+
+  return {
+    projects: projects.map((project) => ({
+      ...project,
+      local_copy: copies.get(project.name) ?? null,
+    })),
+    orphan_copies: sessions
+      .filter((session) => !names.has(session.project))
+      .map((session) => ({ project: session.project, local: session.local }))
+      .sort((left, right) => left.project.localeCompare(right.project)),
+  };
+}

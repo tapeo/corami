@@ -5,7 +5,7 @@ import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { runImport } from '@/cli/commands/import.ts';
 import { createLocalCopy } from '@/cli/commands/sync.ts';
 import { resolveLocalPath } from '@/cli/commands/sync-remove.ts';
-import { renderNextSteps, renderTable } from '@/cli/output.ts';
+import { renderNextSteps, renderOrphanCopies, renderTable } from '@/cli/output.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
 import {
   addProject,
@@ -18,35 +18,69 @@ import { type Role, readGlobalConfig, serverProjectPath } from '@/core/config.ts
 import { CoramiError } from '@/core/errors.ts';
 import { afterProjectAdd } from '@/core/next-steps.ts';
 import { type LocalCopyPlan, planProjectAdd, repositoryAt } from '@/core/project-add.ts';
-import { isFolderEmpty } from '@/core/projects.ts';
+import { isFolderEmpty, withLocalCopies } from '@/core/projects.ts';
 import { MutagenEngine, type SyncSession } from '@/integrations/mutagen.ts';
 
 async function ls(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
   const projects = await listProjects();
+  const role = (await readGlobalConfig().catch(() => undefined))?.role;
+  const onClient = role === 'client';
+  const sessions = onClient ? await new MutagenEngine().sessions() : undefined;
+  const listed =
+    sessions === undefined
+      ? undefined
+      : withLocalCopies(
+          projects,
+          sessions.map((session) => ({ project: session.project, local: session.beta })),
+        );
 
   if (context.output.json) {
-    return { data: { projects } };
+    if (!onClient) {
+      return { data: { projects } };
+    }
+
+    if (listed === undefined) {
+      return { data: { projects, local_copies: 'unavailable' } };
+    }
+
+    return { data: listed };
   }
 
-  if (projects.length === 0) {
-    return { text: 'No projects. Add one with corami project add <url>.' };
-  }
-
-  const rows = projects.map((project) => ({
+  const rows = (listed?.projects ?? projects).map((project) => ({
     name: project.name,
     path: project.path,
     previews: project.previews.length,
     responding: project.previews.filter((preview) => preview.responding).length,
+    local:
+      'local_copy' in project && typeof project.local_copy === 'string' ? project.local_copy : '-',
   }));
+  type Row = (typeof rows)[number];
+  const columns: Array<{ header: string; value: (row: Row) => string }> = [
+    { header: 'Project', value: (row) => row.name },
+    { header: 'Path', value: (row) => row.path },
+    { header: 'Previews', value: (row) => String(row.previews) },
+    { header: 'Responding', value: (row) => String(row.responding) },
+  ];
 
-  return {
-    text: renderTable(rows, [
-      { header: 'Project', value: (row) => row.name },
-      { header: 'Path', value: (row) => row.path },
-      { header: 'Previews', value: (row) => String(row.previews) },
-      { header: 'Responding', value: (row) => String(row.responding) },
-    ]),
-  };
+  if (onClient) {
+    columns.push({ header: 'Local', value: (row) => row.local });
+  }
+
+  const lines = [
+    projects.length === 0
+      ? 'No projects. Add one with corami project add <url>.'
+      : renderTable(rows, columns),
+  ];
+
+  if (onClient && sessions === undefined) {
+    lines.push('Mutagen did not answer: the local copies of this machine are not shown.');
+  }
+
+  if (listed !== undefined) {
+    lines.push(...renderOrphanCopies(listed.orphan_copies));
+  }
+
+  return { text: lines.join('\n') };
 }
 
 async function show(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
