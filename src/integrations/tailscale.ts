@@ -128,11 +128,6 @@ export async function setOperator(user: string): Promise<{ ok: boolean; detail: 
   };
 }
 
-export interface ServeRule {
-  port: number;
-  target: string;
-}
-
 export async function serveHttps(
   port: number,
   target = `http://127.0.0.1:${port}`,

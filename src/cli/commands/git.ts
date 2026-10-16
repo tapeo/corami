@@ -20,7 +20,7 @@ import {
   originStatusJson,
 } from '@/core/git-follow.ts';
 import { listProjects } from '@/core/state.ts';
-import { MutagenEngine, type SyncSession } from '@/integrations/mutagen.ts';
+import { MutagenEngine } from '@/integrations/mutagen.ts';
 
 export interface GitSides {
   local: string;
@@ -33,11 +33,7 @@ export interface GitSides {
 
 // The state of the two sides, read without network: the server is told by the
 // daemon, the local side is read on this machine. Only the cycle does a fetch.
-export async function gitSides(
-  project: string,
-  local: string,
-  _session?: SyncSession,
-): Promise<GitSides> {
+export async function gitSides(project: string, local: string): Promise<GitSides> {
   const client = await gitOriginState(local);
   const server = await projectGitOrigin(project).catch(() => undefined);
 

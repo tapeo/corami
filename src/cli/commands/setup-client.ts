@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import type { CommandContext, FlagSpec } from '@/cli/command.ts';
+import type { CommandContext } from '@/cli/command.ts';
 import { runStepInTerminal, type StepResult } from '@/cli/commands/setup-steps.ts';
 import { renderTable } from '@/cli/output.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
@@ -35,18 +35,6 @@ interface ClientContext {
   skipMutagen: boolean;
   health?: Record<string, unknown> | undefined;
 }
-
-export const CLIENT_FLAGS: FlagSpec[] = [
-  {
-    name: 'user',
-    value: 'user',
-    description: 'User on the server, default the one the server announces',
-  },
-  { name: 'no-mutagen', description: 'Do not install Mutagen and its daemon service' },
-  { name: 'step', value: 'step', description: `Runs a single step: ${CLIENT_STEPS.join(', ')}` },
-  { name: 'dry-run', description: 'Check without installing or writing anything' },
-  { name: 'json', description: 'JSON output' },
-];
 
 const STEP_RUNNERS: Record<ClientStep, (context: ClientContext) => Promise<StepResult>> = {
   tailscale: stepTailscale,

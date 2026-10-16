@@ -49,11 +49,6 @@ export interface ProjectSummary {
 // the system timeout, which on macOS is over a minute.
 const REQUEST_TIMEOUT_MS = 20_000;
 
-export async function daemonIsLocal(): Promise<boolean> {
-  const config = await readGlobalConfig().catch(() => undefined);
-  return config?.role !== 'client';
-}
-
 export async function baseUrl(): Promise<string> {
   const config = await readGlobalConfig().catch(() => undefined);
 

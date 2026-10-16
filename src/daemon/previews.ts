@@ -7,13 +7,7 @@ import {
   planServeRules,
   previewUrl,
 } from '@/core/previews.ts';
-import {
-  deletePreview,
-  getPreview,
-  getProject,
-  listPreviews,
-  upsertPreview,
-} from '@/core/state.ts';
+import { deletePreview, getPreview, listPreviews, upsertPreview } from '@/core/state.ts';
 import { servedPorts, serveHttps, serveOff, serveStatus } from '@/integrations/tailscale.ts';
 
 export interface PreviewOptions {
@@ -123,10 +117,6 @@ export async function reconcileServeRules(): Promise<{ add: number[]; remove: nu
   }
 
   return plan;
-}
-
-export function projectExists(project: string): boolean {
-  return getProject(project) !== undefined;
 }
 
 function toView(row: PreviewRow, fqdn: string | undefined, responding: boolean): PreviewView {

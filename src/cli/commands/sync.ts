@@ -290,7 +290,7 @@ async function gitStatesFor(
   }> = [];
 
   for (const session of sessions) {
-    const sides = await gitSides(session.project, session.beta, session).catch(() => undefined);
+    const sides = await gitSides(session.project, session.beta).catch(() => undefined);
 
     rows.push({
       project: session.project,
