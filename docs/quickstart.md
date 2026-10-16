@@ -55,7 +55,7 @@ corami project add git@github.com:me/myapp.git
 
 For a private repository, run `corami setup git` on the server first: it creates the SSH key of the server and tells you where to add it. A project that lives only on your laptop comes over with `corami project import` instead ([section 4](#4-your-laptop-with-the-code-on-disk)), and a folder already on the server with `corami project add --path <folder>`.
 
-That is all: there is no configuration file to write. The project lives in `~/corami/projects/myapp` on the server, and every client takes its own copy with `corami sync myapp`.
+That is all: there is no configuration file to write. The project lives in `~/projects/myapp` on the server, and every client takes its own copy with `corami sync myapp`.
 
 ## 3. Your agent, always on
 
@@ -149,7 +149,7 @@ On the server, start the dev server and give it an address:
 
 ```bash
 # on the server
-cd ~/corami/projects/myapp
+cd ~/projects/myapp
 systemd-run --user --unit myapp-web --collect \
   pnpm exec next dev -H 127.0.0.1 -p 3000
 corami serve 3000
@@ -183,7 +183,7 @@ To give the agent the same picture, copy this into the `AGENTS.md` of the projec
 ## Corami environment
 
 - The project lives on the server, synced with every client. The dev server runs on the server, not on this machine: `systemd-run --user --unit <project>-web --collect pnpm exec next dev -H 127.0.0.1 -p 3000`.
-- Give the preview an address: `corami serve 3000` (from `~/corami/projects/<project>`), then read `url` from the JSON. `corami serve ls` lists the addresses.
+- Give the preview an address: `corami serve 3000` (from `~/projects/<project>`), then read `url` from the JSON. `corami serve ls` lists the addresses.
 - After every UI change, open that URL with the browser of this harness (or a browser tool it offers) and read the console and the failed requests there, then take the screenshot. The page is in a secure context because the address is HTTPS.
 - Builds run where the tools are: on the server, or on a client over SSH. See docs/builds.md in the Corami repository.
 ```

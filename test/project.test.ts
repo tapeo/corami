@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { projectsRootFor, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { PORT_RANGE_START } from '@/core/ports.ts';
 import {
@@ -83,22 +84,33 @@ describe('planServeRules', () => {
   });
 });
 
+describe('the projects of a server', () => {
+  test('live directly in the home of the account that owns them', () => {
+    expect(projectsRootFor('/home/corami')).toBe('/home/corami/projects');
+  });
+
+  test('a project keeps the POSIX path of the server, on every client', () => {
+    expect(serverProjectPath('/home/corami', 'myapp')).toBe('/home/corami/projects/myapp');
+    expect(serverProjectPath('~', 'myapp')).toBe('~/projects/myapp');
+  });
+});
+
 describe('projectForPath', () => {
   const projects = [
-    { name: 'shop-app', path: '/root/corami/projects/shop-app' },
-    { name: 'other', path: '/root/corami/projects/other' },
+    { name: 'shop-app', path: '/root/projects/shop-app' },
+    { name: 'other', path: '/root/projects/other' },
   ];
 
   test('finds the project that contains the folder', () => {
-    expect(projectForPath('/root/corami/projects/shop-app/apps/web', projects)).toBe('shop-app');
+    expect(projectForPath('/root/projects/shop-app/apps/web', projects)).toBe('shop-app');
   });
 
   test('matches the root itself', () => {
-    expect(projectForPath('/root/corami/projects/other', projects)).toBe('other');
+    expect(projectForPath('/root/projects/other', projects)).toBe('other');
   });
 
   test('does not match a sibling with a shared prefix', () => {
-    expect(projectForPath('/root/corami/projects/shop-app-2', projects)).toBeUndefined();
+    expect(projectForPath('/root/projects/shop-app-2', projects)).toBeUndefined();
   });
 
   test('returns nothing outside the projects', () => {

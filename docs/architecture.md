@@ -175,7 +175,7 @@ corami/
 | Global config | `~/.corami/config.json` | `~/.corami/config.json` |
 | State | `~/.corami/state.db` | |
 | Service logs | `~/.corami/logs/` (git watch) | `~/.corami/logs/` |
-| Projects | `~/corami/projects/<project>` | `~/corami/<project>` (Windows: `%USERPROFILE%\corami\<project>`). For imported projects, the original path |
+| Projects | `~/projects/<project>` | `~/corami/<project>` (Windows: `%USERPROFILE%\corami\<project>`). For imported projects, the original path |
 
 Every service listens on `127.0.0.1:<port>`. `tailscale serve` exposes the same port number over HTTPS on the tailnet (see "Network and security").
 
@@ -227,7 +227,7 @@ Every remote access goes over HTTPS. A preview in HTTP on a name that is not `lo
 
 A project is a folder on the server plus a row in `projects(name, path, repo_url, created_at)`. `corami project add` clones or registers a folder, `corami project import` moves one from a client, `corami project rm` removes it (folder, previews and row).
 
-- **The name is the key.** `~/corami/projects/<name>` on the server, `~/corami/<name>` on every client, `corami-<name>` for the Mutagen session.
+- **The name is the key.** `~/projects/<name>` on the server, `~/corami/<name>` on every client, `corami-<name>` for the Mutagen session.
 - **No file in the repository.** `corami serve` finds the project with `projectForPath` (`src/core/previews.ts`): the longest registered path that contains the current folder. From a client, `corami sync` uses the sync sessions instead.
 - **One instance per project,** in the main folder. Worktrees created by the harness are not registered.
 
@@ -303,7 +303,7 @@ mutagen sync create \
   --mode two-way-safe \
   --ignore-vcs \
   --ignore <list> \
-  corami@<server>:~/corami/projects/<project> \
+  corami@<server>:~/projects/<project> \
   ~/corami/<project>
 ```
 
@@ -415,7 +415,7 @@ corami git watch [proj] --once   # one cycle only, without staying in listen mod
 
 | What | Destination | How |
 |---|---|---|
-| Working tree and complete `.git` (local branches, unpushed commits, uncommitted changes, untracked files, stashes, hooks, LFS, submodules) | `~/corami/projects/<project>`, and a copy of the `.git` in the local copy | tar streamed over Tailscale SSH, then the `.git` copied from the old local folder into the new copy |
+| Working tree and complete `.git` (local branches, unpushed commits, uncommitted changes, untracked files, stashes, hooks, LFS, submodules) | `~/projects/<project>`, and a copy of the `.git` in the local copy | tar streamed over Tailscale SSH, then the `.git` copied from the old local folder into the new copy |
 | `.env*` files | project folder on the server, permissions 0600 | inside the same archive |
 | Files that look like keys or credentials (e.g. `*.jks`, `*.keystore`, `*.p8`, `*.p12`, service account JSON) | none: they stay on the client | excluded from the archive, listed in the summary |
 | Other files ignored by git and not regenerable | the project folder on the server, when selected with `--include <glob>` | inside the archive |
@@ -457,7 +457,7 @@ More:
 
 ## Backup
 
-Corami has no backup of its own: restic with a timer, or a snapshot of the provider, is the user's choice. What to save (`~/corami/projects`, `~/.corami/config.json`, `~/.ssh`), what to leave out (the regenerable folders of `local-copy.ts`) and how to restore on a new server are in [backup.md](backup.md).
+Corami has no backup of its own: restic with a timer, or a snapshot of the provider, is the user's choice. What to save (`~/projects`, `~/.corami/config.json`, `~/.ssh`), what to leave out (the regenerable folders of `local-copy.ts`) and how to restore on a new server are in [backup.md](backup.md).
 
 Two notes for the code:
 

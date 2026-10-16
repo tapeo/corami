@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { stringFlag } from '@/cli/parser.ts';
 
-import { projectRoot, readGlobalConfig } from '@/core/config.ts';
+import { projectRoot, projectsRootFor, readGlobalConfig } from '@/core/config.ts';
 import {
   type CheckResult,
   type CheckStatus,
@@ -126,7 +126,7 @@ async function checkServerAccount(): Promise<CheckResult[]> {
   }
 
   const home = await homeDirectoryForUser(user);
-  const projects = home === undefined ? projectRoot() : join(home, 'corami', 'projects');
+  const projects = home === undefined ? projectRoot() : projectsRootFor(home);
   const legacy = join('/root', 'corami', 'projects');
   const [groups, sudo, foreign] = await Promise.all([
     runCommand('id', ['-nG', user]),

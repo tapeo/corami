@@ -6,7 +6,7 @@ import { createSyncFor } from '@/cli/commands/sync.ts';
 import { renderTable } from '@/cli/output.ts';
 import { booleanFlag, stringFlag, stringListFlag } from '@/cli/parser.ts';
 import { addProject, projectDetail, serverUserForSync } from '@/cli/server-client.ts';
-import { homeDirectory, readGlobalConfig } from '@/core/config.ts';
+import { homeDirectory, readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { run } from '@/core/exec.ts';
 import { findLocalOnlyFiles, isSensitiveName } from '@/core/local-copy.ts';
@@ -127,7 +127,7 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
     return finish(context, steps, projectName, target, dryRun);
   }
 
-  const serverPath = `${home}/corami/projects/${projectName}`;
+  const serverPath = serverProjectPath(home, projectName);
   const transferred = await transfer(
     target,
     user,
@@ -398,7 +398,7 @@ function finish(
   if (!failed && !dryRun) {
     lines.push(
       '',
-      `Next step: on the server, corami serve <port> from ~/corami/projects/${project} to give the preview an address`,
+      `Next step: on the server, corami serve <port> from ${serverProjectPath('~', project)} to give the preview an address`,
     );
   }
 

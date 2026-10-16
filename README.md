@@ -87,7 +87,7 @@ corami project add --path ~/code/myapp           # already in a folder on the se
 corami sync myapp                                # on every client: ~/corami/myapp, synced both ways
 ```
 
-The paths are always the same: `~/corami/projects/<name>` on the server, `~/corami/<name>` on every client. For a private repository, run `corami setup git` on the server first and add its SSH key to GitHub, GitLab or Bitbucket.
+The paths are always the same: `~/projects/<name>` on the server, `~/corami/<name>` on every client. For a private repository, run `corami setup git` on the server first and add its SSH key to GitHub, GitLab or Bitbucket.
 
 ### Your agent
 

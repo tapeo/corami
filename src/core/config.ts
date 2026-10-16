@@ -1,5 +1,5 @@
 import { homedir, userInfo } from 'node:os';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 
 import { CoramiError } from '@/core/errors.ts';
 import { fileExists } from '@/core/exec.ts';
@@ -53,9 +53,24 @@ export function paths(): CoramiPaths {
   };
 }
 
+/**
+ * The folder of the projects of a server: directly in the home of the account
+ * that owns them. That account exists for the projects, and `~/corami/projects`
+ * under `/home/corami` would repeat the name. The path is the one of the
+ * server, so it stays POSIX even when the command runs on a Windows client.
+ */
+export function projectsRootFor(home: string): string {
+  return posix.join(home, 'projects');
+}
+
+/** A project on the server: `/home/corami/projects/<name>`, `~/projects/<name>`. */
+export function serverProjectPath(home: string, name: string): string {
+  return posix.join(projectsRootFor(home), name);
+}
+
 export function projectRoot(): string {
   const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
-  return join(home, 'corami', 'projects');
+  return projectsRootFor(home);
 }
 
 export function parseConfig(text: string, source: string): Record<string, unknown> {

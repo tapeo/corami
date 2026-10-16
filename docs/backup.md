@@ -12,7 +12,7 @@ Corami does not back anything up: it is yours to choose. The server is the sourc
 
 | What | Path | Why |
 |---|---|---|
-| Projects, with their `.git` | `~/corami/projects/` | code, branches, unpushed commits, uncommitted changes, stashes |
+| Projects, with their `.git` | `~/projects/` | code, branches, unpushed commits, uncommitted changes, stashes |
 | Corami configuration | `~/.corami/config.json` | role, server name, owner login |
 | Server git key | `~/.ssh/id_ed25519_corami`, `~/.ssh/config`, `~/.ssh/known_hosts` | after a restore the key does not have to be added to the providers again |
 | Harness sessions | e.g. `~/.local/share/opencode` | the history of the agents, if you want it |
@@ -51,7 +51,7 @@ export RESTIC_PASSWORD_FILE="$HOME/.corami/restic-password"
 restic backup \
   --exclude node_modules --exclude .next --exclude build --exclude Pods \
   --exclude '.dart_tool' --exclude '.fvm' \
-  "$HOME/corami/projects" "$HOME/.corami/config.json" "$HOME/.ssh"
+  "$HOME/projects" "$HOME/.corami/config.json" "$HOME/.ssh"
 restic forget --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune
 ```
 
@@ -93,8 +93,8 @@ With `loginctl enable-linger` (the Corami setup does it) the timer runs with no 
 ## Restore on a new server
 
 1. Install Corami and run `corami setup server` (`docs/quickstart.md`).
-2. Restore the folders: `~/corami/projects` from the snapshot or with `restic restore --target /`, then `~/.ssh` and `~/.corami/config.json`.
-3. Add the projects back to the registry if you restored `state.db` and it is from an older version, or when you did not restore it: `corami project add --path ~/corami/projects/<project>`.
+2. Restore the folders: `~/projects` from the snapshot or with `restic restore --target /`, then `~/.ssh` and `~/.corami/config.json`.
+3. Add the projects back to the registry if you restored `state.db` and it is from an older version, or when you did not restore it: `corami project add --path ~/projects/<project>`.
 4. On the server, restart the dev servers (a user service, `docker compose up -d`) and register their addresses: `corami serve <port>`.
 5. On every client, `corami sync <project>` and `corami update`.
 

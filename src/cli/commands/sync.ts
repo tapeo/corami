@@ -6,7 +6,7 @@ import { gitSides } from '@/cli/commands/git.ts';
 import { applyRemoval, planRemoval, resolveLocalPath } from '@/cli/commands/sync-remove.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
 import { projectDetail, projectGit, serverUserForSync } from '@/cli/server-client.ts';
-import { homeDirectory, readGlobalConfig } from '@/core/config.ts';
+import { homeDirectory, readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { type CopyGitResult, giveCopyGit } from '@/core/git.ts';
 import { describeOrigin } from '@/core/git-follow.ts';
@@ -107,7 +107,7 @@ export async function createSyncFor(
     // it where it was.
     serverPath:
       options.serverPath ??
-      (typeof detail.path === 'string' ? detail.path : `~/corami/projects/${options.project}`),
+      (typeof detail.path === 'string' ? detail.path : serverProjectPath('~', options.project)),
     localPath: options.localPath,
     ignore: [],
   });
@@ -127,7 +127,7 @@ async function start(context: CommandContext): Promise<{ data?: unknown; text?: 
     const { host, user } = await engineAndServer();
     const plan = {
       project,
-      server: `${user}@${host}:~/corami/projects/${project}`,
+      server: `${user}@${host}:${serverProjectPath('~', project)}`,
       local: localPath,
     };
     return context.output.json ? { data: plan } : { text: JSON.stringify(plan, null, 2) };

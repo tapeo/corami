@@ -7,7 +7,7 @@ Corami does not build projects. It does not know how a project compiles and does
 The server is where the agent lives, so it is also where most builds run:
 
 ```bash
-# on the server, from ~/corami/projects/<project>
+# on the server, from ~/projects/<project>
 pnpm install --frozen-lockfile
 pnpm build
 ```

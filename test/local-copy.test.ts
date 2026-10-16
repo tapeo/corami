@@ -144,7 +144,7 @@ describe('mutagen parsing', () => {
       name: 'corami-next-demo',
       status: 'watching',
       mode: 'two-way-safe',
-      alpha: { protocol: 'ssh', user: 'root', host: 'vps', path: '~/corami/projects/next-demo' },
+      alpha: { protocol: 'ssh', user: 'root', host: 'vps', path: '~/projects/next-demo' },
       beta: { protocol: 'local', path: '/Users/me/corami/next-demo' },
       conflicts: [{ path: 'app/page.tsx' }],
     },
@@ -159,7 +159,7 @@ describe('mutagen parsing', () => {
 
   test('describes the endpoints and conflicts', () => {
     const session = parseSessions(raw)[0];
-    expect(session?.alpha).toBe('root@vps:~/corami/projects/next-demo');
+    expect(session?.alpha).toBe('root@vps:~/projects/next-demo');
     expect(session?.beta).toBe('/Users/me/corami/next-demo');
     expect(session?.conflicts).toEqual(['app/page.tsx']);
   });

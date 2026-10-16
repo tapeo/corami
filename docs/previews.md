@@ -3,7 +3,7 @@
 Corami starts no project process. The agent, or you, starts the dev server; then `corami serve` gives it a stable HTTPS address reachable from every device of the tailnet, phone included.
 
 ```bash
-# on the server, from ~/corami/projects/<project>
+# on the server, from ~/projects/<project>
 pnpm exec next dev -H 127.0.0.1 -p 3000 &
 corami serve 3000
 ```
@@ -96,7 +96,7 @@ Copy this into the `AGENTS.md` of the project, with the project name in place of
 ## Corami environment
 
 - The project lives on the server, synced with every client. The dev server runs on the server, not on this machine: `systemd-run --user --unit <project>-web --collect pnpm exec next dev -H 127.0.0.1 -p 3000`.
-- Give the preview an address: `corami serve 3000` (from `~/corami/projects/<project>`), then read `url` from the JSON. `corami serve ls` lists the addresses.
+- Give the preview an address: `corami serve 3000` (from `~/projects/<project>`), then read `url` from the JSON. `corami serve ls` lists the addresses.
 - After every UI change, open that URL with the browser of this harness (or a browser tool it offers) and read the console and the failed requests there, then take the screenshot. The page is in a secure context because the address is HTTPS.
 - Builds run where the tools are: on the server, or on a client over SSH. See docs/builds.md in the Corami repository.
 ```
