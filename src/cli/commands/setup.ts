@@ -3,6 +3,7 @@ import { CLIENT_STEPS, runClientSetup } from '@/cli/commands/setup-client.ts';
 import {
   firewallClosed,
   isRoot,
+  progressLine,
   runStepInTerminal,
   type StepContext,
   type StepResult,
@@ -37,6 +38,19 @@ const STEP_KINDS = [
 ] as const;
 
 type StepKind = (typeof STEP_KINDS)[number];
+
+// What each step is doing, shown in a terminal while it runs.
+const STEP_ACTIVITIES: Record<StepKind, string> = {
+  preflight: 'Checking the system',
+  packages: 'Checking and installing packages',
+  tailscale: 'Installing and connecting Tailscale',
+  hosts: 'Checking /etc/hosts',
+  firewall: 'Configuring the firewall',
+  daemon: 'Installing and restarting the daemon',
+  'git-watch': 'Restarting the git alignment service',
+  serve: 'Publishing port 7420 with tailscale serve',
+  summary: 'Checking that the daemon runs',
+};
 
 const LOGIN_WAIT_MS = 15 * 60_000;
 
@@ -117,7 +131,11 @@ async function run(context: CommandContext): Promise<{ data?: unknown; text?: st
     let result =
       prompter === undefined || kind === 'preflight' || kind === 'summary'
         ? await runStep()
-        : await runStepInTerminal(prompter, runStep);
+        : await runStepInTerminal(
+            prompter,
+            { name: kind, activity: STEP_ACTIVITIES[kind] },
+            runStep,
+          );
 
     if (prompter !== undefined && (kind === 'preflight' || kind === 'summary')) {
       prompter.say(stepLine(result));
@@ -181,12 +199,20 @@ async function waitForLogin(
 ): Promise<StepResult> {
   prompter.say('');
   prompter.say(`Open this address to connect the server to Tailscale: ${loginUrl}`);
-  prompter.say('Waiting for the approval...');
 
   const { status } = await import('@/integrations/tailscale.ts');
-  const deadline = Date.now() + LOGIN_WAIT_MS;
+  const started = Date.now();
+  const deadline = started + LOGIN_WAIT_MS;
 
   while (Date.now() < deadline) {
+    prompter.progress(
+      progressLine(
+        'tailscale',
+        'Waiting for the approval',
+        Date.now() - started,
+        process.stdout.columns,
+      ),
+    );
     await Bun.sleep(2000);
 
     const current = await status().catch(() => undefined);

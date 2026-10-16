@@ -52,6 +52,17 @@ const STEP_RUNNERS: Record<ClientStep, (context: ClientContext) => Promise<StepR
   'git-watch': stepGitWatch,
 };
 
+// What each step is doing, shown in a terminal while it runs.
+const STEP_ACTIVITIES: Record<ClientStep, string> = {
+  tailscale: 'Checking Tailscale on this machine',
+  daemon: 'Reaching the daemon on the server',
+  ssh: 'Checking SSH over Tailscale',
+  mutagen: `Checking and installing Mutagen ${MUTAGEN.version}`,
+  'mutagen-daemon': 'Installing the Mutagen daemon service',
+  config: 'Saving the client configuration',
+  'git-watch': 'Restarting the git alignment service',
+};
+
 /**
  * Connects this machine to the server as a client: `corami setup client
  * <server>`. `server` is the first positional of `context`; with `prompter`,
@@ -91,7 +102,9 @@ export async function runClientSetup(
   const steps: StepResult[] = [];
   const runStep = (kind: ClientStep) => {
     const step = () => STEP_RUNNERS[kind](clientContext);
-    return prompter === undefined ? step() : runStepInTerminal(prompter, step);
+    return prompter === undefined
+      ? step()
+      : runStepInTerminal(prompter, { name: kind, activity: STEP_ACTIVITIES[kind] }, step);
   };
 
   // Without a server the tailnet is searched, which needs Tailscale first.

@@ -162,18 +162,25 @@ export async function stepTailscale(context: StepContext): Promise<StepResult> {
       };
     }
 
+    // The output is kept off the terminal, where the setup shows its progress
+    // line: only its last lines are reported, when it fails.
     const installer = Bun.spawn(['sh'], {
       stdin: new Blob([script.stdout]),
-      stdout: 'inherit',
-      stderr: 'inherit',
+      stdout: 'pipe',
+      stderr: 'pipe',
     });
-    const code = await installer.exited;
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(installer.stdout).text(),
+      new Response(installer.stderr).text(),
+      installer.exited,
+    ]);
 
     if (code !== 0) {
       return {
         step: 'tailscale',
         status: 'failed',
         summary: `Tailscale installer exited with ${code}`,
+        detail: `${stdout}${stderr}`.trim().split('\n').slice(-3).join(' '),
       };
     }
   }
@@ -473,16 +480,56 @@ export function stepLine(result: StepResult): string {
   return result.detail === undefined ? line : `${line}\n${' '.repeat(25)}${result.detail}`;
 }
 
+// The line shown while a step runs, replaced by `stepLine` when it ends. The
+// seconds appear after the first ones, when the wait starts to be noticed. It
+// stays shorter than `width`, the terminal columns: a wrapped line could not
+// be erased. The activity is the part that gets cut, never the seconds. A
+// width of 0 (a pseudo terminal that reports none) counts as 80.
+export function progressLine(
+  step: string,
+  activity: string,
+  elapsedMs: number,
+  width = 80,
+): string {
+  const seconds = Math.floor(elapsedMs / 1000);
+  const prefix = `${'running'.padEnd(8)} ${step.padEnd(15)} `;
+  const suffix = seconds < 2 ? '...' : `... ${seconds}s`;
+  const columns = width > 0 ? width : 80;
+  const room = Math.max(0, columns - 1 - prefix.length - suffix.length);
+  const text = activity.length <= room ? activity : activity.slice(0, room).trimEnd();
+
+  return `${prefix}${text}${suffix}`;
+}
+
 /**
- * Runs a step in a terminal: prints its result and, when it fails, offers to
- * run it again once the cause is fixed.
+ * Runs a step in a terminal: shows what it is doing while it runs, prints its
+ * result and, when it fails, offers to run it again once the cause is fixed.
  */
 export async function runStepInTerminal(
   prompter: Prompter,
+  step: { name: string; activity: string },
   runStep: () => Promise<StepResult>,
 ): Promise<StepResult> {
   for (;;) {
-    const result = await runStep();
+    const started = Date.now();
+    const show = () =>
+      prompter.progress(
+        progressLine(step.name, step.activity, Date.now() - started, process.stdout.columns),
+      );
+    show();
+    const ticker = setInterval(show, 1000);
+    let result: StepResult;
+
+    try {
+      result = await runStep();
+    } catch (error) {
+      // The error is printed by the command: the line only closes the step.
+      prompter.say(stepLine({ step: step.name, status: 'failed', summary: step.activity }));
+      throw error;
+    } finally {
+      clearInterval(ticker);
+    }
+
     prompter.say(stepLine(result));
 
     if (result.status !== 'failed' || !(await prompter.confirm('Try again?', true))) {
