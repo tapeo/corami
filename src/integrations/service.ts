@@ -2,7 +2,6 @@ import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { paths } from '@/core/config.ts';
 import { run } from '@/core/exec.ts';
 import { installUnit, isUnitActive } from '@/integrations/systemd.ts';
 
