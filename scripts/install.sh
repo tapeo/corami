@@ -54,24 +54,31 @@ main() {
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
 
+  # A release comes from GitHub over HTTPS. A base given by hand (`CORAMI_INSTALL_BASE`,
+  # for a test of the script itself) is taken as it is.
+  if [ -n "${CORAMI_INSTALL_BASE:-}" ]; then
+    fetch() { curl -fsSL "$1" -o "$2"; }
+  else
+    fetch() { curl -fsSL --proto '=https' --tlsv1.2 "$1" -o "$2"; }
+  fi
+
   log "downloading $asset"
-  curl -fsSL "$base/$asset" -o "$tmp/$asset" || die "download failed: $base/$asset"
+  fetch "$base/$asset" "$tmp/$asset" || die "download failed: $base/$asset"
 
   log "verifying the sha256 sum"
-  if curl -fsSL "$base/checksums.txt" -o "$tmp/checksums.txt" 2>/dev/null; then
-    expected="$(grep " $asset\$" "$tmp/checksums.txt" | awk '{print $1}')"
+  fetch "$base/checksums.txt" "$tmp/checksums.txt" 2>/dev/null ||
+    die "checksums.txt not available: $base/checksums.txt"
 
-    if [ -n "$expected" ]; then
-      actual="$(sha256_of "$tmp/$asset")"
+  expected="$(grep " $asset\$" "$tmp/checksums.txt" | awk '{print $1}')"
 
-      if [ "$expected" != "$actual" ]; then
-        die "sha256 mismatch for $asset"
-      fi
-    else
-      log "warning: $asset is not in checksums.txt"
-    fi
-  else
-    log "warning: checksums.txt not available, skipping the check"
+  if [ -z "$expected" ]; then
+    die "$asset is not in checksums.txt"
+  fi
+
+  actual="$(sha256_of "$tmp/$asset")"
+
+  if [ "$expected" != "$actual" ]; then
+    die "sha256 mismatch for $asset"
   fi
 
   mkdir -p "$PREFIX"

@@ -5,6 +5,32 @@ export interface ExecResult {
   exitCode: number;
 }
 
+/** A value as one word of a POSIX shell command. */
+export function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * A url without the credentials it may carry: `https://token@host/path` is
+ * printed as `https://host/path`, so a token never reaches a summary or a log.
+ */
+export function redactUrl(url: string): string {
+  const scheme = /^([a-z][a-z0-9+.-]*:\/\/)([^/]*)(.*)$/i.exec(url);
+
+  if (scheme === null) {
+    return url;
+  }
+
+  const [, prefix, authority, rest] = scheme;
+  const at = authority?.lastIndexOf('@') ?? -1;
+
+  if (authority === undefined || rest === undefined || at === -1) {
+    return url;
+  }
+
+  return `${prefix}${authority.slice(at + 1)}${rest}`;
+}
+
 export interface RunOptions {
   cwd?: string;
   env?: Record<string, string | undefined>;

@@ -9,8 +9,9 @@ import { booleanFlag, stringFlag, stringListFlag } from '@/cli/parser.ts';
 import { addProject, projectDetail, serverUserForSync } from '@/cli/server-client.ts';
 import { readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
-import { run } from '@/core/exec.ts';
+import { run, shellQuote } from '@/core/exec.ts';
 import { classifyEnvPath, findLocalOnlyFiles, isSensitiveName } from '@/core/local-copy.ts';
+import { validProjectName } from '@/core/projects.ts';
 import {
   factsMatch,
   localGitFacts,
@@ -18,7 +19,6 @@ import {
   manifestsMatch,
   remoteGitFacts,
   remoteManifest,
-  shellQuote,
   tarExcludeArgs,
 } from '@/core/transfer.ts';
 import { MutagenEngine } from '@/integrations/mutagen.ts';
@@ -53,6 +53,14 @@ export async function runImport(
   const dryRun = booleanFlag(context.args, 'dry-run');
   const extraIncludes = stringListFlag(context.args, 'include');
   const steps: StepResult[] = [];
+
+  if (!validProjectName(projectName)) {
+    throw new CoramiError({
+      code: 'usage',
+      message: `Invalid project name: ${projectName}`,
+      fix: 'A project name is letters, digits, dot, dash and underscore: --name chooses another one',
+    });
+  }
 
   const facts = await localGitFacts(target);
 

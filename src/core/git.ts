@@ -3,7 +3,7 @@
 
 import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { run } from '@/core/exec.ts';
+import { redactUrl, run, shellQuote } from '@/core/exec.ts';
 import { type GitRepoState, notARepository } from '@/core/git-align.ts';
 
 export async function git(
@@ -200,13 +200,14 @@ export async function giveCopyGit(options: {
 
   const timeoutMs = options.timeoutMs ?? 1_800_000;
   const temporary = `${local}.corami-git-${process.pid}`;
-  const manual = `git clone --no-checkout ${originUrl} ${temporary} && mv ${temporary}/.git ${local}/ && git -C ${local} reset`;
+  const where = redactUrl(originUrl);
+  const manual = `git clone --no-checkout ${shellQuote(where)} ${shellQuote(temporary)} && mv ${shellQuote(`${temporary}/.git`)} ${shellQuote(`${local}/`)} && git -C ${shellQuote(local)} reset`;
 
   rmSync(temporary, { recursive: true, force: true });
 
   const cloned = await run(
     'git',
-    [...sshArgs(60_000), 'clone', '--quiet', '--no-checkout', originUrl, temporary],
+    [...sshArgs(60_000), 'clone', '--quiet', '--no-checkout', '--', originUrl, temporary],
     { timeoutMs, env: NO_PROMPT },
   );
 
@@ -214,7 +215,7 @@ export async function giveCopyGit(options: {
     rmSync(temporary, { recursive: true, force: true });
     return {
       status: 'failed',
-      summary: `Could not clone ${originUrl} on this machine`,
+      summary: `Could not clone ${where} on this machine`,
       detail: `${failureDetail(cloned.stderr, 'git clone failed')}. Check the git credentials of this machine, then: ${manual}`,
     };
   }

@@ -1,6 +1,26 @@
 import { readdirSync } from 'node:fs';
 import { isAbsolute, posix, relative, sep } from 'node:path';
 
+/** A project name: letters, digits, dot, dash, underscore, and never a path. */
+export const PROJECT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * Whether a name can key a project. The name becomes `~/projects/<name>` on
+ * the server, so a separator, a `..` or an empty name would point the folder
+ * of one project at another one. The rule is the same on every side: it is
+ * checked here, on the client before the request and on the daemon after it.
+ */
+export function validProjectName(name: string): boolean {
+  return PROJECT_NAME_PATTERN.test(name) && name !== '.' && name !== '..';
+}
+
+/** The reason a name was refused, for the remedy of the command. */
+export function invalidProjectNameReason(name: string): string {
+  return name === ''
+    ? 'the name is empty'
+    : `the name ${name} has characters a project name cannot have`;
+}
+
 /**
  * Whether `project rm` may delete the folder of a project on the server: only
  * the folders Corami created, inside the projects root. One registered with

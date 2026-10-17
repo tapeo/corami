@@ -51,22 +51,24 @@ Write-Step "downloading $asset"
 Invoke-WebRequest -Uri "$base/$asset" -OutFile $temporary
 
 Write-Step "verifying the sha256 sum"
+$checksumsFile = Join-Path $env:TEMP 'corami-checksums.txt'
+
 try {
-    $checksumsFile = Join-Path $env:TEMP 'corami-checksums.txt'
     Invoke-WebRequest -Uri "$base/checksums.txt" -OutFile $checksumsFile
-    $expected = (Get-Content $checksumsFile | Where-Object { $_ -match " $([regex]::Escape($asset))$" } | ForEach-Object { ($_ -split '\s+')[0] })
-
-    if ($expected) {
-        $actual = (Get-FileHash -Algorithm SHA256 -Path $temporary).Hash.ToLower()
-
-        if ($actual -ne $expected.ToLower()) {
-            throw "sha256 mismatch for $asset"
-        }
-    } else {
-        Write-Warning "$asset is not in checksums.txt, skipping the check"
-    }
 } catch {
-    Write-Warning "checksums.txt not available: $($_.Exception.Message)"
+    throw "checksums.txt not available: $($_.Exception.Message)"
+}
+
+$expected = (Get-Content $checksumsFile | Where-Object { $_ -match " $([regex]::Escape($asset))$" } | ForEach-Object { ($_ -split '\s+')[0] })
+
+if (-not $expected) {
+    throw "$asset is not in checksums.txt"
+}
+
+$actual = (Get-FileHash -Algorithm SHA256 -Path $temporary).Hash.ToLower()
+
+if ($actual -ne $expected.ToLower()) {
+    throw "sha256 mismatch for $asset"
 }
 
 New-Item -ItemType Directory -Force -Path $Prefix | Out-Null

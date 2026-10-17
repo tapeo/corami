@@ -8,7 +8,7 @@ import { gitOriginUrl, readGitState } from '@/core/git.ts';
 import { gitStateJson } from '@/core/git-align.ts';
 import { gitOriginState, originStatusJson } from '@/core/git-follow.ts';
 import { validatePreviewName, validateTargetPort } from '@/core/previews.ts';
-import { serverFolderRemoval } from '@/core/projects.ts';
+import { serverFolderRemoval, validProjectName } from '@/core/projects.ts';
 import { deleteProject, getProject, listProjects, upsertProject } from '@/core/state.ts';
 import {
   applyPreview,
@@ -34,7 +34,10 @@ export async function handleApi(
   context: ApiContext,
 ): Promise<ApiResult | undefined> {
   const url = new URL(request.url);
-  const segments = url.pathname.split('/').filter((segment) => segment !== '');
+  const segments = url.pathname
+    .split('/')
+    .filter((segment) => segment !== '')
+    .map((segment) => decodeSegment(segment));
 
   if (segments[0] !== 'v1') {
     return undefined;
@@ -84,6 +87,16 @@ async function handleProjects(
   }
 
   const name = rest[0] ?? '';
+
+  // The name keys the folder of the project on the server: it is checked
+  // before any route, so no route can turn it into a path.
+  if (!validProjectName(name)) {
+    throw new CoramiError({
+      code: 'usage',
+      message: `Invalid project name: ${name}`,
+      fix: 'A project name is letters, digits, dot, dash and underscore: corami project ls lists the projects',
+    });
+  }
 
   if (rest.length === 1) {
     if (method === 'GET') {
@@ -237,6 +250,32 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
     });
   }
 
+  if (!validProjectName(name)) {
+    throw new CoramiError({
+      code: 'usage',
+      message: `Invalid project name: ${name}`,
+      fix: 'A project name is letters, digits, dot, dash and underscore: --name chooses another one',
+    });
+  }
+
+  if (url !== undefined && path !== undefined) {
+    throw new CoramiError({
+      code: 'usage',
+      message: 'Give a url or a path, not both',
+      fix: 'corami project add <url> clones on the server, corami project add --path <folder> registers a folder that is already there',
+    });
+  }
+
+  // `git clone` reads a url that starts with a dash as an option, and one of
+  // its options runs a command.
+  if (url !== undefined && (url.startsWith('-') || url.trim() === '')) {
+    throw new CoramiError({
+      code: 'usage',
+      message: `Invalid repository url: ${url}`,
+      fix: 'A url is https://host/path, ssh://host/path or host:path',
+    });
+  }
+
   const target = path ?? join(projectRoot(), name);
   const existing = getProject(name);
 
@@ -264,7 +303,7 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
       });
     }
 
-    await runOrThrow('git', ['clone', url, target]);
+    await runOrThrow('git', ['clone', '--', url, target]);
   }
 
   upsertProject({
@@ -330,4 +369,13 @@ function methodNotAllowed(): ApiResult {
     status: 405,
     body: { ok: false, error: { code: 'usage', message: 'Method not allowed' } },
   };
+}
+
+/** A path segment, decoded once: the client encodes names on the way out. */
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
 }

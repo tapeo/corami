@@ -15,7 +15,7 @@ import {
 import { readGlobalConfig } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { planProjectAdd, repositoryAt } from '@/core/project-add.ts';
-import { withLocalCopies } from '@/core/projects.ts';
+import { validProjectName, withLocalCopies } from '@/core/projects.ts';
 import { MutagenEngine } from '@/integrations/mutagen.ts';
 
 async function ls(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
@@ -134,6 +134,15 @@ async function add(context: CommandContext): Promise<{ data?: unknown; text?: st
   const derivedName =
     nameFlag ?? (url === undefined ? basename(resolve(path ?? '.')) : deriveName(url));
   const role = (await readGlobalConfig().catch(() => undefined))?.role;
+
+  if (!validProjectName(derivedName)) {
+    throw new CoramiError({
+      code: 'usage',
+      message: `Invalid project name: ${derivedName}`,
+      fix: 'A project name is letters, digits, dot, dash and underscore: --name chooses another one',
+    });
+  }
+
   const onClient = role === 'client' && url !== undefined;
   const sessions = onClient ? await syncSessions(new MutagenEngine()) : [];
   const session = sessions.find((entry) => entry.project === derivedName);

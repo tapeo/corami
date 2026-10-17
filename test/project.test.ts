@@ -18,12 +18,14 @@ import {
 } from '@/core/previews.ts';
 import { planProjectAdd, repositoryAt, sameRepository } from '@/core/project-add.ts';
 import {
+  invalidProjectNameReason,
   isFolderEmpty,
   isWithin,
   localCopyTarget,
   projectOfCopy,
   serverFolderRemoval,
   unexpandedHome,
+  validProjectName,
   withLocalCopies,
 } from '@/core/projects.ts';
 
@@ -108,6 +110,31 @@ describe('the projects of a server', () => {
   test('a project keeps the POSIX path of the server, on every client', () => {
     expect(serverProjectPath('/home/corami', 'myapp')).toBe('/home/corami/projects/myapp');
     expect(serverProjectPath('~', 'myapp')).toBe('~/projects/myapp');
+  });
+});
+
+describe('validProjectName', () => {
+  test('accepts the names a project can have', () => {
+    expect(validProjectName('myapp')).toBe(true);
+    expect(validProjectName('my-app_2')).toBe(true);
+    expect(validProjectName('app.v2')).toBe(true);
+    expect(validProjectName('a')).toBe(true);
+  });
+
+  test('refuses a name that would be a path', () => {
+    expect(validProjectName('a/../b')).toBe(false);
+    expect(validProjectName('a/b')).toBe(false);
+    expect(validProjectName('..')).toBe(false);
+    expect(validProjectName('.')).toBe(false);
+    expect(validProjectName('')).toBe(false);
+    expect(validProjectName('-leading')).toBe(false);
+    expect(validProjectName('a b')).toBe(false);
+    expect(validProjectName('app\\other')).toBe(false);
+  });
+
+  test('says why a name was refused', () => {
+    expect(invalidProjectNameReason('a b')).toContain('a b');
+    expect(invalidProjectNameReason('')).toContain('empty');
   });
 });
 

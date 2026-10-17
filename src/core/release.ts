@@ -127,13 +127,21 @@ export async function fetchChecksums(release: ReleaseInfo): Promise<Map<string, 
   const asset = release.assets.find((entry) => entry.name === 'checksums.txt');
 
   if (asset === undefined) {
-    return new Map();
+    throw new CoramiError({
+      code: 'generic',
+      message: `The release ${release.tag} has no checksums.txt`,
+      fix: 'The release is incomplete: report it at https://github.com/tapeo/corami/issues',
+    });
   }
 
   const response = await fetchAsset(downloadUrl(asset), 20_000);
 
   if (response?.ok !== true) {
-    return new Map();
+    throw new CoramiError({
+      code: 'generic',
+      message: `Cannot download the checksums of ${release.tag}`,
+      fix: 'Check the connection and the token, then retry corami update',
+    });
   }
 
   const checksums = new Map<string, string>();
@@ -149,6 +157,21 @@ export async function fetchChecksums(release: ReleaseInfo): Promise<Map<string, 
   }
 
   return checksums;
+}
+
+/** The sha256 of one asset, from the output of `sha256sum`. */
+export function checksumFor(text: string, asset: string): string | undefined {
+  for (const line of text.split('\n')) {
+    const parts = line.trim().split(/\s+/);
+    const hash = parts[0];
+    const name = parts.at(-1)?.replace(/^\*/, '');
+
+    if (hash !== undefined && name === asset) {
+      return hash;
+    }
+  }
+
+  return undefined;
 }
 
 export async function fetchAsset(url: string, timeoutMs: number): Promise<Response | undefined> {
@@ -212,19 +235,23 @@ export async function downloadReleaseBinary(options: {
   const checksums = await fetchChecksums(options.release);
   const expected = checksums.get(assetName);
 
-  if (expected !== undefined) {
-    const hasher = new Bun.CryptoHasher('sha256');
-    hasher.update(content);
-    const actual = hasher.digest('hex');
+  if (expected === undefined) {
+    throw new CoramiError({
+      code: 'generic',
+      message: `The checksums of ${options.release.tag} do not cover ${assetName}`,
+      fix: 'The release is incomplete: report it at https://github.com/tapeo/corami/issues',
+    });
+  }
 
-    if (actual !== expected) {
-      throw new CoramiError({
-        code: 'generic',
-        message: `Checksum mismatch for ${assetName}`,
-        fix: 'Download it again; if it keeps failing, report it',
-        details: { expected, actual },
-      });
-    }
+  const actual = new Bun.CryptoHasher('sha256').update(content).digest('hex');
+
+  if (actual !== expected) {
+    throw new CoramiError({
+      code: 'generic',
+      message: `Checksum mismatch for ${assetName}`,
+      fix: 'Download it again; if it keeps failing, report it',
+      details: { expected, actual },
+    });
   }
 
   const temporary = `${options.currentBinary}.new`;

@@ -4,6 +4,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { redactUrl, shellQuote } from '@/core/exec.ts';
 import type { PathClass } from '@/core/local-copy.ts';
 import {
   classifyPath,
@@ -12,13 +13,7 @@ import {
   PATH_RULES,
   patternsOf,
 } from '@/core/local-copy.ts';
-import {
-  findExcludeArgs,
-  localManifest,
-  remoteManifest,
-  shellQuote,
-  tarExcludeArgs,
-} from '@/core/transfer.ts';
+import { findExcludeArgs, localManifest, remoteManifest, tarExcludeArgs } from '@/core/transfer.ts';
 
 describe('classifyPath', () => {
   const cases: Array<[string, PathClass]> = [
@@ -229,5 +224,17 @@ describe('manifest exclusions', () => {
 
     expect(carried).toEqual(['notes.txt']);
     expect(manifest.files).toBe(1);
+  });
+});
+
+describe('redactUrl', () => {
+  test('takes the credentials out of a url', () => {
+    expect(redactUrl('https://token@github.com/me/app.git')).toBe('https://github.com/me/app.git');
+    expect(redactUrl('https://user:pass@host/me/app.git')).toBe('https://host/me/app.git');
+  });
+
+  test('leaves a url without credentials alone', () => {
+    expect(redactUrl('git@github.com:me/app.git')).toBe('git@github.com:me/app.git');
+    expect(redactUrl('https://github.com/me/app.git')).toBe('https://github.com/me/app.git');
   });
 });

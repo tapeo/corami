@@ -3,18 +3,36 @@ import { join } from 'node:path';
 
 import { paths } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
-import { commandPath, fileExists, run } from '@/core/exec.ts';
+import { commandPath, fileExists, run, shellQuote } from '@/core/exec.ts';
 
 export interface PinnedTool {
   name: string;
   version: string;
   asset: (platform: NodeJS.Platform, arch: string) => string;
   url: (asset: string) => string;
-  checksumsUrl: string;
+  /** The sha256 of every asset, from the `SHA256SUMS` of the release. */
+  checksums: (asset: string) => string | undefined;
   binaryInArchive: string;
 }
 
 const MUTAGEN_VERSION = 'v0.18.1';
+
+// The sums of the release, written down: the file of the release is not
+// fetched, so a missing or changed one cannot take the check away.
+const MUTAGEN_CHECKSUMS: Record<string, string> = {
+  [`mutagen_darwin_amd64_${MUTAGEN_VERSION}.tar.gz`]:
+    '7d06f7d8fcfe90bc7e55cc834a2f2f20c2e0af9ea9bc35911fc4341ad56a9bbf',
+  [`mutagen_darwin_arm64_${MUTAGEN_VERSION}.tar.gz`]:
+    '6f810416d9e5fc4fd5e18431146f8b3c5a2056ba5a24f76c1e66da86eb3257e2',
+  [`mutagen_linux_amd64_${MUTAGEN_VERSION}.tar.gz`]:
+    '7735286c778cc438418209f24d03a64f3a0151c8065ef0fe079cfaf093af6f8f',
+  [`mutagen_linux_arm64_${MUTAGEN_VERSION}.tar.gz`]:
+    'bcba735aebf8cbc11da9b3742118a665599ac697fa06bc5751cac8dcd540db8a',
+  [`mutagen_windows_amd64_${MUTAGEN_VERSION}.tar.gz`]:
+    '3e237e77f69959ed520a0f877330a431507bb0a85d9da7919764ba0c87b702c7',
+  [`mutagen_windows_arm64_${MUTAGEN_VERSION}.tar.gz`]:
+    '9ac53447e46f019be9d37f49c00eeed8635966b885ed29ef06b3ff19afdee532',
+};
 
 export const MUTAGEN: PinnedTool = {
   name: 'mutagen',
@@ -26,7 +44,7 @@ export const MUTAGEN: PinnedTool = {
   },
   url: (asset) =>
     `https://github.com/mutagen-io/mutagen/releases/download/${MUTAGEN_VERSION}/${asset}`,
-  checksumsUrl: `https://github.com/mutagen-io/mutagen/releases/download/${MUTAGEN_VERSION}/SHA256SUMS`,
+  checksums: (asset) => MUTAGEN_CHECKSUMS[asset],
   binaryInArchive: 'mutagen',
 };
 
@@ -72,7 +90,16 @@ export async function ensureTool(tool: PinnedTool): Promise<EnsureToolResult> {
   mkdirSync(directory, { recursive: true });
   const archive = join(directory, asset);
 
-  const checksum = await fetchChecksum(tool.checksumsUrl, asset);
+  const checksum = tool.checksums(asset);
+
+  if (checksum === undefined) {
+    throw new CoramiError({
+      code: 'capability_missing',
+      message: `No pinned checksum for ${asset}`,
+      fix: `Add the sha256 of the asset from the SHA256SUMS of ${tool.name} ${tool.version} to pinned-tools.ts`,
+    });
+  }
+
   const downloaded = await run('curl', ['-fsSL', url, '-o', archive]);
 
   if (!downloaded.ok) {
@@ -85,7 +112,7 @@ export async function ensureTool(tool: PinnedTool): Promise<EnsureToolResult> {
 
   const actual = await sha256(archive);
 
-  if (checksum !== undefined && actual !== checksum) {
+  if (actual !== checksum) {
     throw new CoramiError({
       code: 'capability_missing',
       message: `Checksum mismatch for ${asset}`,
@@ -139,10 +166,6 @@ async function extract(
   return { ok: false, stderr: `unsupported archive: ${archive}` };
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
-
 function findExtracted(tool: PinnedTool, directory: string): string {
   const candidates = [join(directory, tool.binaryInArchive), toolPath(tool)];
 
@@ -163,28 +186,6 @@ async function toolVersion(path: string): Promise<string | undefined> {
   }
 
   return result.stdout.trim().split('\n')[0];
-}
-
-async function fetchChecksum(url: string, asset: string): Promise<string | undefined> {
-  const response = await fetch(url).catch(() => undefined);
-
-  if (response?.ok !== true) {
-    return undefined;
-  }
-
-  const text = await response.text();
-
-  for (const line of text.split('\n')) {
-    const parts = line.trim().split(/\s+/);
-    const hash = parts[0];
-    const name = parts.at(-1)?.replace(/^\*/, '');
-
-    if (hash !== undefined && name === asset) {
-      return hash;
-    }
-  }
-
-  return undefined;
 }
 
 async function sha256(path: string): Promise<string> {

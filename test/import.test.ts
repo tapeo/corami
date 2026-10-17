@@ -5,12 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { isEnvPath } from '@/cli/commands/import.ts';
+import { shellQuote } from '@/core/exec.ts';
+import { MUTAGEN } from '@/core/pinned-tools.ts';
+import { checksumFor } from '@/core/release.ts';
 import {
   factsMatch,
   findExcludeArgs,
   localManifest,
   manifestsMatch,
-  shellQuote,
   tarExcludeArgs,
 } from '@/core/transfer.ts';
 import { DEFAULT_IGNORES } from '@/integrations/mutagen.ts';
@@ -102,5 +104,24 @@ describe('manifests', () => {
 describe('shell quoting', () => {
   test('escapes single quotes', () => {
     expect(shellQuote("it's")).toBe("'it'\\''s'");
+  });
+});
+
+describe('checksums', () => {
+  test('reads the sha256 of one asset', () => {
+    const text = ['aaa  corami-linux-x64', 'bbb  *corami-darwin-arm64', ''].join('\n');
+
+    expect(checksumFor(text, 'corami-linux-x64')).toBe('aaa');
+    expect(checksumFor(text, 'corami-darwin-arm64')).toBe('bbb');
+    expect(checksumFor(text, 'corami-windows-x64.exe')).toBeUndefined();
+  });
+
+  test('the pinned tools carry the sum of every asset they install', () => {
+    for (const platform of ['linux', 'darwin'] as const) {
+      for (const arch of ['x64', 'arm64']) {
+        const asset = MUTAGEN.asset(platform, arch);
+        expect(MUTAGEN.checksums(asset)).toMatch(/^[0-9a-f]{64}$/);
+      }
+    }
   });
 });

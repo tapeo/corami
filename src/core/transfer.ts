@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
-import { run } from '@/core/exec.ts';
+import { run, shellQuote } from '@/core/exec.ts';
 import {
   classifyPath,
   findLocalOnlyFiles,
@@ -299,8 +299,4 @@ export function manifestsMatch(left: Manifest, right: Manifest): boolean {
 
 export function factsMatch(left: GitFacts, right: GitFacts): boolean {
   return left.head === right.head && left.refs === right.refs && left.stashes === right.stashes;
-}
-
-export function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
 }
