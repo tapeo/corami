@@ -37,13 +37,13 @@ describe('classifyPath', () => {
     ['ios/Pods/Headers/foo.h', 'regenerable'],
     ['.DS_Store', 'regenerable'],
     ['src/._page.tsx', 'regenerable'],
-    ['android/key.properties', 'local_only'],
+    ['android/key.properties', 'key'],
     ['android/local.properties', 'local_only'],
     ['ios/Flutter/Generated.xcconfig', 'local_only'],
     ['ios/Flutter/flutter_export_environment.sh', 'local_only'],
     ['ios/.symlinks/plugins/camera', 'local_only'],
     ['deep/ios/.symlinks/plugins/camera', 'synced'],
-    ['.flutter-plugins', 'local_only'],
+    ['.flutter-plugins', 'regenerable'],
   ];
 
   for (const [path, expected] of cases) {
@@ -58,7 +58,7 @@ describe('classifyPath', () => {
   });
 
   test('a path rule stays at the root', () => {
-    expect(classifyPath('android/key.properties')).toBe('local_only');
+    expect(classifyPath('android/key.properties')).toBe('key');
     expect(classifyPath('apps/demo/android/key.properties')).toBe('synced');
     expect(classifyPath('deep/ios/Flutter/Generated.xcconfig')).toBe('synced');
   });
@@ -79,8 +79,10 @@ describe('path rules', () => {
   test('the sensitive names come from the rules', () => {
     expect(isSensitiveName('.env')).toBe(true);
     expect(isSensitiveName('upload.jks')).toBe(true);
+    expect(isSensitiveName('android/key.properties')).toBe(true);
+    expect(isSensitiveName('key.properties')).toBe(false);
     expect(isSensitiveName('node_modules')).toBe(false);
-    expect(isSensitiveName('android/key.properties')).toBe(false);
+    expect(isSensitiveName('local.properties')).toBe(false);
   });
 });
 
@@ -102,7 +104,7 @@ describe('local only files', () => {
       'android/key.properties',
     ]);
     expect(found.find((entry) => entry.path.endsWith('upload.jks'))?.class).toBe('key');
-    expect(found.find((entry) => entry.path.endsWith('key.properties'))?.class).toBe('local_only');
+    expect(found.find((entry) => entry.path.endsWith('key.properties'))?.class).toBe('key');
     expect(found.find((entry) => entry.path === '.env')?.class).toBe('env');
   });
 });
@@ -171,7 +173,16 @@ describe('the archive of an import', () => {
     });
 
     expect(remote).toBeDefined();
-    expect(packedFiles).toEqual(['.env', 'README.md', 'app/main.ts', 'notes.txt', 'src/index.ts']);
+    expect(packedFiles).toEqual([
+      '.env',
+      'README.md',
+      'android/app/upload.jks',
+      'android/key.properties',
+      'app/main.ts',
+      'notes.txt',
+      'signing.p12',
+      'src/index.ts',
+    ]);
     expect(remote?.files).toBe(manifest.files);
     expect(remote?.hash).toBe(manifest.hash);
   });
@@ -186,25 +197,27 @@ describe('manifest exclusions', () => {
     const tar = tarExcludeArgs();
     const find = findExcludeArgs().join(' ');
 
-    for (const pattern of [
-      'node_modules',
-      'Pods',
-      '.DS_Store',
-      '*.jks',
-      'android/key.properties',
-    ]) {
+    for (const pattern of ['node_modules', 'Pods', '.DS_Store', 'android/local.properties']) {
       const inTar = tar.some((entry) => entry.includes(pattern));
       const inFind = find.includes(pattern);
       expect(inTar).toBe(inFind);
     }
   });
 
-  test('a key asked with an include pattern stays out of the archive', async () => {
+  test('the keys go with the import and stay out of the exclusions', () => {
+    const tar = tarExcludeArgs();
+    const find = findExcludeArgs().join(' ');
+
+    expect(tar.some((entry) => entry.includes('jks'))).toBe(false);
+    expect(find.includes('jks')).toBe(false);
+    expect(tar.some((entry) => entry.includes('key.properties'))).toBe(false);
+  });
+
+  test('a key enters the archive even when an include pattern asks for it', async () => {
     const root = await mkdtemp(join(tmpdir(), 'corami-include-'));
     writeFileSync(join(root, 'notes.txt'), 'note');
     writeFileSync(join(root, 'release.p12'), 'key');
 
-    // `--include` names the paths to add; a key is a key even when asked for.
     const manifest = localManifest(root, ['notes.txt', 'release.p12']);
     const packed = Bun.spawnSync(
       ['tar', '-czf', '/tmp/corami-include-test.tgz', ...tarExcludeArgs(), '-C', root, '.'],
@@ -222,8 +235,8 @@ describe('manifest exclusions', () => {
       .filter((line) => line !== '' && !line.endsWith('/'))
       .sort();
 
-    expect(carried).toEqual(['notes.txt']);
-    expect(manifest.files).toBe(1);
+    expect(carried).toEqual(['notes.txt', 'release.p12']);
+    expect(manifest.files).toBe(2);
   });
 });
 

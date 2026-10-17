@@ -324,7 +324,7 @@ export const projectCommand: CommandSpec = {
         'corami project import <folder> [--name <name>] [--include <glob>] [--user <user>] [--dry-run]',
       flags: [
         NAME_FLAG,
-        { name: 'include', value: 'glob', description: 'Local files to copy, repeatable' },
+        { name: 'include', value: 'glob', description: 'Ignored files to copy too, repeatable' },
         {
           name: 'user',
           value: 'user',
@@ -334,7 +334,7 @@ export const projectCommand: CommandSpec = {
       ],
       examples: [
         'corami project import ~/dev/myapp',
-        'corami project import . --name myapp --include .env.local --dry-run',
+        'corami project import . --name myapp --include data/seed.json --dry-run',
       ],
       run: runImport,
     },

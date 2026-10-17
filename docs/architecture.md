@@ -318,16 +318,18 @@ mutagen sync create \
 
 ### Default exclusions
 
-One table of rules in `local-copy.ts` (`PATH_RULES`) is the only source of the paths a copy never carries. Every rule is a pattern and one of four classes:
+One table of rules in `local-copy.ts` (`PATH_RULES`) is the only source of the paths the sync treats in a special way. Every rule is a pattern and one of four classes:
 
 | Class | Meaning | Example |
 |---|---|---|
 | `regenerable` | rebuilt by every machine, never carried | `node_modules/`, `dist/`, `._*`, `.DS_Store` |
-| `key` | keys and credentials, they stay on the machine that has them | `*.jks`, `*.keystore`, `*.p8`, `*.p12`, `*service-account*.json` |
-| `env` | env files: they go to the server with `project import`, and stay out of the sync | `.env`, `.env.*` |
-| `local_only` | nothing regenerates them, every machine keeps its own | `android/key.properties`, `android/local.properties`, `ios/Flutter/Generated.xcconfig`, `ios/.symlinks/`, `.flutter-plugins` |
+| `key` | keys and credentials: out of the sync, and carried by `project import` | `*.jks`, `*.keystore`, `*.p8`, `*.p12`, `*service-account*.json`, `android/key.properties` |
+| `env` | env files: out of the sync, and carried by `project import` | `.env`, `.env.*` |
+| `local_only` | nothing regenerates them, every machine keeps its own | `android/local.properties`, `ios/Flutter/Generated.xcconfig`, `ios/.symlinks/` |
 
-A pattern without `/` matches the name at any level, one with `/` from the root, exactly as in a gitignore. The lists are derived from the table: the sync ignores take every class (`DEFAULT_IGNORES` in `mutagen.ts`, `.git` excluded: `--ignore-vcs` does that), the import archive takes them all except `env` (`tarExcludeArgs`), the remote manifest of the import filters with the same rules (`findExcludeArgs`), and `sync rm` reports the keys, the env files and the local-only ones (`findLocalOnlyFiles`), which is one thing to keep in step with the sync. `test/path-rules.test.ts` checks one against the other.
+A pattern without `/` matches the name at any level, one with `/` from the root, exactly as in a gitignore. The lists are derived from the table: the sync ignores take every class (`DEFAULT_IGNORES` in `mutagen.ts`, `.git` excluded: `--ignore-vcs` does that), the import carries the synced paths plus the keys and the env files (`tarExcludeArgs` and `carriedClass`), the remote manifest of the import filters with the same rules (`findExcludeArgs`), and `sync rm` reports the keys, the env files and the local-only ones (`findLocalOnlyFiles`). `test/path-rules.test.ts` packs a fixture with the real `tar` arguments, lists the archive, runs the remote manifest script locally and compares the two lists.
+
+**Why the keys travel with the import.** A build on the server needs what the build on the laptop needs: the keystore to sign an Android release, the `.env` to start the app, the service account JSON to publish. So the import copies them to the project folder on the server with permissions 0600, and the backup folder next to the copy keeps them on the client. What stays out is the **sync**: the keys are not carried between machines every minute, they only move when someone imports. A machine that takes the project with `sync add` starts without them; copy them from the server, or import the project there.
 
 Files generated with absolute paths of the machine (`Generated.xcconfig`, `local.properties`) stay excluded, otherwise they would break the build on the other machine. Lockfiles (`pubspec.lock`, `Podfile.lock`, JS lockfiles) are synced.
 
@@ -351,7 +353,7 @@ Sequence, in order:
 2. **State:** the session must be `watching`, with no last error and no conflicts. Any other state (`connecting`, `scanning`, `staging`, `disconnected`) is a `sync_pending`: the changes may still be on the way.
 3. **Conflicts:** when the session has open conflicts, it stops with `sync_conflict`. The local side of a conflict would be lost.
 4. **Sync problems:** when Mutagen reports unreadable or untransferred files, it stops with the list of files.
-5. **Local-only files:** it looks for the files the sync ignores and nothing regenerates, from the same rules the sync uses (`PATH_RULES` in `local-copy.ts`). For example `.env.local`, `*.jks`, `*.p8`, `android/key.properties`. When there are any, it stops with `local_only_files` and the list; `--force` deletes them anyway.
+5. **Local-only files:** it looks for the files the sync ignores and nothing regenerates, from the same rules the sync uses (`PATH_RULES` in `local-copy.ts`), keys and env files included: they are not carried by the sync, so deleting the copy deletes the only copy this machine has. For example `.env.local`, `*.jks`, `*.p8`, `android/key.properties`. When there are any, it stops with `local_only_files` and the list; `--force` deletes them anyway.
 6. **Local git:** when the `.git` of the copy has commits or stashes that exist in no remote (typically work done on the copy without a push), it stops with `local_only_files`. Commits already elsewhere do not block.
 7. **Closing the sync:** `mutagen sync terminate`. It must be done **before** deleting: with the session active, Mutagen would propagate the deletions to the server.
 8. **Deletion** of the local folder.
@@ -424,8 +426,7 @@ corami git watch [proj] --once   # one cycle only, without staying in listen mod
 | What | Destination | How |
 |---|---|---|
 | Working tree and complete `.git` (local branches, unpushed commits, uncommitted changes, untracked files, stashes, hooks, LFS, submodules) | `~/projects/<project>`, and a copy of the `.git` in the local copy | tar streamed over Tailscale SSH, then the `.git` copied from the old local folder into the new copy |
-| `.env*` files | project folder on the server, permissions 0600 | inside the same archive |
-| Files that look like keys or credentials (e.g. `*.jks`, `*.keystore`, `*.p8`, `*.p12`, service account JSON) | none: they stay on the client | excluded from the archive, listed in the summary |
+| Keys and credentials (`.env*`, `*.jks`, `*.keystore`, `*.p8`, `*.p12`, service account JSON, `android/key.properties`) | project folder on the server, permissions 0600 | inside the same archive |
 | Other files ignored by git and not regenerable | the project folder on the server, when selected with `--include <glob>` | inside the archive |
 | Paths in `local-copy.ts` (`node_modules`, `.next`, `build`, `.dart_tool`, `ios/Pods`...) | none | excluded, the server regenerates them |
 
@@ -433,8 +434,8 @@ corami git watch [proj] --once   # one cycle only, without staying in listen mod
 
 1. **Preliminary checks:** no project with the same name on the server (`project_exists`), server reachable, git credentials of the server configured.
 2. **Inventory:** `git ls-files --others --ignored --exclude-standard` lists the ignored files. Corami drops the regenerable ones and classifies the rest: env, possible keys, other. The content of the files is never printed nor written to the logs.
-3. **Selection:** env files are included, other files only with `--include <glob>`, repeatable. Files that look like keys are never uploaded and the summary says where they stay.
-4. **Transfer:** local `tar` streamed to `tar` on the server over SSH. On macOS with `COPYFILE_DISABLE=1`, to leave out the `._*` files. Windows uses the system `tar.exe`.
+3. **Selection:** env files and files that look like keys are included, the other files only with `--include <glob>`, repeatable. The summary names every key that was copied, because they land on the server.
+4. **Transfer:** local `tar` streamed to `tar` on the server over SSH, both started with their arguments and never through a shell. On macOS with `COPYFILE_DISABLE=1`, to leave out the `._*` files. Windows uses the system `tar.exe`.
 5. **Verification:** `corami` computes a sha256 manifest of the transferred files on both sides and compares the output of `git for-each-ref` and `git stash list`. When something does not match, it stops with an error and the local folder stays intact.
 6. **Git cleanup on the server:** `git worktree prune` (local worktrees are not imported and are listed in the summary). A warning when `.git/config` contains absolute paths or a credential helper of the local machine.
 7. **Registration:** the project is added to the registry, like `corami project add`.

@@ -14,7 +14,7 @@ pnpm build
 
 - A long build competes with the previews of the other projects for CPU. On a small VPS run it with `nice -n 10` and stop the toolchain daemons at the end (e.g. `cd android && ./gradlew --stop`).
 - The build output travels nowhere: the regenerable folders (`node_modules`, `build`, `.next`, `Pods`...) are excluded from the sync and rebuilt on every machine.
-- Keys and keystores stay out of the project folder, with their path in an environment variable of the command (`KEYSTORE_FILE=~/.config/keys/release.jks`). Corami's sync never includes files that look like secrets (`.env`, `*.jks`, `*.keystore`, `*.p8`, `service-account*.json`).
+- A build on the server has what the build of the laptop has: keys and keystores (`.env`, `*.jks`, `*.keystore`, `*.p8`, `android/key.properties`...) arrive in the project folder with `project import`, at permissions 0600, and the sync never carries them to another machine. Keep the production key out of the repository when the repository is shared: `KEYSTORE_FILE=~/.config/keys/release.jks` is the alternative, for the key you do not want in a synced folder at all.
 
 ## On a client, over SSH
 

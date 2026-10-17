@@ -39,26 +39,26 @@ export const PATH_RULES: PathRule[] = [
   { pattern: '__pycache__', class: 'regenerable', directories: true },
   { pattern: '.DS_Store', class: 'regenerable' },
   { pattern: '._*', class: 'regenerable' },
+  { pattern: '.flutter-plugins', class: 'regenerable' },
+  { pattern: '.flutter-plugins-dependencies', class: 'regenerable' },
 
-  // Keys and credentials: they never leave the machine they were created on.
+  // Keys and credentials: they stay out of the sync, and go to the server with
+  // the import, so a build there has them.
   { pattern: '*.jks', class: 'key' },
   { pattern: '*.keystore', class: 'key' },
   { pattern: '*.p8', class: 'key' },
   { pattern: '*.p12', class: 'key' },
   { pattern: '*service-account*.json', class: 'key' },
-
+  { pattern: 'android/key.properties', class: 'key' },
   // Env files: they go to the server by import, and stay out of the sync.
   { pattern: '.env', class: 'env' },
   { pattern: '.env.*', class: 'env' },
 
   // Local only: nothing regenerates them, every machine keeps its own.
   { pattern: 'android/local.properties', class: 'local_only' },
-  { pattern: 'android/key.properties', class: 'local_only' },
   { pattern: 'ios/Flutter/Generated.xcconfig', class: 'local_only' },
   { pattern: 'ios/Flutter/flutter_export_environment.sh', class: 'local_only' },
   { pattern: 'ios/.symlinks', class: 'local_only', directories: true },
-  { pattern: '.flutter-plugins', class: 'local_only' },
-  { pattern: '.flutter-plugins-dependencies', class: 'local_only' },
 ];
 
 interface CompiledRule {
@@ -152,11 +152,22 @@ export function globToRegExp(pattern: string): RegExp {
 
 export const SENSITIVE_PATTERNS = patternsOf('key', 'env');
 
-const SENSITIVE_MATCHERS = SENSITIVE_PATTERNS.map((pattern) => globToRegExp(pattern));
+/**
+ * Whether a path looks like a key or an env file, for the messages and the
+ * checks that name them. A pattern with `/` matches the path from the root,
+ * one without matches the name at any level, as everywhere else.
+ */
+export function isSensitiveName(path: string, extraPatterns: string[] = []): boolean {
+  const name = path.split('/').at(-1) ?? path;
+  const sensitive = PATH_RULES.some(
+    (rule) =>
+      (rule.class === 'key' || rule.class === 'env') &&
+      (rule.pattern.includes('/')
+        ? globToRegExp(rule.pattern).test(path)
+        : globToRegExp(rule.pattern).test(name)),
+  );
 
-export function isSensitiveName(name: string, extraPatterns: string[] = []): boolean {
-  const matchers = [...SENSITIVE_MATCHERS, ...extraPatterns.map(globToRegExp)];
-  return matchers.some((matcher) => matcher.test(name));
+  return sensitive || extraPatterns.some((pattern) => globToRegExp(pattern).test(name));
 }
 
 export interface LocalOnlyFile {

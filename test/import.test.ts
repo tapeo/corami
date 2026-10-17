@@ -44,13 +44,18 @@ describe('sync ignores', () => {
 });
 
 describe('tar arguments', () => {
-  test('exclude regenerable folders at any depth and by name', () => {
+  test('exclude regenerable folders at any depth, and by name', () => {
     const args = tarExcludeArgs();
     expect(args).toContain('--exclude=node_modules');
     expect(args).toContain('--exclude=ephemeral');
-    expect(args).toContain('--exclude=*.jks');
-    expect(args).toContain('--exclude=./android/key.properties');
+    expect(args).toContain('--exclude=./android/local.properties');
     expect(args.some((arg) => arg.includes('.env'))).toBe(false);
+  });
+
+  test('the keys and the env files go with the import', () => {
+    const args = tarExcludeArgs();
+    expect(args.some((arg) => arg.includes('.jks'))).toBe(false);
+    expect(args.some((arg) => arg.includes('key.properties'))).toBe(false);
   });
 });
 
@@ -59,8 +64,9 @@ describe('remote manifest arguments', () => {
     const args = findExcludeArgs().join(' ');
     expect(args).toContain("-name 'node_modules'");
     expect(args).toContain("-path '*/node_modules/*'");
-    expect(args).toContain("-name '*.jks'");
-    expect(args).toContain("-path './android/key.properties'");
+    expect(args).toContain("-path './android/local.properties'");
+    expect(args.includes('jks')).toBe(false);
+    expect(args.includes('key.properties')).toBe(false);
   });
 });
 
@@ -75,9 +81,10 @@ describe('manifests', () => {
     writeFileSync(join(root, 'app', 'node_modules', 'deep.js'), 'y'.repeat(1000));
     writeFileSync(join(root, 'android.jks'), 'y'.repeat(1000));
 
+    // page.tsx and android.jks: the keys travel with the import.
     const manifest = localManifest(root);
-    expect(manifest.files).toBe(1);
-    expect(manifest.bytes).toBe(50);
+    expect(manifest.files).toBe(2);
+    expect(manifest.bytes).toBe(1050);
   });
 
   test('counts a file the user asked for with the include patterns', async () => {

@@ -5,10 +5,9 @@ import { join, relative, sep } from 'node:path';
 import { run, shellQuote } from '@/core/exec.ts';
 import {
   classifyPath,
-  findLocalOnlyFiles,
   isRegenerableFolder,
-  isSensitiveName,
   PATH_RULES,
+  type PathClass,
   type PathRule,
 } from '@/core/local-copy.ts';
 
@@ -18,9 +17,14 @@ import {
  * the three always agree on what an import carries.
  */
 export function tarExcludeArgs(): string[] {
-  return PATH_RULES.filter((rule) => rule.class !== 'synced' && rule.class !== 'env').map(
+  return PATH_RULES.filter((rule) => !carriedClass(rule.class)).map(
     (rule) => `--exclude=${tarPattern(rule)}`,
   );
+}
+
+/** The classes an import carries: the sync, the keys and the env files. */
+export function carriedClass(pathClass: PathClass): boolean {
+  return pathClass === 'synced' || pathClass === 'key' || pathClass === 'env';
 }
 
 /** The path as tar matches it: a name at any level, a `./` path from the root. */
@@ -46,7 +50,7 @@ export function findExcludeArgs(): string[] {
   };
 
   for (const rule of PATH_RULES) {
-    if (rule.class === 'synced' || rule.class === 'env') {
+    if (carriedClass(rule.class)) {
       continue;
     }
 
@@ -73,22 +77,13 @@ export interface Manifest {
 }
 
 /**
- * The manifest of the files the sync and the import actually carry: the paths
- * neither regenerable nor ignored, plus the ones the user asked for with
- * `--include`.
+ * The manifest of the files the import carries: the paths that sync, the keys
+ * and the env files, and the ones the user asked for with `--include`.
  */
 export function localManifest(root: string, extraPatterns: string[] = []): Manifest {
-  const included = new Set(
-    findLocalOnlyFiles(root, extraPatterns)
-      .filter(
-        (entry) =>
-          entry.class === 'key' && !isSensitiveName(entry.path.split('/').at(-1) ?? entry.path),
-      )
-      .map((entry) => entry.path),
-  );
   const entries: string[] = [];
 
-  walkManifest(root, root, included, entries);
+  walkManifest(root, root, extraPatterns, entries);
 
   let bytes = 0;
 
@@ -106,7 +101,7 @@ export function localManifest(root: string, extraPatterns: string[] = []): Manif
 function walkManifest(
   root: string,
   current: string,
-  included: ReadonlySet<string>,
+  extraPatterns: string[],
   entries: string[],
 ): void {
   let names: string[];
@@ -121,7 +116,7 @@ function walkManifest(
     const full = join(current, name);
     const relativePath = toPosix(relative(root, full));
 
-    if (!carried(relativePath, included)) {
+    if (!carried(relativePath, extraPatterns)) {
       continue;
     }
 
@@ -133,7 +128,7 @@ function walkManifest(
           continue;
         }
 
-        walkManifest(root, full, included, entries);
+        walkManifest(root, full, extraPatterns, entries);
         continue;
       }
 
@@ -143,18 +138,13 @@ function walkManifest(
 }
 
 /**
- * Whether a path is in the archive. Of the paths the walk reports only the
- * ones an `--include` pattern asked for enter it, so a name of the rules wins
- * over a broader pattern.
+ * Whether a path is in the archive: the classes the import carries, plus a
+ * path an `--include` pattern asks for even when a rule would leave it out.
  */
-function carried(relativePath: string, included: ReadonlySet<string>): boolean {
-  if (included.has(relativePath)) {
-    return true;
-  }
+function carried(relativePath: string, extraPatterns: string[]): boolean {
+  const classified = classifyPath(relativePath, extraPatterns);
 
-  const classified = classifyPath(relativePath);
-
-  return classified === 'synced' || classified === 'env';
+  return classified === 'synced' || carriedClass(classified);
 }
 
 function toPosix(path: string): string {

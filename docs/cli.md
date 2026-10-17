@@ -66,7 +66,7 @@ A role and flags after `--` go to the setup. Without a terminal it installs the 
 |---|---|
 | `corami project add <git-url> [--name <name>] [--dry-run]` | clones on the server. The copy of a client comes after, from `sync add` |
 | `corami project add --path <folder> [--dry-run]` | on the server: registers a folder already there, without moving it. A client refuses it: `project import` moves a folder of this machine instead |
-| `corami project import <folder> [--name <name>] [--include <glob>] [--user <user>] [--dry-run]` | on a client: moves a local project to the server, with git history and env files; the folder becomes the synced copy. The folder is required, `.` for the current one. Files that look like keys stay on the client, in the backup folder. `--include` copies more files not tracked by git, repeatable |
+| `corami project import <folder> [--name <name>] [--include <glob>] [--user <user>] [--dry-run]` | on a client: moves a local project to the server, with git history, env files and keys (permissions 0600 on the server); the folder becomes the synced copy. The folder is required, `.` for the current one. The sync never carries the keys to another machine. `--include` copies more files not tracked by git, repeatable |
 | `corami project ls` | list with the previews of each project |
 | `corami project show <name>` | project detail: path, git, previews |
 | `corami project rm <name> --yes` | removes the project from the server, previews included. Deletes the folder only if Corami created it: one registered with `--path` stays on disk |

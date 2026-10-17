@@ -108,32 +108,33 @@ export async function runImport(
   });
 
   const ignored = findLocalOnlyFiles(target, extraIncludes);
-  // A pattern of `--include` is a decision of the user, a sensitive name is
-  // not: files that answer both stay on this machine.
+  // A pattern of `--include` is a decision of the user: it is reported on its
+  // own, so the summary of a long import says what was asked for and what was
+  // simply there.
   const includedFiles = ignored.filter(
     (entry) => entry.class === 'key' && !isSensitiveBasename(entry.path),
   );
   const envFiles = ignored.filter((entry) => entry.class === 'env');
-  const secretFiles = ignored.filter(
+  const keyFiles = ignored.filter(
     (entry) => entry.class === 'key' && isSensitiveBasename(entry.path),
   );
 
   steps.push({
     step: 'inventory',
     status: 'done',
-    summary: `${ignored.length} files not tracked by git: ${envFiles.length} env, ${includedFiles.length} asked with --include, ${secretFiles.length} look like secrets`,
-    detail: [...envFiles, ...secretFiles]
+    summary: `${ignored.length} files not tracked by git: ${envFiles.length} env, ${keyFiles.length} look like keys, ${includedFiles.length} asked with --include`,
+    detail: [...envFiles, ...keyFiles]
       .slice(0, 8)
       .map((entry) => entry.path)
       .join(', '),
   });
 
-  if (secretFiles.length > 0) {
+  if (keyFiles.length > 0) {
     steps.push({
       step: 'keys',
-      status: 'skipped',
-      summary: `${secretFiles.length} files that look like keys: they stay on this machine`,
-      detail: secretFiles.map((entry) => entry.path).join(', '),
+      status: 'done',
+      summary: `${keyFiles.length} files that look like keys: copied to the server, permissions 0600`,
+      detail: keyFiles.map((entry) => entry.path).join(', '),
     });
   }
 
@@ -251,21 +252,13 @@ export async function runImport(
     });
   }
 
-  const restored = await restoreEnvFiles(backup, localCopy, envFiles);
+  const restored = await restoreEnvFiles(backup, localCopy, [...envFiles, ...keyFiles]);
 
   if (restored > 0) {
     steps.push({
       step: 'env',
       status: 'done',
-      summary: `${restored} env files copied back into the new copy`,
-    });
-  }
-
-  if (secretFiles.length > 0) {
-    steps.push({
-      step: 'keys',
-      status: 'skipped',
-      summary: `${secretFiles.length} key files stay only in ${backup}`,
+      summary: `${restored} env and key files copied back into the new copy`,
     });
   }
 
