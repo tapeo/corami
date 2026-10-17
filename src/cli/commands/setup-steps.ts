@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import type { Prompter } from '@/cli/prompt.ts';
 import { type GlobalConfig, paths, readGlobalConfig, writeGlobalConfig } from '@/core/config.ts';
+import { CoramiError, type ErrorCode } from '@/core/errors.ts';
 import { run, runOrThrow } from '@/core/exec.ts';
 import { isTailnetOnlyFirewall } from '@/core/setup-choices.ts';
 import { gitWatchSpec, installService } from '@/integrations/service.ts';
@@ -44,12 +45,34 @@ export interface StepResult {
   step: string;
   status: 'done' | 'skipped' | 'failed' | 'waiting';
   summary: string;
+  /** The error code a step that failed answers with, when it has one. */
+  code?: ErrorCode | undefined;
   detail?: string | undefined;
   scope?: 'user' | 'system' | undefined;
 }
 
 export function isRoot(): boolean {
   return (process.getuid?.() ?? 1) === 0;
+}
+
+/**
+ * A setup that stopped at a step is an error, not a run that went through: a
+ * script that reads the exit code would otherwise take a machine with a broken
+ * service for a machine that is ready. The steps travel in `details.steps`.
+ */
+export function failSteps(steps: StepResult[], command: string): void {
+  const failed = steps.find((step) => step.status === 'failed');
+
+  if (failed === undefined) {
+    return;
+  }
+
+  throw new CoramiError({
+    code: failed.code ?? 'generic',
+    message: `Setup stopped at ${failed.step}: ${failed.summary}`,
+    fix: failed.detail ?? `Run corami ${command} again`,
+    details: { steps },
+  });
 }
 
 async function hasTailscale(): Promise<boolean> {

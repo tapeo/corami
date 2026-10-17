@@ -9,7 +9,7 @@ import { gitStateJson } from '@/core/git-align.ts';
 import { gitOriginState, originStatusJson } from '@/core/git-follow.ts';
 import { validatePreviewName, validateTargetPort } from '@/core/previews.ts';
 import { serverFolderOverlaps, serverPathFrom, validServerPath } from '@/core/project-add.ts';
-import { validProjectName } from '@/core/projects.ts';
+import { validNewProjectName, validProjectName } from '@/core/projects.ts';
 import { deleteProject, getProject, listProjects, upsertProject } from '@/core/state.ts';
 import {
   applyPreview,
@@ -255,11 +255,11 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
     });
   }
 
-  if (!validProjectName(name)) {
+  if (!validNewProjectName(name)) {
     throw new CoramiError({
       code: 'usage',
       message: `Invalid project name: ${name}`,
-      fix: 'A project name is letters, digits, dot, dash and underscore: --name chooses another one',
+      fix: 'A project name starts with a letter and goes on with letters, digits and dashes: --name chooses another one',
     });
   }
 
@@ -363,7 +363,18 @@ async function removeProject(name: string): Promise<ApiResult> {
   const removal = row.owned ? 'delete' : 'keep';
 
   if (removal === 'delete') {
-    await run('rm', ['-rf', row.path]);
+    // The folder goes away first: a removal that fails keeps the project in
+    // the registry, so the command can be run again instead of leaving a
+    // folder no project names.
+    const removed = await run('rm', ['-rf', row.path]);
+
+    if (!removed.ok) {
+      throw new CoramiError({
+        code: 'generic',
+        message: `The folder of ${name} could not be removed: ${row.path}`,
+        fix: (removed.stderr || removed.stdout).trim() || `rm exited with ${removed.exitCode}`,
+      });
+    }
   }
 
   deleteProject(name);

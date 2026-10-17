@@ -14,6 +14,7 @@ import {
 } from '@/cli/command.ts';
 import { allCommands } from '@/cli/commands/index.ts';
 import { parseArgs } from '@/cli/parser.ts';
+import { switchUserFix } from '@/cli/router.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { valueFlags } from '@/main.ts';
 
@@ -201,5 +202,19 @@ describe('valueFlags', () => {
         takesValue.set(flag.name, current);
       }
     }
+  });
+});
+
+describe('the remedy of a command run as root', () => {
+  test('keeps the flags of the run', () => {
+    const fix = switchUserFix('corami', ['serve', '3000', '--name', 'api']);
+
+    expect(fix).toBe("Run it as that account: su - corami -c 'corami serve 3000 --name api'");
+  });
+
+  test('quotes an argument with a space as one word', () => {
+    const fix = switchUserFix('corami', ['project', 'add', '--local-path', '/home/it/my app']);
+
+    expect(fix).toContain("'corami project add --local-path /home/it/my app'");
   });
 });

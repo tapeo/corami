@@ -80,6 +80,8 @@ At most one `--from-*`: without one the project comes from this machine, the onl
 | `--local-path` | from a project of this machine: its root git folder; otherwise `<working directory>/<name>` |
 | `--server-path` | `~/projects/<name>` of the account that owns the projects |
 
+With `--from-server --name` of a registered project the server path is the one the project already has: it is not asked, and `--server-path` with another folder is refused.
+
 `--from-git` stops when the command runs inside a clone of the same repository: `--local-path <root>` moves that folder instead of cloning a second one. `--from-server --name <name>` takes a registered project, wherever its folder is, and refuses a `--server-path` that says otherwise. A folder of this machine that is the home itself, or contains it, is not a project: the command refuses it rather than moving keys and personal files to the server. A step that fails after the server was given the project takes the project away again: a project with no copy on any machine is what this command never leaves behind. `--dry-run` shows both steps, server and client, without touching anything.
 
 A name is taken by the `project add` that registers it: a second one is refused, and nothing of the project already there is touched. Two projects whose folders contain each other are refused too: they would sync the same files.
@@ -99,6 +101,8 @@ Corami starts no project process. Start the dev server yourself (a user service,
 | `corami serve rm <name> [--project <project>]` | all | removes the address and the record |
 
 The public port is stable per preview and comes from the daemon, in the range 4100-4999. Registering the same name again with another port moves the rule and keeps the URL.
+
+On a client the folder is not the one of the server: `corami serve rm <name>` there needs `--project <name>`, because the copy of this machine has another path.
 
 ## Sync
 

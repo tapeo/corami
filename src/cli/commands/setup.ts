@@ -3,6 +3,7 @@ import { CLIENT_STEPS, runClientSetup } from '@/cli/commands/setup-client.ts';
 import { runGitSetup } from '@/cli/commands/setup-git.ts';
 import { runStepAsOwner, stepServerUser } from '@/cli/commands/setup-server-user.ts';
 import {
+  failSteps,
   firewallClosed,
   isRoot,
   progressLine,
@@ -172,6 +173,8 @@ async function runServerSetup(
       break;
     }
   }
+
+  failSteps(results, 'setup server');
 
   if (context.output.json) {
     return { data: { fqdn: stepContext.fqdn, steps: results } };

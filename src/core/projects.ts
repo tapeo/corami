@@ -1,24 +1,51 @@
 import { readdirSync } from 'node:fs';
 import { isAbsolute, posix, relative, sep } from 'node:path';
 
-/** A project name: letters, digits, dot, dash, underscore, and never a path. */
+/**
+ * A project name as the daemon reads it, for a project that already exists:
+ * it may carry a dot or an underscore, as the names of projects created before
+ * the rule of `NEW_PROJECT_NAME_PATTERN`.
+ */
 export const PROJECT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * A project name this machine can create: the session of the sync engine is
+ * named after it, and the engine takes letters, digits and dashes, starting
+ * with a letter. A name with a dot or an underscore would pass every other
+ * check and stop at `mutagen sync create`, after the project is on the server.
+ */
+export const NEW_PROJECT_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9-]*$/;
 
 /**
  * Whether a name can key a project. The name becomes `~/projects/<name>` on
  * the server, so a separator, a `..` or an empty name would point the folder
  * of one project at another one. The rule is the same on every side: it is
  * checked here, on the client before the request and on the daemon after it.
+ *
+ * A name of a project that already exists is still accepted: the routes of the
+ * daemon read and remove it, and a project created before this rule keeps its
+ * name until it is removed.
  */
 export function validProjectName(name: string): boolean {
   return PROJECT_NAME_PATTERN.test(name) && name !== '.' && name !== '..';
 }
 
-/** The reason a name was refused, for the remedy of the command. */
-export function invalidProjectNameReason(name: string): string {
-  return name === ''
-    ? 'the name is empty'
-    : `the name ${name} has characters a project name cannot have`;
+/** Whether a name can be given to a new project, whose session must exist. */
+export function validNewProjectName(name: string): boolean {
+  return NEW_PROJECT_NAME_PATTERN.test(name);
+}
+
+/**
+ * A name as the sync engine takes it: a project folder may carry a dot or an
+ * underscore, and the session can only be named after letters, digits and
+ * dashes. The suggested name is the folder turned into one, so that the
+ * command goes through without a second question.
+ */
+export function syncName(name: string): string {
+  return name
+    .replace(/[._\s]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 /**

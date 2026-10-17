@@ -10,9 +10,10 @@ import { classifyPath, isRegenerableFolder, PATH_RULES, type PathRule } from '@/
  * and the local manifest walk rebuild the same decision for the other side:
  * the three always agree on what an import carries. What is left out is what
  * the sync leaves out: the regenerable folders and the paths of one machine.
+ * `.git` is the one exception, for the reason in `PATH_RULES`.
  */
 export function tarExcludeArgs(): string[] {
-  return PATH_RULES.filter((rule) => rule.class !== 'synced').map(
+  return PATH_RULES.filter((rule) => rule.class !== 'synced' && rule.pattern !== '.git').map(
     (rule) => `--exclude=${tarPattern(rule)}`,
   );
 }
@@ -142,6 +143,52 @@ export function sshManifestRunner(host: string, user: string): ManifestRunner {
 
     return { ok: result.ok, stdout: result.stdout };
   };
+}
+
+export type RemoteFolderState = 'missing' | 'empty' | 'taken';
+
+/**
+ * The command that tells whether the folder of the project is free on the
+ * server: not there, there and empty, and there with something in it. It
+ * answers one word, the two parts separated by a `|`. A folder the command
+ * cannot read answers nothing, which is none of the three.
+ */
+export function remoteFolderStateCommand(path: string): string {
+  const folder = shellQuote(path);
+
+  return [
+    `{ test -e ${folder} && echo there || echo missing; }`,
+    `{ ls -A ${folder} 2>/dev/null | grep -q . && echo '|taken' || echo '|empty'; }`,
+  ].join('; ');
+}
+
+/**
+ * The state of the folder of the project on the server, read before anything
+ * is copied: the import writes only into a folder it makes. Undefined when the
+ * command did not answer, which the caller treats as a stop: a folder that
+ * cannot be read is not a folder to write into.
+ */
+export async function remoteFolderState(
+  host: string,
+  user: string,
+  path: string,
+  runner: ManifestRunner = sshManifestRunner(host, user),
+): Promise<RemoteFolderState | undefined> {
+  const result = await runner(remoteFolderStateCommand(path));
+  const [presence = '', content = ''] = result.stdout
+    .trim()
+    .split('|')
+    .map((part) => part.trim());
+
+  if (presence === 'missing') {
+    return 'missing';
+  }
+
+  if (presence !== 'there') {
+    return undefined;
+  }
+
+  return content === 'empty' ? 'empty' : content === 'taken' ? 'taken' : undefined;
 }
 
 export async function remoteManifest(

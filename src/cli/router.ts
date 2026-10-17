@@ -1,4 +1,5 @@
 import {
+  type ActionSpec,
   type CommandSpec,
   checkFlags,
   heading,
@@ -14,6 +15,7 @@ import { emit, type OutputOptions, success } from '@/cli/output.ts';
 import { booleanFlag, parseArgs } from '@/cli/parser.ts';
 import { ownerToSwitchTo } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
+import { shellQuote } from '@/core/exec.ts';
 import { VERSION } from '@/version.ts';
 
 export interface RouterOptions {
@@ -26,18 +28,20 @@ export interface RouterOptions {
 export async function runRouter(options: RouterOptions): Promise<number> {
   const args = parseArgs(options.argv, { valueFlags: options.valueFlags ?? [] });
 
-  // Only a bare `--version` is the global flag: a string value, as in
-  // `corami update --version v0.3.0`, belongs to the command.
-  if (args.values.version === true) {
-    emit(success({ name: 'corami', version: VERSION }), options.output);
-    return 0;
-  }
-
   // `corami help sync prune` is `corami sync prune --help`.
   const asked = args.positionals[0] === 'help';
   const positionals = asked ? args.positionals.slice(1) : args.positionals;
   const wantsHelp = asked || booleanFlag(args, 'help');
   const command = resolveCommand(options.commands, positionals);
+
+  // Only a bare `--version` is the global flag: a string value, as in
+  // `corami update --version v0.3.0`, belongs to the command, and so does the
+  // flag itself when the command declares it. A command that declares it and
+  // gets no value is a usage error, not the version of corami.
+  if (args.values.version === true && !declaresVersion(command)) {
+    emit(success({ name: 'corami', version: VERSION }), options.output);
+    return 0;
+  }
 
   if (command === undefined) {
     if (positionals.length > 0) {
@@ -87,7 +91,7 @@ export async function runRouter(options: RouterOptions): Promise<number> {
     throw new CoramiError({
       code: 'usage',
       message: `This server works as the account ${owner}: the files of this command would belong to root`,
-      fix: `Run it as that account: su - ${owner} -c "corami ${args.positionals.join(' ')}"`,
+      fix: switchUserFix(owner, options.argv),
     });
   }
 
@@ -115,6 +119,23 @@ export async function runRouter(options: RouterOptions): Promise<number> {
   }
 
   return 0;
+}
+
+/** Whether a command or one of its actions declares `--version` as its own. */
+function declaresVersion(command: CommandSpec | undefined): boolean {
+  const specs: Array<CommandSpec | ActionSpec> =
+    command === undefined ? [] : [command, ...(command.actions ?? [])];
+
+  return specs.some((spec) => (spec.flags ?? []).some((flag) => flag.name === 'version'));
+}
+
+/**
+ * The command of the account that owns the projects, for a remedy: the words
+ * of this run as they were given, flags included, so the command works as it
+ * was typed.
+ */
+export function switchUserFix(owner: string, argv: string[]): string {
+  return `Run it as that account: su - ${owner} -c ${shellQuote(['corami', ...argv].join(' '))}`;
 }
 
 // The commands that may run as root on a server: `setup` runs the steps of the

@@ -26,7 +26,7 @@ export function conflictLabel(path: string): string {
  */
 export function conflictFix(project: string, conflicts: string[]): string {
   if (conflicts.includes('')) {
-    return `the folder is gone on one side; corami sync stop ${project} keeps this copy, corami project rm ${project} --on client --force removes it`;
+    return `the folder is gone on one side; corami sync stop ${project} keeps this copy, corami project rm ${project} --on client --force --yes removes it`;
   }
 
   return CONFLICT_RESOLUTION;

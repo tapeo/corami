@@ -12,6 +12,7 @@ import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
 import { canPrompt, terminalPrompter } from '@/cli/prompt.ts';
 import {
   addProject,
+  findProject,
   listProjects,
   type ProjectSummary,
   projectDetail,
@@ -29,7 +30,7 @@ import {
   suggestedProjectName,
   validServerPath,
 } from '@/core/project-add.ts';
-import { validProjectName, withLocalCopies } from '@/core/projects.ts';
+import { validNewProjectName, withLocalCopies } from '@/core/projects.ts';
 import { MutagenEngine } from '@/integrations/mutagen.ts';
 
 async function ls(context: CommandContext): Promise<CommandResult> {
@@ -180,6 +181,17 @@ async function add(context: CommandContext): Promise<CommandResult> {
   // do not carry, so a command with no source at all reads as this folder.
   const from = sourceOf(urlFlag, booleanFlag(context.args, 'from-server'));
 
+  // The flag is about the import, which is the only source that carries the
+  // .git of the folder: it is refused before a dry run answers, so the plan
+  // does not describe a command that would fail.
+  if (from === 'local' && noGit) {
+    throw new CoramiError({
+      code: 'usage',
+      message: '--no-git does not apply to the import',
+      fix: 'The .git of the folder moves with it, and the copy keeps its own',
+    });
+  }
+
   let url = urlFlag;
 
   if (from === 'git' && url === undefined) {
@@ -246,13 +258,18 @@ async function add(context: CommandContext): Promise<CommandResult> {
     });
   }
 
-  if (!validProjectName(name)) {
+  if (!validNewProjectName(name)) {
     throw new CoramiError({
       code: 'usage',
       message: `Invalid project name: ${name}`,
-      fix: 'A project name is letters, digits, dot, dash and underscore: --name chooses another one',
+      fix: 'A project name starts with a letter and goes on with letters, digits and dashes: --name chooses another one',
     });
   }
+
+  // The folder of a registered project is the source of `--from-server`, and
+  // it is read from the daemon. An import asks the same question as its own
+  // step, where the folder of this machine has already been read.
+  const registeredPath = from === 'server' ? (await findProject(name))?.path : undefined;
 
   // The folder of this machine: the one of the project itself with the
   // import, a folder of the working directory otherwise.
@@ -276,7 +293,10 @@ async function add(context: CommandContext): Promise<CommandResult> {
 
   const localPath = givenPath(localArg);
   const serverDefault = defaultServerPath(name);
-  let serverArg = serverFlag;
+  // A registered project is where the server says it is: there is nothing to
+  // ask, and a different path would be refused later anyway.
+  let serverArg =
+    serverFlag ?? (from === 'server' && registeredPath !== undefined ? registeredPath : undefined);
 
   if (serverArg === undefined) {
     if (prompter === undefined) {
@@ -301,8 +321,6 @@ async function add(context: CommandContext): Promise<CommandResult> {
   const onClient = config?.role === 'client';
   const sessions = onClient ? await syncSessions(engine) : [];
   const session = sessions.find((entry) => entry.project === name)?.beta;
-  const detail = await projectDetail(name).catch(() => undefined);
-  const registeredPath = typeof detail?.path === 'string' ? detail.path : undefined;
 
   planProjectAdd({
     role: config?.role,
@@ -338,14 +356,6 @@ async function add(context: CommandContext): Promise<CommandResult> {
   }
 
   if (from === 'local') {
-    if (noGit) {
-      throw new CoramiError({
-        code: 'usage',
-        message: '--no-git does not apply to the import',
-        fix: 'The .git of the folder moves with it, and the copy keeps its own',
-      });
-    }
-
     return runImport({
       project: name,
       localPath: place.local,
@@ -541,6 +551,16 @@ async function rm(context: CommandContext): Promise<CommandResult> {
   }
 
   if (on === 'client') {
+    // The folder of the copy goes away: a dry run is the only way to see the
+    // plan without saying it, as for the project on the server.
+    if (!booleanFlag(context.args, 'dry-run') && !booleanFlag(context.args, 'yes')) {
+      throw new CoramiError({
+        code: 'usage',
+        message: `Confirmation required to remove the copy of ${name}`,
+        fix: `Run corami project rm ${name} --on client --yes`,
+      });
+    }
+
     return removeLocalCopy(name, context);
   }
 

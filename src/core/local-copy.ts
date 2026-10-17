@@ -10,6 +10,12 @@ import { run } from '@/core/exec.ts';
  * checks count them as local only. Every place that needs one of those lists
  * derives it from here, so they cannot drift apart.
  *
+ * `.git` is the one exception: the sync never carries it, because every copy
+ * has its own repository, but the import does. The project that lands on the
+ * server is a clone, with the history and the uncommitted work of the folder
+ * it came from. The manifest of the import leaves `.git` out on both sides and
+ * the history is compared on its own, ref by ref.
+ *
  * Everything else travels: a key, an env file or any other file of the project
  * is a file of the project. Keeping one out of the machines is the user's
  * decision, made by keeping it out of the folder or by injecting it from an

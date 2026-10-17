@@ -1,8 +1,9 @@
-import { basename, join, posix } from 'node:path';
+import { basename, join, posix, win32 } from 'node:path';
 import type { Role } from '@/core/config.ts';
 import { serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { git, gitOriginUrl } from '@/core/git.ts';
+import { syncName } from '@/core/projects.ts';
 
 /** The repository the command runs in: its root, and the url of `origin`. */
 export interface CwdRepository {
@@ -153,6 +154,20 @@ export function serverFolderOverlaps(path: string, others: string[]): boolean {
   });
 }
 
+/** The folders of the projects of the server, as the daemon announces them. */
+export function serverPathsOf(projects: Array<{ path: string }>): string[] {
+  return projects.map((project) => project.path);
+}
+
+function withinLocal(flavor: typeof posix, folder: string, path: string): boolean {
+  const between = flavor.relative(folder, path);
+
+  return (
+    between === '' ||
+    (between !== '..' && !between.startsWith(`..${flavor.sep}`) && !flavor.isAbsolute(between))
+  );
+}
+
 function within(folder: string, path: string): boolean {
   const between = posix.relative(folder, path);
 
@@ -166,8 +181,16 @@ function within(folder: string, path: string): boolean {
  * with its files, the keys included, and the home of this machine is not a
  * project. A folder inside the home is one.
  */
-export function movableLocalFolder(path: string, home: string): void {
-  if (within(posix.normalize(path), posix.normalize(home))) {
+export function movableLocalFolder(
+  path: string,
+  home: string,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  // The folder of this machine is read with the rules of this machine: on
+  // Windows `C:\Users\me` is not a path of a POSIX folder.
+  const flavor = platform === 'win32' ? win32 : posix;
+
+  if (withinLocal(flavor, flavor.normalize(path), flavor.normalize(home))) {
     throw new CoramiError({
       code: 'usage',
       message: `The home folder of this machine is not a project: ${path}`,
@@ -202,7 +225,7 @@ export function suggestedProjectName(state: {
 
   if (state.url !== undefined) {
     try {
-      return projectNameFromUrl(state.url);
+      return syncName(projectNameFromUrl(state.url));
     } catch {
       return undefined;
     }
@@ -214,7 +237,7 @@ export function suggestedProjectName(state: {
     return undefined;
   }
 
-  const last = basename(folder.replace(/\/+$/, ''));
+  const last = syncName(basename(folder.replace(/\/+$/, '')));
 
   return last === '' || last === '.' ? undefined : last;
 }

@@ -26,17 +26,19 @@ import {
   sameRepository,
   serverFolderOverlaps,
   serverPathFrom,
+  serverPathsOf,
   suggestedProjectName,
   validServerPath,
 } from '@/core/project-add.ts';
 import {
-  invalidProjectNameReason,
   isFolderEmpty,
   isWithin,
   localCopyTarget,
   projectOfCopy,
   serverFolderRemoval,
+  syncName,
   unexpandedHome,
+  validNewProjectName,
   validProjectName,
   withLocalCopies,
 } from '@/core/projects.ts';
@@ -138,6 +140,23 @@ describe('the projects of a server', () => {
   });
 });
 
+describe('the folder of a project on the server', () => {
+  test('an import never writes into a folder another project holds, or around it', () => {
+    const projects = [
+      { name: 'web', path: '/home/corami/projects/web' },
+      { name: 'api', path: '/home/corami/projects/api' },
+    ];
+    const folders = serverPathsOf(projects);
+
+    expect(folders).toEqual(['/home/corami/projects/web', '/home/corami/projects/api']);
+    expect(serverFolderOverlaps('/home/corami/projects/web', folders)).toBe(true);
+    expect(serverFolderOverlaps('/home/corami/projects/web/assets', folders)).toBe(true);
+    expect(serverFolderOverlaps('/home/corami/projects', folders)).toBe(true);
+    expect(serverFolderOverlaps('/home/corami/projects/notes', folders)).toBe(false);
+    expect(serverFolderOverlaps('/home/corami/projects/web-2', folders)).toBe(false);
+  });
+});
+
 describe('validProjectName', () => {
   test('accepts the names a project can have', () => {
     expect(validProjectName('myapp')).toBe(true);
@@ -157,9 +176,35 @@ describe('validProjectName', () => {
     expect(validProjectName('app\\other')).toBe(false);
   });
 
-  test('says why a name was refused', () => {
-    expect(invalidProjectNameReason('a b')).toContain('a b');
-    expect(invalidProjectNameReason('')).toContain('empty');
+  test('accepts a name that exists, with a dot or an underscore', () => {
+    expect(validProjectName('my_app')).toBe(true);
+    expect(validProjectName('app.v2')).toBe(true);
+  });
+});
+
+describe('validNewProjectName', () => {
+  test('accepts what the sync engine can name a session', () => {
+    expect(validNewProjectName('myapp')).toBe(true);
+    expect(validNewProjectName('my-app-2')).toBe(true);
+    expect(validNewProjectName('a')).toBe(true);
+  });
+
+  test('refuses a dot or an underscore, which the engine refuses too', () => {
+    expect(validNewProjectName('my_app')).toBe(false);
+    expect(validNewProjectName('app.v2')).toBe(false);
+    expect(validNewProjectName('2app')).toBe(false);
+    expect(validNewProjectName('')).toBe(false);
+  });
+});
+
+describe('syncName', () => {
+  test('turns the name of a folder into one the engine takes', () => {
+    expect(syncName('my_app')).toBe('my-app');
+    expect(syncName('app.v2')).toBe('app-v2');
+    expect(syncName('my app')).toBe('my-app');
+    expect(syncName('my--app')).toBe('my-app');
+    expect(syncName('-my_app-')).toBe('my-app');
+    expect(syncName('myapp')).toBe('myapp');
   });
 });
 
@@ -520,10 +565,25 @@ describe('the paths of an added project', () => {
     expect(() => movableLocalFolder('/Users/metoo', '/Users/me')).not.toThrow();
   });
 
+  test('the home of a Windows machine is read with the rules of Windows', () => {
+    expect(() => movableLocalFolder('C:\\Users\\me', 'C:\\Users\\me', 'win32')).toThrow(
+      CoramiError,
+    );
+    expect(() => movableLocalFolder('C:\\', 'C:\\Users\\me', 'win32')).toThrow(CoramiError);
+    expect(() =>
+      movableLocalFolder('C:\\Users\\me\\dev\\myapp', 'C:\\Users\\me', 'win32'),
+    ).not.toThrow();
+    expect(() => movableLocalFolder('C:\\Users\\metoo', 'C:\\Users\\me', 'win32')).not.toThrow();
+  });
+
   test('the name to suggest comes from what the command already knows', () => {
     expect(suggestedProjectName({ url: 'git@github.com:me/myapp.git' })).toBe('myapp');
     expect(suggestedProjectName({ serverPath: '~/projects/other' })).toBe('other');
     expect(suggestedProjectName({ localPath: '/Users/me/dev/site/' })).toBe('site');
+    // The session of the sync engine is named after the project: a folder
+    // with a dot or an underscore is suggested with a name the engine takes.
+    expect(suggestedProjectName({ localPath: '/Users/me/dev/my_app' })).toBe('my-app');
+    expect(suggestedProjectName({ url: 'git@github.com:me/app.v2.git' })).toBe('app-v2');
     expect(suggestedProjectName({ name: 'chosen', url: 'git@github.com:me/myapp.git' })).toBe(
       'chosen',
     );

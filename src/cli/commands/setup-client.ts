@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 
 import type { CommandContext } from '@/cli/command.ts';
-import { runStepInTerminal, type StepResult } from '@/cli/commands/setup-steps.ts';
+import { failSteps, runStepInTerminal, type StepResult } from '@/cli/commands/setup-steps.ts';
 import { renderNextSteps, renderSteps } from '@/cli/output.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
 import type { Prompter } from '@/cli/prompt.ts';
@@ -111,6 +111,7 @@ export async function runClientSetup(
     steps.push(tailscale);
 
     if (tailscale.status === 'failed') {
+      failSteps(steps, 'setup client');
       return { text: render(steps, false, false) };
     }
 
@@ -130,6 +131,8 @@ export async function runClientSetup(
       break;
     }
   }
+
+  failSteps(steps, 'setup client');
 
   if (context.output.json) {
     return {

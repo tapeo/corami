@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -225,6 +225,102 @@ describe('cli', () => {
     expect(parsed.error.message).toBe('Give only one of --from-git or --from-server');
   });
 
+  test('fails the import of a folder that is not a repository', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'corami-home-'));
+    mkdirSync(join(home, '.corami'), { recursive: true });
+    writeFileSync(
+      join(home, '.corami', 'config.json'),
+      JSON.stringify({ role: 'client', server_host: 'corami.example.ts.net' }),
+    );
+
+    const folder = await mkdtemp(join(tmpdir(), 'corami-import-'));
+    writeFileSync(join(folder, 'notes.txt'), 'x');
+
+    const result = await corami(['project', 'add', '--local-path', folder], { HOME: home });
+    const parsed = JSON.parse(result.stdout);
+
+    // Nothing was written anywhere: the command answered with the step that
+    // stopped it, and the folder of this machine is where it was.
+    expect(result.exitCode).toBe(2);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error.code).toBe('usage');
+    expect(parsed.error.message).toContain(`Import of ${folder.split('/').at(-1)} stopped at git`);
+    expect(parsed.error.details.steps.map((step: { step: string }) => step.step)).toContain('git');
+    expect(existsSync(join(folder, 'notes.txt'))).toBe(true);
+  });
+
+  test('refuses a name the sync engine cannot take, even before the server', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'corami-import-'));
+    const result = await corami(['project', 'add', '--local-path', folder, '--name', 'my_app']);
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.exitCode).toBe(2);
+    expect(parsed.error.code).toBe('usage');
+    expect(parsed.error.message).toBe('Invalid project name: my_app');
+    expect(parsed.error.fix).toContain('dashes');
+  });
+
+  test('says when the sync engine does not answer, instead of "no sessions"', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'corami-home-'));
+    mkdirSync(join(home, '.corami'), { recursive: true });
+    writeFileSync(
+      join(home, '.corami', 'config.json'),
+      JSON.stringify({ role: 'client', server_host: 'corami.example.ts.net' }),
+    );
+    // An engine that is there and does not answer: the session list is not
+    // an empty list, it is an answer that never came.
+    const bin = await mkdtemp(join(tmpdir(), 'corami-bin-'));
+    const fake = join(bin, 'mutagen');
+    writeFileSync(fake, '#!/bin/sh\necho "connection refused" >&2\nexit 1\n');
+    chmodSync(fake, 0o755);
+
+    const result = await corami(['sync', 'status'], {
+      HOME: home,
+      PATH: `${bin}:${process.env.PATH ?? ''}`,
+    });
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.exitCode).toBe(3);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error.code).toBe('capability_missing');
+    expect(parsed.error.message).toContain('Mutagen');
+  });
+
+  test('asks for the confirmation of the copy too, unless it is a dry run', async () => {
+    const unconfirmed = await corami(['project', 'rm', 'myapp', '--on', 'client']);
+    const parsed = JSON.parse(unconfirmed.stdout);
+
+    expect(unconfirmed.exitCode).toBe(2);
+    expect(parsed.error.code).toBe('usage');
+    expect(parsed.error.message).toBe('Confirmation required to remove the copy of myapp');
+    expect(parsed.error.fix).toContain('--on client --yes');
+  });
+
+  test('reads a bare --version as the value update is missing', async () => {
+    const result = await corami(['update', '--version']);
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.exitCode).toBe(2);
+    expect(parsed.error.code).toBe('usage');
+    expect(parsed.error.message).toBe('Missing value for --version');
+  });
+
+  test('refuses --no-git for the import before a dry run says what it would do', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'corami-import-'));
+    const result = await corami([
+      'project',
+      'add',
+      '--local-path',
+      folder,
+      '--no-git',
+      '--dry-run',
+    ]);
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.exitCode).toBe(2);
+    expect(parsed.error.message).toBe('--no-git does not apply to the import');
+  });
+
   test('asks project rm where the project leaves from', async () => {
     const missing = await corami(['project', 'rm', 'myapp', '--yes']);
     const wrong = await corami(['project', 'rm', 'myapp', '--on', 'both', '--yes']);
@@ -268,6 +364,39 @@ describe('cli', () => {
     expect(result.exitCode).toBe(2);
     expect(parsed.error.fix).toContain('mutagen-daemon');
     expect(parsed.error.fix).toContain('git-watch');
+  });
+
+  test('reports a configuration that cannot be read instead of a server that is away', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'corami-home-'));
+    mkdirSync(join(home, '.corami'), { recursive: true });
+    writeFileSync(join(home, '.corami', 'config.json'), '{ broken');
+
+    const result = await corami(['project', 'ls'], { HOME: home });
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.exitCode).toBe(1);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error.code).toBe('config_invalid');
+    expect(parsed.error.message).toContain('Invalid JSON');
+  });
+
+  test('fails the setup when a step fails', async () => {
+    // Nothing listens for TLS on the loopback preview of this machine, and no
+    // Corami server answers: the step daemon fails.
+    const home = await mkdtemp(join(tmpdir(), 'corami-home-'));
+    const result = await corami(
+      ['setup', 'client', '127.0.0.1', '--user', 'root', '--step', 'daemon', '--dry-run'],
+      { HOME: home },
+    );
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.exitCode).toBe(1);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error.code).toBe('generic');
+    expect(parsed.error.message).toContain('Setup stopped at daemon');
+    expect(parsed.error.details.steps.map((step: { step: string }) => step.step)).toContain(
+      'daemon',
+    );
   });
 
   test('refuses the flag of another action', async () => {

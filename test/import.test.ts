@@ -13,9 +13,20 @@ import {
   findExcludeArgs,
   localManifest,
   manifestsMatch,
+  remoteFolderState,
+  remoteFolderStateCommand,
   tarExcludeArgs,
 } from '@/core/transfer.ts';
 import { DEFAULT_IGNORES } from '@/integrations/mutagen.ts';
+
+/** A git command of a test fixture: it throws when git refuses. */
+function git(root: string, args: string[]): void {
+  const result = Bun.spawnSync(['git', '-C', root, ...args], { stderr: 'pipe' });
+
+  if (result.exitCode !== 0) {
+    throw new Error(`git ${args.join(' ')}: ${result.stderr.toString()}`);
+  }
+}
 
 describe('sync ignores', () => {
   test('cover what the sync rebuilds and what belongs to one machine', () => {
@@ -37,6 +48,42 @@ describe('tar arguments', () => {
     expect(args).toContain('--exclude=node_modules');
     expect(args).toContain('--exclude=ephemeral');
     expect(args).toContain('--exclude=./android/local.properties');
+  });
+
+  test('keep the git folder: the project on the server is a clone', () => {
+    expect(tarExcludeArgs()).not.toContain('--exclude=.git');
+  });
+
+  test('the archive carries the history and leaves the regenerable folders out', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-archive-git-'));
+    mkdirSync(join(root, 'src'), { recursive: true });
+    mkdirSync(join(root, 'node_modules', 'left-pad'), { recursive: true });
+    writeFileSync(join(root, 'src', 'index.ts'), 'export {};\n');
+    writeFileSync(join(root, 'node_modules', 'left-pad', 'index.js'), 'module.exports = {};\n');
+
+    git(root, ['init', '-q']);
+    git(root, ['-c', 'user.name=test', '-c', 'user.email=test@test', 'add', '.']);
+    git(root, ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-qm', 'first']);
+
+    const archive = `${root}.tgz`;
+    const packed = Bun.spawnSync(['tar', '-czf', archive, ...tarExcludeArgs(), '-C', root, '.'], {
+      stderr: 'pipe',
+    });
+    expect(packed.exitCode).toBe(0);
+
+    const listed = Bun.spawnSync(['tar', '-tzf', archive], { stderr: 'pipe' });
+    const paths = listed.stdout
+      .toString()
+      .split('\n')
+      .map((line) => line.replace(/^\.\//, ''))
+      .filter((line) => line !== '');
+
+    expect(paths).toContain('.git/HEAD');
+    expect(paths.some((path) => path.startsWith('node_modules/'))).toBe(false);
+
+    // The manifest leaves the history out on both sides: git is compared on
+    // its own, so counting its files would make the two sides disagree.
+    expect(localManifest(root).files).toBe(1);
   });
 
   test('carry keys and env files: they are files of the project', () => {
@@ -61,6 +108,12 @@ describe('remote manifest arguments', () => {
     expect(args).toContain("-name 'node_modules'");
     expect(args).toContain("-path '*/node_modules/*'");
     expect(args).toContain("-path './android/local.properties'");
+  });
+
+  test('leave the git folder out on both sides', () => {
+    const args = findExcludeArgs().join(' ');
+    expect(args).toContain("-name '.git'");
+    expect(args).toContain("-path '*/.git/*'");
   });
 });
 
@@ -99,6 +152,39 @@ describe('manifests', () => {
     const facts = { head: 'abc', refs: 3, stashes: 1, dirty: 2 };
     expect(factsMatch(facts, { ...facts, dirty: 0 })).toBe(true);
     expect(factsMatch(facts, { ...facts, refs: 2 })).toBe(false);
+  });
+});
+
+describe('the folder of the import on the server', () => {
+  test('the check names a folder that does not exist, and one with something in it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-server-folder-'));
+    const empty = join(root, 'empty');
+    const taken = join(root, 'taken');
+    const missing = join(root, 'missing');
+    mkdirSync(empty);
+    mkdirSync(taken);
+    writeFileSync(join(taken, 'notes.txt'), 'x');
+
+    const runner = async (script: string) => {
+      const result = Bun.spawnSync(['bash', '-c', script], { stderr: 'pipe' });
+
+      return { ok: result.exitCode === 0, stdout: result.stdout.toString() };
+    };
+
+    expect(await remoteFolderState('host', 'user', empty, runner)).toBe('empty');
+    expect(await remoteFolderState('host', 'user', taken, runner)).toBe('taken');
+    expect(await remoteFolderState('host', 'user', missing, runner)).toBe('missing');
+    // A check that cannot answer is not a free folder.
+    expect(
+      await remoteFolderState('host', 'user', empty, async () => ({ ok: false, stdout: '' })),
+    ).toBeUndefined();
+  });
+
+  test('the command quotes the folder as one word', () => {
+    const command = remoteFolderStateCommand("/home/it's/projects/app");
+
+    expect(command).toContain("test -e '/home/it'\\''s/projects/app'");
+    expect(command).toContain("ls -A '/home/it'\\''s/projects/app'");
   });
 });
 

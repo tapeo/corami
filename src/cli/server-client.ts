@@ -53,7 +53,10 @@ export interface ProjectSummary {
 const REQUEST_TIMEOUT_MS = 20_000;
 
 export async function baseUrl(): Promise<string> {
-  const config = await readGlobalConfig().catch(() => undefined);
+  // A configuration that cannot be read is an error of its own: without it
+  // the command would speak to the loopback daemon of this machine and call
+  // the server unreachable.
+  const config = await readGlobalConfig();
 
   if (config?.role === 'client') {
     if (config.server_host === undefined) {
@@ -76,7 +79,7 @@ export async function baseUrl(): Promise<string> {
  * which for a command run as root is the account of `server_user`.
  */
 async function localToken(): Promise<string | undefined> {
-  const config = await readGlobalConfig().catch(() => undefined);
+  const config = await readGlobalConfig();
   const home = config?.server_user !== undefined ? await homeFor(config.server_user) : undefined;
   const root = join(home ?? homeDirectory(), '.corami');
   const path = join(root, 'daemon-token');
@@ -188,8 +191,13 @@ export async function serverUserForSync(): Promise<string> {
   return typeof announced === 'string' && announced !== '' ? announced : 'root';
 }
 
-export async function listProjects(): Promise<ProjectSummary[]> {
-  const data = await request<{ projects: ProjectSummary[] }>('/v1/projects');
+export async function listProjects(
+  options: { timeoutMs?: number } = {},
+): Promise<ProjectSummary[]> {
+  const data = await request<{ projects: ProjectSummary[] }>('/v1/projects', {
+    ...(options.timeoutMs === undefined ? {} : { signal: AbortSignal.timeout(options.timeoutMs) }),
+  });
+
   return data.projects;
 }
 
@@ -200,14 +208,23 @@ export async function listProjects(): Promise<ProjectSummary[]> {
  */
 export async function projectOnServer(name: string): Promise<boolean | undefined> {
   try {
-    const data = await request<{ projects: ProjectSummary[] }>('/v1/projects', {
-      signal: AbortSignal.timeout(2_000),
-    });
+    const projects = await listProjects({ timeoutMs: 2_000 });
 
-    return data.projects.some((project) => project.name === name);
+    return projects.some((project) => project.name === name);
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Whether the server has a project with this name. Only "no" is undefined: a
+ * daemon that does not answer is an error, because the caller would otherwise
+ * treat a server that is away as a name that is free, and write over it.
+ */
+export async function findProject(name: string): Promise<ProjectSummary | undefined> {
+  const projects = await listProjects();
+
+  return projects.find((project) => project.name === name);
 }
 
 export async function projectDetail(name: string): Promise<Record<string, unknown>> {

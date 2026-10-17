@@ -6,6 +6,7 @@ import { gitSides } from '@/cli/commands/git.ts';
 import { applyRemoval, planRemoval } from '@/cli/commands/sync-remove.ts';
 import { booleanFlag, stringFlag } from '@/cli/parser.ts';
 import {
+  findProject,
   projectDetail,
   projectGit,
   projectOnServer,
@@ -243,13 +244,19 @@ function serverFolder(
 }
 
 async function projectOnServerOrFail(project: string): Promise<Record<string, unknown>> {
-  return projectDetail(project).catch(() => {
+  // A daemon that does not answer says nothing about the project: its error
+  // goes out as it is, and only a server that answered "no" stops here.
+  const known = await findProject(project);
+
+  if (known === undefined) {
     throw new CoramiError({
       code: 'config_invalid',
       message: `No project named ${project} on the server`,
       fix: 'corami project ls to see the projects on the server',
     });
-  });
+  }
+
+  return projectDetail(project);
 }
 
 export async function createSyncFor(options: CreateSyncOptions): Promise<{
@@ -343,9 +350,10 @@ async function copyGit(project: string, local: string): Promise<CopyGitResult> {
 async function status(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
   const project = context.args.positionals[0];
   const engine = new MutagenEngine();
-  const sessions =
-    project === undefined ? await engine.list() : [await engine.status(project)].filter(Boolean);
-  const filled = sessions.filter((session): session is SyncSession => session !== undefined);
+  // The sessions, from the one command that treats an engine that does not
+  // answer as an error: "no sessions" is an answer, and a silent one is not.
+  const all = await syncSessions(engine);
+  const filled = project === undefined ? all : all.filter((session) => session.project === project);
   const git = await gitStatesFor(filled);
   const activity = filled.map((session) => ({
     project: session.project,
@@ -463,6 +471,16 @@ async function control(context: CommandContext): Promise<{ data?: unknown; text?
   }
 
   const engine = new MutagenEngine();
+  const session = (await syncSessions(engine)).find((entry) => entry.project === project);
+
+  if (session === undefined) {
+    throw new CoramiError({
+      code: 'usage',
+      message: `No sync session for ${project} on this machine`,
+      fix: 'corami sync status lists the sessions of this machine',
+    });
+  }
+
   await engine.flush(project);
 
   if (context.output.json) {
@@ -625,7 +643,7 @@ async function prune(context: CommandContext): Promise<{ data?: unknown; text?: 
     throw new CoramiError({ code: 'usage', message: `Invalid duration: ${unused}` });
   }
 
-  const sessions = await engine.list();
+  const sessions = await syncSessions(engine);
   const candidates: Array<{
     project: string;
     local: string;
