@@ -111,12 +111,14 @@ export function givenPath(path: string): string {
   return resolve(path);
 }
 
-// The form paths are compared in, never the one a folder is created with:
-// absolute, with the symbolic links of the part that exists resolved, so that
-// `/tmp` and `/private/tmp` are one folder, and in lower case on macOS and
-// Windows, whose disks ignore case. Two folders that differ only in case are
-// then one: the checks refuse more, never less.
-function canonicalPath(path: string): string {
+/**
+ * The form paths are compared in, never the one a folder is created with:
+ * absolute, with the symbolic links of the part that exists resolved, so that
+ * `/tmp` and `/private/tmp` are one folder, and in lower case on macOS and
+ * Windows, whose disks ignore case. Two folders that differ only in case are
+ * then one: the checks refuse more, never less.
+ */
+export function canonicalPath(path: string): string {
   const real = realPath(path);
 
   return process.platform === 'darwin' || process.platform === 'win32' ? real.toLowerCase() : real;

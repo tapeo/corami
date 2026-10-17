@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import type { CommandContext, CommandResult, CommandSpec } from '@/cli/command.ts';
 import { runImport } from '@/cli/commands/import.ts';
 import {
+  canonicalPath,
   copyPlace,
   createLocalCopy,
   givenPath,
@@ -273,10 +274,11 @@ async function add(context: CommandContext): Promise<CommandResult> {
     });
   }
 
-  // The folder of a registered project is the source of `--from-server`, and
-  // it is read from the daemon. An import reads the same project again in its
-  // own step, before anything is copied.
-  const registeredPath = from === 'server' ? (await findProject(name))?.path : undefined;
+  // Whether the name is taken on the server, for every source: the name of a
+  // registered project is not free, and an import would stop at its `name`
+  // step after the folder has moved. Only `--from-server` also uses the path.
+  // The daemon that does not answer throws, and no answer is ever guessed.
+  const registeredPath = (await findProject(name))?.path;
 
   const serverDefault = defaultServerPath(name);
   // A registered project is where the server says it is: there is nothing to
@@ -319,6 +321,10 @@ async function add(context: CommandContext): Promise<CommandResult> {
     serverPath: serverFlag,
     registeredPath,
     session,
+    sessionIsFolder:
+      session !== undefined &&
+      localPath !== undefined &&
+      canonicalPath(session) === canonicalPath(localPath),
     cwdRepository,
   });
 

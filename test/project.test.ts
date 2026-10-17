@@ -450,10 +450,15 @@ describe('planProjectAdd', () => {
     }
 
     try {
-      planProjectAdd({ ...git, registeredPath });
+      planProjectAdd({ ...git, registeredPath, localPath: '/Users/me/dev/myapp' });
       expect.unreachable();
     } catch (error) {
-      expect((error as CoramiError).fix).toContain('--from-server --name myapp');
+      const fix = (error as CoramiError).fix ?? '';
+
+      // The folder is likely full of the work that prompted the command:
+      // `--from-server` needs it empty, and the fix has to say so.
+      expect(fix).toContain('Move /Users/me/dev/myapp away if it has files');
+      expect(fix).toContain('corami project add /Users/me/dev/myapp --from-server --name myapp');
     }
   });
 
@@ -508,6 +513,82 @@ describe('planProjectAdd', () => {
         registeredPath: '/home/corami/projects/myapp',
       }),
     ).not.toThrow();
+  });
+
+  test('stops on the copy of a project still on the server, and says there is nothing to add', () => {
+    const folder = '/Users/me/dev/myapp';
+    const same = {
+      ...git,
+      registeredPath: '/home/corami/projects/myapp',
+      session: folder,
+      sessionIsFolder: true,
+      localPath: folder,
+    };
+
+    for (const from of ['git', 'local'] as const) {
+      expect(() =>
+        planProjectAdd({ ...same, from, url: from === 'git' ? git.url : undefined }),
+      ).toThrow(CoramiError);
+    }
+
+    try {
+      planProjectAdd({ ...same, from: 'local', url: undefined });
+      expect.unreachable();
+    } catch (error) {
+      const thrown = error as CoramiError;
+
+      expect(thrown.message).toContain(`this folder is its copy: ${folder}`);
+      expect(thrown.message).toContain('/home/corami/projects/myapp');
+      expect(thrown.fix).toContain('corami sync status myapp');
+      expect(thrown.fix).not.toContain('sync stop');
+    }
+  });
+
+  test('stops on a project still on the server, naming the copy of this machine', () => {
+    const copy = {
+      ...git,
+      registeredPath: '/home/corami/projects/myapp',
+      session: '/Users/me/other/myapp',
+      sessionIsFolder: false,
+      localPath: '/Users/me/dev/myapp',
+    };
+
+    try {
+      planProjectAdd(copy);
+      expect.unreachable();
+    } catch (error) {
+      const thrown = error as CoramiError;
+
+      expect(thrown.message).toContain('its copy on this machine is /Users/me/other/myapp');
+      expect(thrown.fix).toContain('corami project add /Users/me/dev/myapp --name <other>');
+    }
+  });
+
+  test('never calls the session of a project still on the server one of a removed project', () => {
+    const registeredPath = '/home/corami/projects/myapp';
+
+    for (const from of ['git', 'local'] as const) {
+      for (const sessionIsFolder of [true, false]) {
+        let thrown: CoramiError | undefined;
+
+        try {
+          planProjectAdd({
+            ...git,
+            from,
+            url: from === 'git' ? git.url : undefined,
+            registeredPath,
+            session: '/Users/me/dev/myapp',
+            sessionIsFolder,
+          });
+        } catch (error) {
+          thrown = error as CoramiError;
+        }
+
+        expect(thrown?.code).toBe('usage');
+        expect(thrown?.message).toContain(`is already on the server at ${registeredPath}`);
+        expect(thrown?.message).not.toContain('removed from the server');
+      }
+    }
   });
 
   test('a clone of another repository does not stop the command', () => {

@@ -48,6 +48,8 @@ export interface ProjectAddState {
   registeredPath?: string | undefined;
   /** The folder of a session of the sync engine that already carries the name. */
   session?: string | undefined;
+  /** Whether the folder given as the copy is the folder of that session. */
+  sessionIsFolder?: boolean | undefined;
   cwdRepository?: CwdRepository | undefined;
 }
 
@@ -88,10 +90,28 @@ export function planProjectAdd(state: ProjectAddState): void {
 
   // The name is taken: what is left to add is the copy of this machine.
   if ((state.from === 'git' || state.from === 'local') && state.registeredPath !== undefined) {
+    // The copy of the registered project is already here: the session says
+    // where, and adding the project again would sync one folder twice.
+    if (state.session !== undefined) {
+      if (state.sessionIsFolder === true) {
+        throw new CoramiError({
+          code: 'usage',
+          message: `${state.project} is already on the server at ${state.registeredPath}, and this folder is its copy: ${state.session}`,
+          fix: `Nothing to add: corami sync status ${state.project} shows the copy`,
+        });
+      }
+
+      throw new CoramiError({
+        code: 'usage',
+        message: `${state.project} is already on the server at ${state.registeredPath}, and its copy on this machine is ${state.session}`,
+        fix: `corami project add ${folder} --name <other> imports this folder as another project`,
+      });
+    }
+
     throw new CoramiError({
       code: 'usage',
       message: `A project named ${state.project} is already on the server: ${state.registeredPath}`,
-      fix: `To take its copy: corami project add ${folder} --from-server --name ${state.project}`,
+      fix: `Move ${folder} away if it has files, then corami project add ${folder} --from-server --name ${state.project} takes its copy`,
     });
   }
 
