@@ -10,7 +10,7 @@ Corami is the host, not the agent: you install OpenCode, Claude Code, Codex or a
 
 1. At your desk, you give the agent a task. Its edits show up in the project folder on your Mac as it saves them. You follow them in your editor, and tests and Xcode run at local speed, with no remote filesystem.
 2. Time to leave: close the lid, no commit needed. Your last saves are already on the server, and the agent keeps working there.
-3. On the train, you open the preview on your phone and keep talking to the agent. `corami serve 3000` gave the dev server a stable HTTPS address, so it can stay in your bookmarks.
+3. On the train, you open the preview on your phone and keep talking to the agent: the Next.js dev server runs on the server, and `corami serve 3000` gave it a stable HTTPS address, so it can stay in your bookmarks.
 4. Back at your desk, you open the lid: what the agent did while you were away syncs to the Mac by itself.
 5. On another computer, `corami project add --from-server --name myapp --local-path ~/dev/myapp` brings the same files, uncommitted work included.
 
