@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+import { chmodSync, mkdirSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join, posix } from 'node:path';
 
@@ -23,6 +25,8 @@ export interface CoramiPaths {
   state: string;
   logs: string;
   syncState: string;
+  /** The token local processes present to the daemon of this machine. */
+  daemonToken: string;
 }
 
 export function homeDirectory(): string {
@@ -50,6 +54,7 @@ export function paths(): CoramiPaths {
     state: join(root, 'state.db'),
     logs: join(root, 'logs'),
     syncState: join(root, 'sync-state.json'),
+    daemonToken: join(root, 'daemon-token'),
   };
 }
 
@@ -114,6 +119,39 @@ export async function readGlobalConfig(): Promise<GlobalConfig | undefined> {
 export async function writeGlobalConfig(config: GlobalConfig): Promise<void> {
   const { config: path } = paths();
   await Bun.write(path, `${JSON.stringify(config, null, 2)}\n`);
+}
+
+/**
+ * The token local processes of this machine present to the daemon, generated
+ * by the daemon at its first start. The file is readable only by the account
+ * that owns `~/.corami`: another account of the server cannot open the door.
+ */
+export async function readDaemonToken(): Promise<string | undefined> {
+  const { daemonToken } = paths();
+
+  try {
+    const token = (await Bun.file(daemonToken).text()).trim();
+    return token === '' ? undefined : token;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function ensureDaemonToken(): Promise<string> {
+  const { daemonToken } = paths();
+  const existing = await readDaemonToken();
+
+  if (existing !== undefined) {
+    return existing;
+  }
+
+  const token = randomBytes(32).toString('hex');
+
+  mkdirSync(paths().root, { recursive: true, mode: 0o700 });
+  await Bun.write(daemonToken, `${token}\n`);
+  chmodSync(daemonToken, 0o600);
+
+  return token;
 }
 
 export async function requireServerRole(): Promise<GlobalConfig> {

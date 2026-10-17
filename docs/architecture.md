@@ -174,6 +174,7 @@ corami/
 | Managed binaries | `~/.corami/bin/` | `~/.corami/bin/` |
 | Global config | `~/.corami/config.json` | `~/.corami/config.json` |
 | State | `~/.corami/state.db` | |
+| Daemon token | `~/.corami/daemon-token` (0600) | |
 | Service logs | `~/.corami/logs/` (git watch) | `~/.corami/logs/` |
 | Projects | `~/projects/<project>` | the folder given to `sync add --path`, or the original path for imported projects. Never a default |
 
@@ -213,7 +214,10 @@ Every remote access goes over HTTPS. A preview in HTTP on a name that is not `lo
 ### Authentication
 
 - `tailscale serve` adds the `Tailscale-User-Login` and `Tailscale-User-Name` headers to requests ([docs](https://tailscale.com/docs/features/tailscale-serve#identity-headers)).
-- The daemon accepts a request only when `Tailscale-User-Login` matches `owner_login`. Requests without the header come from local processes of the server (agents, CLI) and are trusted, because they run as the same user.
+- Every request must be the owner: the login of the header must match `owner_login`, otherwise it is refused with 403. Requests that carry no header at all are refused too, because on a shared tailnet and for tagged devices they arrive through serve without one. See `authorize` in `src/core/daemon-auth.ts`, covered by tests.
+- The commands of the server itself, and the agents, have no login header: they present the token of `~/.corami/daemon-token`, written by the daemon with permissions 0600 in the home of the account that owns the projects. The token is never configured and never travels: it is a file of that account.
+- Without `owner_login` no login can be checked: every header is refused, with a message that says how to set the owner. The setup asks for it (`--owner`, or the Tailscale login of the server).
+- A request that carries `Origin`, or a `sec-fetch-site` other than `none`, comes from a browser and is refused: the API is not called from a page. A body is only read when its `content-type` is `application/json`, so a page cannot reach the API with a form or a plain-text POST.
 - Previews and any user services exposed with `tailscale serve` are reachable by everyone in the tailnet. In a tailnet used only by the owner that is the intended behaviour. In a shared tailnet, access to the server must be limited with a Tailscale ACL rule, once, from the console: the setup reminds about it.
 - A harness can run code: when it offers its own authentication (e.g. `OPENCODE_SERVER_PASSWORD` in opencode), the recipe turns it on.
 

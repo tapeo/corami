@@ -1,5 +1,8 @@
-import { readGlobalConfig } from '@/core/config.ts';
+import { join } from 'node:path';
+
+import { homeDirectory, readGlobalConfig } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
+import { run } from '@/core/exec.ts';
 import { isRelationStatus, parseGitState } from '@/core/git-align.ts';
 import type { GitOriginStatus } from '@/core/git-follow.ts';
 import type { PreviewView } from '@/core/previews.ts';
@@ -67,13 +70,50 @@ export async function baseUrl(): Promise<string> {
   return 'http://127.0.0.1:7420';
 }
 
+/**
+ * The token of the daemon of this machine, when the request goes to it: the
+ * file the daemon writes is in the home of the account that owns `~/.corami`,
+ * which for a command run as root is the account of `server_user`.
+ */
+async function localToken(): Promise<string | undefined> {
+  const config = await readGlobalConfig().catch(() => undefined);
+  const home = config?.server_user !== undefined ? await homeFor(config.server_user) : undefined;
+  const root = join(home ?? homeDirectory(), '.corami');
+  const path = join(root, 'daemon-token');
+
+  try {
+    const token = (await Bun.file(path).text()).trim();
+    return token === '' ? undefined : token;
+  } catch {
+    return undefined;
+  }
+}
+
+async function homeFor(user: string): Promise<string | undefined> {
+  const result = await run('getent', ['passwd', user]);
+  const home = result.stdout.trim().split(':')[5];
+  return result.ok && home !== undefined && home !== '' ? home : undefined;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = `${await baseUrl()}${path}`;
+  const base = await baseUrl();
+  const url = `${base}${path}`;
+  const headers = new Headers(init?.headers);
+
+  if (base.startsWith('http://')) {
+    const token = await localToken();
+
+    if (token !== undefined) {
+      headers.set('authorization', `Bearer ${token}`);
+    }
+  }
+
   let response: Response;
 
   try {
     response = await fetch(url, {
       ...init,
+      headers,
       signal: init?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {

@@ -1,3 +1,10 @@
+import { ensureDaemonToken } from '@/core/config.ts';
+import {
+  authorize,
+  bearerToken,
+  checkRequestShape,
+  isJsonContentType,
+} from '@/core/daemon-auth.ts';
 import { toCoramiError } from '@/core/errors.ts';
 import { handleApi } from '@/daemon/api.ts';
 import { type PreviewOptions, reconcileServeRules } from '@/daemon/previews.ts';
@@ -16,10 +23,13 @@ export interface DaemonOptions {
 export interface DaemonHandle {
   server: ReturnType<typeof Bun.serve>;
   previews: PreviewOptions;
+  /** The token local processes present, at the path of `paths()`. */
+  token: string;
 }
 
 export async function startDaemon(options: DaemonOptions): Promise<DaemonHandle> {
   const startedAt = Date.now();
+  const token = await ensureDaemonToken();
   const tailscale = await tailscaleStatus().catch(() => ({
     installed: false,
     running: false,
@@ -39,10 +49,48 @@ export async function startDaemon(options: DaemonOptions): Promise<DaemonHandle>
     hostname: options.hostname,
     port: options.port,
     fetch: async (request) => {
-      const rejected = rejectNonOwner(request, options);
+      const rejected = rejectNonOwner(request, options, token);
 
       if (rejected !== undefined) {
         return rejected;
+      }
+
+      const shape = checkRequestShape({
+        method: request.method,
+        origin: request.headers.get('origin') ?? undefined,
+        secFetchSite: request.headers.get('sec-fetch-site') ?? undefined,
+      });
+
+      if (!shape.ok) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: {
+              code: 'usage',
+              message:
+                shape.reason === 'from-a-page'
+                  ? 'The daemon is not called from a browser'
+                  : 'The request is not in the format of the API',
+            },
+          },
+          403,
+        );
+      }
+
+      if (
+        hasBody(request) &&
+        !isJsonContentType(request.headers.get('content-type') ?? undefined)
+      ) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: {
+              code: 'usage',
+              message: 'The body of the request must be JSON (content-type: application/json)',
+            },
+          },
+          415,
+        );
       }
 
       const url = new URL(request.url);
@@ -76,27 +124,53 @@ export async function startDaemon(options: DaemonOptions): Promise<DaemonHandle>
     },
   });
 
-  return { server, previews };
+  return { server, previews, token };
 }
 
-function rejectNonOwner(request: Request, options: DaemonOptions): Response | undefined {
-  const login = request.headers.get('Tailscale-User-Login');
+function rejectNonOwner(
+  request: Request,
+  options: DaemonOptions,
+  expectedToken: string,
+): Response | undefined {
+  const decision = authorize({
+    login: request.headers.get('Tailscale-User-Login') ?? undefined,
+    token: bearerToken(request.headers.get('authorization')),
+    ownerLogin: options.ownerLogin,
+    expectedToken,
+  });
 
-  if (login === null || options.ownerLogin === undefined) {
-    return undefined;
-  }
-
-  if (login === options.ownerLogin) {
+  if (decision.allow) {
     return undefined;
   }
 
   return jsonResponse(
     {
       ok: false,
-      error: { code: 'generic', message: `Not allowed: ${login}` },
+      error: {
+        code: 'generic',
+        message:
+          decision.reason === 'not-owner'
+            ? `Not allowed: ${request.headers.get('Tailscale-User-Login') ?? ''}`
+            : 'Not allowed: the request has no identity of the owner and no token of this machine',
+        fix:
+          decision.reason === 'no-owner'
+            ? 'The setup did not choose an owner: run corami setup server --owner <login> on the server'
+            : 'Local commands read ~/.corami/daemon-token, written by the daemon: check that it exists and that the command runs as the account that owns it',
+      },
     },
     403,
   );
+}
+
+/** Whether a request declares a body: a length, or a chunked transfer. */
+function hasBody(request: Request): boolean {
+  const length = request.headers.get('content-length');
+
+  if (length !== null) {
+    return Number(length) > 0;
+  }
+
+  return request.headers.get('transfer-encoding') !== null;
 }
 
 async function healthData(options: DaemonOptions, startedAt: number) {
