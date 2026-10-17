@@ -14,7 +14,7 @@ pnpm build
 
 - A long build competes with the previews of the other projects for CPU. On a small VPS run it with `nice -n 10` and stop the toolchain daemons at the end (e.g. `cd android && ./gradlew --stop`).
 - The build output travels nowhere: the regenerable folders (`node_modules`, `build`, `.next`, `Pods`...) are excluded from the sync and rebuilt on every machine.
-- A build on the server has what the build of the laptop has: keys and keystores (`.env`, `*.jks`, `*.keystore`, `*.p8`, `android/key.properties`...) are files of the project, so `project import` puts them there and the sync keeps them in step on every machine. If a key must not travel, keep it out of the project folder: a path outside it read through an environment variable (`KEYSTORE_FILE=~/.config/keys/release.jks`), or a secret manager that injects it into the command.
+- A build on the server has what the build of the laptop has: keys and keystores (`.env`, `*.jks`, `*.keystore`, `*.p8`, `android/key.properties`...) are files of the project, so `--from-local` puts them there and the sync keeps them in step on every machine. If a key must not travel, keep it out of the project folder: a path outside it read through an environment variable (`KEYSTORE_FILE=~/.config/keys/release.jks`), or a secret manager that injects it into the command.
 
 ## On a client, over SSH
 

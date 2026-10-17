@@ -154,7 +154,7 @@ corami/
       previews.ts         pure functions: ports, names, serve plans, project from a path
       ports.ts            the Corami port range, TCP probes
       pinned-tools.ts     version and sha256 of Mutagen
-      local-copy.ts       path rules: what the sync, the import and sync rm never carry
+      local-copy.ts       path rules: what the sync, the import and the copy removal never carry
       git.ts, git-align.ts, git-follow.ts
       paths and helper modules: doctor, errors, exec,
       last-change, release, state, transfer
@@ -176,7 +176,7 @@ corami/
 | State | `~/.corami/state.db` | |
 | Daemon token | `~/.corami/daemon-token` (0600) | |
 | Service logs | `~/.corami/logs/` (git watch) | `~/.corami/logs/` |
-| Projects | `~/projects/<project>` | the folder given to `sync add --path`, or the original path for imported projects. Never a default |
+| Projects | `~/projects/<project>`, or the folder chosen with `--server-path` | the folder chosen with `--local-path` and kept by the session. Never guessed |
 
 Every service listens on `127.0.0.1:<port>`. `tailscale serve` exposes the same port number over HTTPS on the tailnet (see "Network and security").
 
@@ -229,9 +229,9 @@ Every remote access goes over HTTPS. A preview in HTTP on a name that is not `lo
 
 ## Projects
 
-A project is a folder on the server plus a row in `projects(name, path, repo_url, created_at)`. `corami project add` clones or registers a folder, `corami project import` moves one from a client, `corami project rm` removes it (folder, previews and row).
+A project is a folder on the server plus a row in `projects(name, path, repo_url, created_at, owned)`. `corami project add` takes it from a repository, from a folder of this machine or from a folder already on the server: whatever the source, it registers the project, creates the copy of the client with its session, and rolls the registration back when the copy fails. `owned` says whether Corami made the folder: `corami project rm --on server` deletes only the ones it made, and a folder registered where it was stays on disk.
 
-- **The name is the key.** `~/projects/<name>` on the server, `corami-<name>` for the Mutagen session. The folder of a client is chosen there and kept by the session: Corami never derives it from the name.
+- **The name is the key.** `~/projects/<name>` on the server unless `--server-path` says otherwise, `corami-<name>` for the Mutagen session. The folder of a client is chosen there and kept by the session: Corami never derives it from the name.
 - **No file in the repository.** `corami serve` finds the project with `projectForPath` (`src/core/previews.ts`): the longest registered path that contains the current folder. From a client, the sync commands use the sync sessions instead.
 - **One instance per project,** in the main folder. Worktrees created by the harness are not registered.
 
@@ -300,7 +300,7 @@ The instructions to give the agents are a block to copy into `AGENTS.md`, in the
 
 ### Mutagen session
 
-One session per project, created by `corami sync add <project> --path <folder>` on a client, or by `project import` for the folder it converts:
+One session per project, created by `corami project add` on a client, whatever the source:
 
 ```bash
 mutagen sync create \
@@ -312,7 +312,7 @@ mutagen sync create \
   <folder>
 ```
 
-- Alpha is the server, beta is the client: the folder of the copy, the only record of where it is. The server path is the folder the daemon has for the project, so a project registered with `project add --path` syncs from where it is.
+- Alpha is the server, beta is the client: the folder of the copy, the only record of where it is. The server path is the folder the daemon has for the project, so a project registered with `--from-server` syncs from where it is.
 - `two-way-safe`: conflicts that cannot be solved without losing data stay pending and are reported ([docs](https://mutagen.io/documentation/synchronization/)).
 - SSH goes through Tailscale SSH, so no keys to distribute.
 - Mutagen daemon persistence: `mutagen daemon register` on macOS and Windows, user systemd unit `corami-mutagen` on Linux. The `mutagen-daemon` step of `corami setup client` installs it, and `corami doctor` checks it.
@@ -326,25 +326,25 @@ One table of rules in `local-copy.ts` (`PATH_RULES`) is the only source of the p
 | `regenerable` | rebuilt by every machine, never carried | `node_modules/`, `dist/`, `._*`, `.DS_Store` |
 | `local_only` | generated for one machine, with paths that would break the build of another | `android/local.properties`, `ios/Flutter/Generated.xcconfig`, `ios/.symlinks/` |
 
-A pattern without `/` matches the name at any level, one with `/` from the root, exactly as in a gitignore. The lists are derived from the table: the sync ignores take every rule (`DEFAULT_IGNORES` in `mutagen.ts`, `.git` excluded: `--ignore-vcs` does that), the import archive and the remote manifest of its verification leave the same paths out (`tarExcludeArgs`, `findExcludeArgs`), and `sync rm` reports the `local_only` files, the only ones no other machine has (`findLocalOnlyFiles`). `test/path-rules.test.ts` packs a fixture with the real `tar` arguments, lists the archive, runs the remote manifest script locally and compares the two lists.
+A pattern without `/` matches the name at any level, one with `/` from the root, exactly as in a gitignore. The lists are derived from the table: the sync ignores take every rule (`DEFAULT_IGNORES` in `mutagen.ts`, `.git` excluded: `--ignore-vcs` does that), the import archive and the remote manifest of its verification leave the same paths out (`tarExcludeArgs`, `findExcludeArgs`), and `corami project rm --on client` reports the `local_only` files, the only ones no other machine has (`findLocalOnlyFiles`). `test/path-rules.test.ts` packs a fixture with the real `tar` arguments, lists the archive, runs the remote manifest script locally and compares the two lists.
 
-**Everything else travels, a key included.** A file of the project folder is a file of the project: it is in the archive of `project import`, and the sync keeps it in step on every machine, keys and env files included. Corami does not know what is secret and does not guess from the name: keeping a key off the machines is the user's decision, made by keeping it out of the folder or by injecting it from an external store (a secret manager, a variable of the machine, a file outside the project synced by other means). `AGENTS.md` says the same to the agents: read what is there, and never print a secret in a log.
+**Everything else travels, a key included.** A file of the project folder is a file of the project: it is in the archive of `--from-local`, and the sync keeps it in step on every machine, keys and env files included. Corami does not know what is secret and does not guess from the name: keeping a key off the machines is the user's decision, made by keeping it out of the folder or by injecting it from an external store (a secret manager, a variable of the machine, a file outside the project synced by other means). `AGENTS.md` says the same to the agents: read what is there, and never print a secret in a log.
 
 Files generated with absolute paths of the machine (`Generated.xcconfig`, `local.properties`) stay excluded, otherwise they would break the build on the other machine. Lockfiles (`pubspec.lock`, `Podfile.lock`, JS lockfiles) are synced.
 
-A session already created keeps the ignores it was created with: to take the new list, the copy is removed with `sync rm` and recreated with `sync add`.
+A session already created keeps the ignores it was created with: to take the new list, the copy is removed with `corami project rm <project> --on client` and created again with `corami project add --from-server --name <project> --local-path <folder>`.
 
 ### State and conflicts
 
 - `corami sync status --json` reads `mutagen sync list --template '{{ json . }}'` and returns state, last cycle, conflicts and the last change.
-- `corami sync status` shows the local and the server path of each conflict. To resolve one, delete the copy that should lose, on this machine or on the server: Mutagen then syncs the other one to both sides, which is the resolution method documented by Mutagen ([docs](https://mutagen.io/documentation/synchronization/)). No dedicated command: it would only wrap one deletion. The `sync_conflict` error of `sync rm` gives the same fix.
+- `corami sync status` shows the local and the server path of each conflict. To resolve one, delete the copy that should lose, on this machine or on the server: Mutagen then syncs the other one to both sides, which is the resolution method documented by Mutagen ([docs](https://mutagen.io/documentation/synchronization/)). No dedicated command: it would only wrap one deletion. The `sync_conflict` error of `corami project rm --on client` gives the same fix.
 - Sync hides behind a `SyncEngine` interface, so it can move to Syncthing if needed.
 
 ### Removing the local copy
 
-`corami sync rm <project>` frees space on a client: it deletes **only** the local copy of that client. Project, git and previews on the server stay untouched. `corami sync add <project> --path <folder>` recreates it at any time. It acts only on the folder of the session: without one there is no copy to remove, and no `--path` to point it somewhere else.
+`corami project rm <project> --on client` frees space on a client: it deletes **only** the local copy of that client. Project, git and previews on the server stay untouched. `corami project add --from-server --name <project> --local-path <folder>` recreates it at any time. It acts only on the folder of the session: without one there is no copy to remove, and no `--local-path` to point it somewhere else.
 
-`corami sync stop <project>` is the other way out: the session of this machine goes, the files stay as a plain folder. It is what a copy whose project is gone from the server needs, because `sync rm` would be deleting the last copy of the work. Mutagen reports the missing folder on one side as a conflict on the root itself, with an empty path, so `sync status` shows it as the folder of the project and no file inside; `project import <folder>` puts that folder back on the server when the name is free.
+`corami sync stop <project>` is the other way out: the session of this machine goes, the files stay as a plain folder. It is what a copy whose project is gone from the server needs, because `project rm --on client` would be deleting the last copy of the work. Mutagen reports the missing folder on one side as a conflict on the root itself, with an empty path, so `sync status` shows it as the folder of the project and no file inside; `corami project add --from-local --local-path <folder>` puts that folder back on the server when the name is free.
 
 Sequence, in order:
 
@@ -367,7 +367,7 @@ Caches outside the project folder (pnpm store, `~/.pub-cache`, Gradle caches, Xc
 - Last activity of a project on a client: the newest value between the last `corami` command run on that project from this machine and the last change of a synced file, excluding the regenerable folders.
 - It is a heuristic: the changes of the agent on the server count as activity too, because they arrive through the sync. A project the agent works on is not proposed for removal.
 - `corami sync status` shows for every local copy the space it takes, the last activity and the git state of the two sides.
-- `corami sync prune --unused <duration>` acts only on the local copies of the client it is run from, never on the server. It lists the candidates with the space that would be freed, asks for confirmation, then runs `sync rm` on each. A project whose removal checks block is skipped and reported, without stopping the others. `--dry-run` shows only the list, `--yes` skips the confirmation; without `--yes` it removes nothing.
+- `corami sync prune --unused <duration>` acts only on the local copies of the client it is run from, never on the server. It lists the candidates with the space that would be freed, asks for confirmation, then removes each copy. A project whose removal checks block is skipped and reported, without stopping the others. `--dry-run` shows only the list, `--yes` skips the confirmation; without `--yes` it removes nothing.
 
 ### Git
 
@@ -412,13 +412,13 @@ corami git watch [proj]          # the cycle of the service, in the foreground: 
 corami git watch [proj] --once   # one cycle only, without staying in listen mode
 ```
 
-- **The `.git` of a new local copy:** `corami sync add <project>` gives the copy its own repository. It reads the url of `origin` and the branch of the server from `GET /v1/projects/<p>/git/state`, clones without checkout into a temporary folder next to the copy and moves the `.git` in. When the branch of the server exists on `origin` the copy goes on it, otherwise it stays on the default branch and the command says so. `git reset` then rebuilds the index from `HEAD` without touching the files, which are the ones of the sync. The clone uses the git credentials of the client, never prompts, and when it fails the files are synced anyway: `corami sync add <project>` run again retries, and does nothing on a copy that already has its `.git`. `--no-git` skips it. From there the git watch service works on its own.
-- **Removing the local copy:** `corami sync rm` stops when the local `.git` has commits or stashes that exist in no remote. With a single remote, `origin`, git counts by itself: a commit the side has already pushed does not block, one never pushed does.
+- **The `.git` of a new local copy:** `corami project add` gives the copy its own repository. It reads the url of `origin` and the branch of the server from `GET /v1/projects/<p>/git/state`, clones without checkout into a temporary folder next to the copy and moves the `.git` in. When the branch of the server exists on `origin` the copy goes on it, otherwise it stays on the default branch and the command says so. `git reset` then rebuilds the index from `HEAD` without touching the files, which are the ones of the sync. The clone uses the git credentials of the client, never prompts, and when it fails the files are synced anyway: the command run again retries, and does nothing on a copy that already has its `.git`. `--no-git` skips it. From there the git watch service works on its own.
+- **Removing the local copy:** `corami project rm --on client` stops when the local `.git` has commits or stashes that exist in no remote. With a single remote, `origin`, git counts by itself: a commit the side has already pushed does not block, one never pushed does.
 - The alignment arrives at the next cycle, within a minute, not at the instant of the commit.
 
 ## Importing a local project
 
-`corami project import <path>` moves to the server a project that today lives on a client, with all the git history and the necessary files that git ignores. At the end the local folder becomes a synced copy, at the same path.
+`corami project add --from-local --local-path <path>` moves to the server a project that today lives on a client, with all the git history and the necessary files that git ignores. At the end the local folder becomes a synced copy, at the same path.
 
 ### What is transferred
 
@@ -437,7 +437,7 @@ corami git watch [proj] --once   # one cycle only, without staying in listen mod
 5. **Verification:** `corami` computes a sha256 manifest of the transferred files on both sides and compares the output of `git for-each-ref` and `git stash list`. When something does not match, it stops with an error and the local folder stays intact.
 6. **Git cleanup on the server:** `git worktree prune` (local worktrees are not imported and are listed in the summary). A warning when `.git/config` contains absolute paths or a credential helper of the local machine.
 7. **Registration:** the project is added to the registry, like `corami project add`.
-8. **Converting the local folder:** renamed to `<dir>.corami-backup-<date>`, then the synced copy is created at the same path, as `corami sync add <project> --path <dir>` would, so IDE and habits do not change. After the sync, the `.git` of the renamed folder (which is never moved: it stays complete) is copied into the new local copy, so the local side and the server side each have their own repository, and the files of this machine (which the sync never brings) are copied back from the backup. Right after, the local copy runs `git fetch` on `origin` and aligns with a mixed reset, when needed.
+8. **Converting the local folder:** renamed to `<dir>.corami-backup-<date>`, then the synced copy is created at the same path, as `corami project add --from-server --name <project> --local-path <dir>` would, so IDE and habits do not change. After the sync, the `.git` of the renamed folder (which is never moved: it stays complete) is copied into the new local copy, so the local side and the server side each have their own repository, and the files of this machine (which the sync never brings) are copied back from the backup. Right after, the local copy runs `git fetch` on `origin` and aligns with a mixed reset, when needed.
 9. **Summary:** files moved, the files of this machine left here and put back into the copy, worktrees not imported, path of the renamed folder. It is never deleted automatically.
 
 ### Git on the server
@@ -479,9 +479,9 @@ All routes are under `/v1`, authenticated with the Tailscale identity headers an
 |---|---|---|
 | GET | `/health` | name, version, uptime, Tailscale state |
 | GET | `/projects` | list, with the previews of each project |
-| POST | `/projects` | add: clone from a url or register a folder |
+| POST | `/projects` | add: `{ "name": ..., "url": ... }` clones into the folder of `"path"` or `~/projects/<name>`, `{ "name": ..., "path": ... }` registers a folder that is there; `"owned": true` says Corami made the folder |
 | GET | `/projects/:project` | detail: path, repo url, previews |
-| DELETE | `/projects/:project` | remove the project, its previews and its folder |
+| DELETE | `/projects/:project` | remove the project and its previews; the folder only when the registry says Corami made it |
 | GET | `/projects/:project/git/state` | git state of the project on the server, read at the moment, and the url of its `origin` |
 | GET | `/projects/:project/previews` | previews of the project |
 | PUT | `/projects/:project/previews/:name` | register or move a preview: `{ "target_port": 3000 }` |
@@ -491,9 +491,11 @@ All routes are under `/v1`, authenticated with the Tailscale identity headers an
 ### SQLite tables
 
 ```
-projects(name, path, repo_url, created_at)
+projects(name, path, repo_url, created_at, owned)
 previews(project, name, public_port, target_port, created_at)
 ```
+
+`owned` tells a folder Corami made (a clone, an import) from one registered where it was. A database written before the column existed fills it with the rule of the day, "inside the projects root".
 
 ## CLI output contract
 

@@ -176,7 +176,7 @@ describe('overviewData', () => {
 });
 
 describe('valueFlags', () => {
-  test('includes the flags of setup git and project import', () => {
+  test('includes the flags of setup git and project add', () => {
     const names = valueFlags();
 
     for (const name of ['provider', 'identity-name', 'identity-email', 'user']) {

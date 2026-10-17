@@ -1,3 +1,4 @@
+import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync, realpathSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
@@ -16,7 +17,17 @@ import {
   validatePreviewName,
   validateTargetPort,
 } from '@/core/previews.ts';
-import { planProjectAdd, repositoryAt, sameRepository } from '@/core/project-add.ts';
+import {
+  defaultLocalPath,
+  defaultServerPath,
+  planProjectAdd,
+  repositoryAt,
+  sameRepository,
+  serverFolderOverlaps,
+  serverPathFrom,
+  suggestedProjectName,
+  validServerPath,
+} from '@/core/project-add.ts';
 import {
   invalidProjectNameReason,
   isFolderEmpty,
@@ -28,6 +39,7 @@ import {
   validProjectName,
   withLocalCopies,
 } from '@/core/projects.ts';
+import { migrate } from '@/core/state.ts';
 
 describe('allocatePublicPort', () => {
   test('starts at the first port of the range', () => {
@@ -365,52 +377,69 @@ describe('repositoryAt', () => {
 });
 
 describe('planProjectAdd', () => {
-  const client = {
+  const git = {
     role: 'client' as const,
+    from: 'git' as const,
     project: 'myapp',
     url: 'git@github.com:me/myapp.git',
-    onServer: false,
   };
 
-  test('lets a client add the project on the server', () => {
-    expect(() => planProjectAdd(client)).not.toThrow();
+  test('lets a client add the project from any source', () => {
+    expect(() => planProjectAdd(git)).not.toThrow();
+    expect(() => planProjectAdd({ ...git, from: 'local', url: undefined })).not.toThrow();
+    expect(() => planProjectAdd({ ...git, from: 'server', url: undefined })).not.toThrow();
   });
 
-  test('refuses --path on a client, and takes it on the server', () => {
-    const asClient = () => planProjectAdd({ ...client, url: undefined, path: '/srv/code/myapp' });
+  test('refuses to run where the copy of a project cannot live', () => {
+    for (const role of ['server', undefined] as const) {
+      expect(() => planProjectAdd({ ...git, role })).toThrow(CoramiError);
+    }
+  });
 
-    expect(asClient).toThrow(CoramiError);
+  test('stops on the name of a project already on the server, pointing at its copy', () => {
+    const registeredPath = '/home/corami/projects/myapp';
 
-    try {
-      asClient();
-      expect.unreachable();
-    } catch (error) {
-      expect((error as CoramiError).fix).toContain('corami project import');
+    for (const from of ['git', 'local'] as const) {
+      expect(() => planProjectAdd({ ...git, from, registeredPath })).toThrow(CoramiError);
     }
 
-    expect(() =>
-      planProjectAdd({ ...client, role: 'server', url: undefined, path: '/srv/code/myapp' }),
-    ).not.toThrow();
+    try {
+      planProjectAdd({ ...git, registeredPath });
+      expect.unreachable();
+    } catch (error) {
+      expect((error as CoramiError).fix).toContain('--from-server --name myapp');
+    }
   });
 
-  test('stops on a clone of the same url, naming the folder to import', () => {
+  test('keeps the path of a registered project, whatever the default suggests', () => {
+    const registeredPath = '/srv/code/myapp';
+    const fromServer = { ...git, from: 'server' as const, url: undefined, registeredPath };
+
+    expect(() => planProjectAdd(fromServer)).not.toThrow();
+    expect(() => planProjectAdd({ ...fromServer, serverPath: registeredPath })).not.toThrow();
+    expect(() => planProjectAdd({ ...fromServer, serverPath: '~/projects/myapp' })).toThrow(
+      CoramiError,
+    );
+  });
+
+  test('stops on a clone of the same url, naming the folder to move', () => {
     const cwdRepository = { root: '/Users/me/dev/myapp', origin: 'https://github.com/me/myapp' };
 
-    expect(() => planProjectAdd({ ...client, cwdRepository })).toThrow(CoramiError);
+    expect(() => planProjectAdd({ ...git, cwdRepository })).toThrow(CoramiError);
 
     try {
-      planProjectAdd({ ...client, cwdRepository, explicitName: 'shop' });
+      planProjectAdd({ ...git, cwdRepository, explicitName: 'shop' });
       expect.unreachable();
     } catch (error) {
       const fix = (error as CoramiError).fix ?? '';
 
-      expect(fix).toContain('corami project import /Users/me/dev/myapp');
+      expect(fix).toContain('corami project add --from-local --local-path /Users/me/dev/myapp');
       expect(fix).toContain('--name shop');
     }
   });
 
   test('stops on the session of a project removed from the server', () => {
-    const orphan = () => planProjectAdd({ ...client, session: '/Users/me/dev/myapp' });
+    const orphan = () => planProjectAdd({ ...git, session: '/Users/me/dev/myapp' });
 
     expect(orphan).toThrow(CoramiError);
 
@@ -425,22 +454,101 @@ describe('planProjectAdd', () => {
 
   test('leaves a session of a project still on the server to the server', () => {
     expect(() =>
-      planProjectAdd({ ...client, session: '/Users/me/dev/myapp', onServer: true }),
+      planProjectAdd({
+        ...git,
+        from: 'server',
+        url: undefined,
+        session: '/Users/me/dev/myapp',
+        registeredPath: '/home/corami/projects/myapp',
+      }),
     ).not.toThrow();
-  });
-
-  test('does nothing on a server or without a url', () => {
-    const cwdRepository = { root: '/srv/myapp', origin: 'git@github.com:me/myapp.git' };
-
-    expect(() => planProjectAdd({ ...client, role: 'server', cwdRepository })).not.toThrow();
-    expect(() => planProjectAdd({ ...client, role: undefined, session: '/x' })).not.toThrow();
-    expect(() => planProjectAdd({ ...client, url: undefined, session: '/x' })).not.toThrow();
   });
 
   test('a clone of another repository does not stop the command', () => {
     const cwdRepository = { root: '/Users/me/dev/other', origin: 'git@github.com:me/other.git' };
 
-    expect(() => planProjectAdd({ ...client, cwdRepository })).not.toThrow();
+    expect(() => planProjectAdd({ ...git, cwdRepository })).not.toThrow();
+  });
+});
+
+describe('the paths of an added project', () => {
+  test('the folder of the server is absolute or starts with ~/', () => {
+    expect(validServerPath('/srv/code/myapp')).toBe(true);
+    expect(validServerPath('~/projects/myapp')).toBe(true);
+    expect(validServerPath('~')).toBe(false);
+    expect(validServerPath('~/')).toBe(false);
+    expect(validServerPath('projects/myapp')).toBe(false);
+    expect(validServerPath('../myapp')).toBe(false);
+  });
+
+  test('the ~/ of the server is the home it names', () => {
+    expect(serverPathFrom('/home/corami', '~/projects/myapp')).toBe('/home/corami/projects/myapp');
+    expect(serverPathFrom('/home/corami', '/srv/code/myapp')).toBe('/srv/code/myapp');
+  });
+
+  test('refuses a folder inside another project, or around it', () => {
+    const others = ['/home/corami/projects/site'];
+
+    expect(serverFolderOverlaps('/home/corami/projects/site/myapp', others)).toBe(true);
+    expect(serverFolderOverlaps('/home/corami/projects/site', others)).toBe(true);
+    expect(serverFolderOverlaps('/home/corami/projects', others)).toBe(true);
+    expect(serverFolderOverlaps('/home/corami/projects/site-2', others)).toBe(false);
+    expect(serverFolderOverlaps('/home/corami/projects/other', others)).toBe(false);
+  });
+
+  test('the copy of a project goes to a folder of the working directory', () => {
+    expect(defaultLocalPath('/Users/me/dev', 'myapp')).toBe('/Users/me/dev/myapp');
+    expect(defaultServerPath('myapp')).toBe('~/projects/myapp');
+  });
+
+  test('the name to suggest comes from what the command already knows', () => {
+    expect(suggestedProjectName({ url: 'git@github.com:me/myapp.git' })).toBe('myapp');
+    expect(suggestedProjectName({ serverPath: '~/projects/other' })).toBe('other');
+    expect(suggestedProjectName({ localPath: '/Users/me/dev/site/' })).toBe('site');
+    expect(suggestedProjectName({ name: 'chosen', url: 'git@github.com:me/myapp.git' })).toBe(
+      'chosen',
+    );
+    expect(suggestedProjectName({})).toBeUndefined();
+  });
+});
+
+describe('the registry written before `owned`', () => {
+  test('fills the column with the rule of the day: inside the root, Corami made it', () => {
+    const home = '/home/corami';
+    const previous = process.env.HOME;
+    process.env.HOME = home;
+
+    try {
+      const target = new Database(':memory:');
+      target.exec(
+        'CREATE TABLE projects (name TEXT PRIMARY KEY, path TEXT NOT NULL, repo_url TEXT, created_at TEXT NOT NULL)',
+      );
+      const insert = target.query(
+        'INSERT INTO projects (name, path, repo_url, created_at) VALUES (?, ?, NULL, ?)',
+      );
+
+      insert.run('clone', `${home}/projects/clone`, 'now');
+      insert.run('registered', '/srv/code/registered', 'now');
+
+      migrate(target);
+
+      const rows = target
+        .query<{ name: string; owned: number }, []>(
+          'SELECT name, owned FROM projects ORDER BY name',
+        )
+        .all();
+
+      expect(rows).toEqual([
+        { name: 'clone', owned: 1 },
+        { name: 'registered', owned: 0 },
+      ]);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previous;
+      }
+    }
   });
 });
 

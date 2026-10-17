@@ -1,13 +1,11 @@
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 
-import type { CommandContext, CommandSpec } from '@/cli/command.ts';
+import type { CommandContext, CommandResult, CommandSpec } from '@/cli/command.ts';
 import { gitSides } from '@/cli/commands/git.ts';
 import { applyRemoval, planRemoval } from '@/cli/commands/sync-remove.ts';
-import { renderOrphanCopies, renderTable } from '@/cli/output.ts';
-import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
+import { booleanFlag, stringFlag } from '@/cli/parser.ts';
 import {
-  listProjects,
   projectDetail,
   projectGit,
   projectOnServer,
@@ -24,7 +22,6 @@ import {
   localCopyTarget,
   projectOfCopy,
   unexpandedHome,
-  withLocalCopies,
 } from '@/core/projects.ts';
 import { conflictCopies, conflictFix, conflictLabel } from '@/core/sync-conflicts.ts';
 import { MutagenEngine, type SyncSession } from '@/integrations/mutagen.ts';
@@ -89,7 +86,7 @@ async function projectNameOf(explicit?: string): Promise<string> {
     throw new CoramiError({
       code: 'usage',
       message: 'Missing project',
-      fix: 'corami sync add <project>, or run it from inside the local copy',
+      fix: 'Give the project name, or run the command from inside the local copy',
     });
   }
 
@@ -147,8 +144,8 @@ function realPath(path: string): string {
 
 /**
  * The folder of the local copy of a project: the one of its session, or the
- * one asked with `--path`. Nothing guesses it. `importing` is the folder of
- * `project import`, moved away before the copy takes its place: it does not
+ * one asked with `--local-path`. Nothing guesses it. `importing` is the folder
+ * of `--from-local`, moved away before the copy takes its place: it does not
  * count as full, and a session already there is one the import cannot reuse.
  */
 export async function copyPlace(
@@ -190,7 +187,7 @@ export async function copyPlace(
     throw new CoramiError({
       code: 'usage',
       message: `The local copy of ${project} is already at ${existing?.beta ?? ''}`,
-      fix: `To move it: corami sync rm ${project}, then corami sync add ${project} --path ${localPath ?? '<folder>'}`,
+      fix: `To move it: corami project rm ${project} --on client, then corami project add --from-server --name ${project} --local-path ${localPath ?? '<folder>'}`,
     });
   }
 
@@ -205,7 +202,7 @@ export async function copyPlace(
     throw new CoramiError({
       code: 'usage',
       message: `The folder ${localPath ?? ''} overlaps the local copy of ${other?.project ?? 'another project'} at ${other?.beta ?? ''}`,
-      fix: 'Pick a folder outside the other local copies: corami sync ls lists them',
+      fix: 'Pick a folder outside the other local copies: corami project ls lists them',
     });
   }
 
@@ -213,28 +210,28 @@ export async function copyPlace(
     throw new CoramiError({
       code: 'usage',
       message: `The folder ${localPath ?? ''} exists and is not empty`,
-      fix: `Move that folder away, or create the copy elsewhere: corami sync add ${project} --path <folder>`,
+      fix: `Move that folder away, or create the copy elsewhere: corami project add --from-server --name ${project} --local-path <folder>`,
     });
   }
 
   throw new CoramiError({
     code: 'usage',
-    message: `Missing --path: ${project} has no local copy on this machine`,
-    fix: `corami sync add ${project} --path <folder>`,
+    message: `Missing --local-path: ${project} has no local copy on this machine`,
+    fix: `corami project add --from-server --name ${project} --local-path <folder>`,
   });
 }
 
 export interface CreateSyncOptions {
   project: string;
-  /** The folder of the copy, `--path`: required unless a session already has one. */
+  /** The folder of the copy, `--local-path`: required unless a session already has one. */
   localPath?: string | undefined;
   serverPath?: string | undefined;
   /** The account on the server, `--user`: default the one of the configuration. */
   user?: string | undefined;
 }
 
-// The folder the server keeps the project in: `project add --path` leaves it
-// where it was.
+// The folder the server keeps the project in: `--server-path` leaves it where
+// it was.
 function serverFolder(
   project: string,
   detail: Record<string, unknown>,
@@ -295,9 +292,9 @@ export interface CreateLocalCopyOptions extends CreateSyncOptions {
 }
 
 /**
- * The local copy with its `.git`: what `sync add` runs. The import stays on
- * `createSyncFor`, because the `.git` of its copy comes from the folder it
- * renames.
+ * The local copy with its `.git`: what `project add` runs on a client. The
+ * import stays on `createSyncFor`, because the `.git` of its copy comes from
+ * the folder it renames.
  */
 export async function createLocalCopy(options: CreateLocalCopyOptions): Promise<{
   session: SyncSession | undefined;
@@ -314,113 +311,6 @@ export async function createLocalCopy(options: CreateLocalCopyOptions): Promise<
   return { ...result, git };
 }
 
-async function start(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
-  const project = await projectNameOf(context.args.positionals[0]);
-  const flag = stringFlag(context.args, 'path');
-  const localPath = flag === undefined ? undefined : givenPath(flag);
-  const explicitUser = stringFlag(context.args, 'user');
-
-  if (booleanFlag(context.args, 'dry-run')) {
-    const { engine, host, user } = await engineAndServer(explicitUser);
-    const detail = await projectOnServerOrFail(project);
-    const place = await copyPlace(engine, project, localPath);
-    const serverPath = serverFolder(project, detail, stringFlag(context.args, 'server-path'));
-    const plan = {
-      project,
-      server: `${user}@${host}:${serverPath}`,
-      local: place.local,
-      existing: place.session !== undefined,
-    };
-    return context.output.json ? { data: plan } : { text: JSON.stringify(plan, null, 2) };
-  }
-
-  const result = await createLocalCopy({
-    project,
-    localPath,
-    serverPath: stringFlag(context.args, 'server-path'),
-    user: explicitUser,
-    git: !negatedFlag(context.args, 'git'),
-  });
-  const gitResult = result.git;
-
-  if (context.output.json) {
-    return {
-      data: {
-        project,
-        local: result.local,
-        session: result.session,
-        created: result.created,
-        git: gitResult,
-      },
-    };
-  }
-
-  const lines = [
-    result.created
-      ? `Local copy of ${project} at ${result.local}.`
-      : `Local copy of ${project} already at ${result.local}.`,
-  ];
-
-  lines.push(`git: ${gitResult.summary}`);
-
-  if (gitResult.detail !== undefined) {
-    lines.push(`  ${gitResult.detail}`);
-  }
-
-  return { text: lines.join('\n') };
-}
-
-// The copies of this machine, read from the sessions of the sync engine: no
-// daemon and no git, so it answers on a machine that is away from the server.
-async function list(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
-  const engine = new MutagenEngine();
-  const sessions = await engine.sessions();
-
-  if (sessions === undefined) {
-    return context.output.json
-      ? { data: { copies: [], local_copies: 'unavailable' } }
-      : { text: 'Mutagen did not answer: the local copies of this machine are not shown.' };
-  }
-
-  const copies = sessions
-    .map((session) => ({
-      project: session.project,
-      local: session.beta,
-      status: session.status,
-    }))
-    .sort((left, right) => left.project.localeCompare(right.project));
-
-  // The projects of the server tell the copies of a project that is gone from
-  // the others. Without an answer the command still lists the sessions.
-  const projects = await listProjects().catch(() => undefined);
-  const orphans =
-    projects === undefined
-      ? []
-      : withLocalCopies(
-          projects,
-          copies.map((copy) => ({ project: copy.project, local: copy.local })),
-        ).orphan_copies;
-
-  if (context.output.json) {
-    return { data: projects === undefined ? { copies } : { copies, orphan_copies: orphans } };
-  }
-
-  if (copies.length === 0) {
-    return { text: 'No local copies.' };
-  }
-
-  return {
-    text: [
-      renderTable(copies, [
-        { header: 'Project', value: (row) => row.project },
-        { header: 'Local', value: (row) => row.local },
-        { header: 'State', value: (row) => row.status },
-      ]),
-      ...renderOrphanCopies(orphans),
-    ].join('\n'),
-  };
-}
-
 // The local copy gets its own `.git`, cloned from the `origin` of the server
 // and on its branch. A copy that already has one is left alone.
 async function copyGit(project: string, local: string): Promise<CopyGitResult> {
@@ -430,7 +320,7 @@ async function copyGit(project: string, local: string): Promise<CopyGitResult> {
     return {
       status: 'failed',
       summary: 'Could not read the git state of the project on the server',
-      detail: `Run corami sync add ${project} again to retry`,
+      detail: `Run the command again to retry the copy of ${project}`,
     };
   }
 
@@ -439,7 +329,7 @@ async function copyGit(project: string, local: string): Promise<CopyGitResult> {
     return {
       status: 'skipped',
       summary: 'The server did not send the url of origin',
-      detail: `Run corami update on the server, then corami sync add ${project} again`,
+      detail: `Run corami update on the server, then add the copy of ${project} again`,
     };
   }
 
@@ -582,32 +472,27 @@ async function control(context: CommandContext): Promise<{ data?: unknown; text?
   return { text: `flush done on ${project}.` };
 }
 
-async function rm(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
-  // A removal names its project: the folder it runs in does not choose what
-  // gets deleted.
-  const project = context.args.positionals[0];
-
-  if (project === undefined) {
-    throw new CoramiError({
-      code: 'usage',
-      message: 'Missing project: sync rm deletes a copy, so it is always named',
-      fix: 'corami sync rm <project>, corami sync ls lists the copies of this machine',
-    });
-  }
-
+/**
+ * Removes the local copy of a project: what `corami project rm --on client`
+ * runs. The folder to delete is the one of the session, never a path typed
+ * here: a copy without a session is a folder of the user, Corami leaves it
+ * alone.
+ */
+export async function removeLocalCopy(
+  project: string,
+  context: CommandContext,
+): Promise<CommandResult> {
   const { engine } = await engineAndServer();
   await engine.path();
   const sessions = await syncSessions(engine);
 
-  // The folder to delete is the one of the session, never a path typed here:
-  // a copy without a session is a folder of the user, Corami leaves it alone.
   const session = sessions.find((entry) => entry.project === project);
 
   if (session === undefined) {
     throw new CoramiError({
       code: 'usage',
       message: `No sync session for ${project} on this machine: there is no local copy to remove`,
-      fix: 'A folder whose sync was stopped is not a copy any more: delete it by hand. corami sync ls lists the copies',
+      fix: 'A folder whose sync was stopped is not a copy any more: delete it by hand. corami project ls lists the copies',
     });
   }
 
@@ -658,7 +543,7 @@ async function rm(context: CommandContext): Promise<{ data?: unknown; text?: str
     text: [
       `Local copy of ${project} removed (${formatBytes(result.freedBytes)}).`,
       'The project on the server, with its git repository, is untouched.',
-      `To get it back: corami sync add ${project} --path ${localPath}`,
+      `To get it back: corami project add --from-server --name ${project} --local-path ${localPath}`,
     ].join('\n'),
   };
 }
@@ -666,7 +551,8 @@ async function rm(context: CommandContext): Promise<{ data?: unknown; text?: str
 /**
  * Stops the sync of this machine and keeps the files: the way out of a copy
  * whose project is gone from the server, where the session holds a root
- * deletion and `sync rm` would be deleting the last copy of the work.
+ * deletion and `corami project rm --on client` would be deleting the last
+ * copy of the work.
  */
 async function stop(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
   const project = await projectNameOf(context.args.positionals[0]);
@@ -687,10 +573,18 @@ async function stop(context: CommandContext): Promise<{ data?: unknown; text?: s
     return { data: { project, local: session.beta, stopped: true } };
   }
 
+  // The folder goes back on the server with the project, when it is still
+  // there, or with the import when the project is gone.
+  const onServer = await projectOnServer(project);
+  const again =
+    onServer === false
+      ? `corami project add --from-local --local-path ${session.beta}`
+      : `corami project add --from-server --name ${project} --local-path ${session.beta}`;
+
   return {
     text: [
       `The sync of ${project} is stopped: the files stay at ${session.beta}.`,
-      `To put that folder on the server again: corami project import ${session.beta}`,
+      `To put that folder on the server again: ${again}`,
     ].join('\n'),
   };
 }
@@ -880,39 +774,9 @@ const DRY_RUN_FLAG = { name: 'dry-run', description: 'Show what it would do' };
 
 export const syncCommand: CommandSpec = {
   name: 'sync',
-  summary: 'Synced local copy',
+  summary: 'State of the synced copies',
   usage: 'corami sync <action> [arguments]',
   actions: [
-    {
-      name: 'add',
-      summary: 'Creates the local copy in the folder given, and starts the session',
-      usage:
-        'corami sync add [<project>] [--path <folder>] [--server-path <folder>] [--user <user>] [--no-git] [--dry-run]',
-      flags: [
-        {
-          name: 'path',
-          value: 'folder',
-          description: 'Folder of the local copy, required unless the copy exists',
-        },
-        { name: 'server-path', value: 'folder', description: 'Path of the project on the server' },
-        {
-          name: 'user',
-          value: 'user',
-          description: 'User on the server, default the one of the configuration',
-        },
-        { name: 'no-git', description: 'Do not give the new local copy its own .git' },
-        DRY_RUN_FLAG,
-      ],
-      examples: ['corami sync add myapp --path ~/code/myapp', 'corami sync add myapp'],
-      run: start,
-    },
-    {
-      name: 'ls',
-      summary: 'Lists the local copies of this machine',
-      usage: 'corami sync ls',
-      examples: ['corami sync ls'],
-      run: list,
-    },
     {
       name: 'status',
       summary: 'State, conflicts, last change and git state of the two sides',
@@ -926,17 +790,6 @@ export const syncCommand: CommandSpec = {
       usage: 'corami sync flush [<project>]',
       examples: ['corami sync flush myapp'],
       run: control,
-    },
-    {
-      name: 'rm',
-      summary: 'Removes only the local copy of the session, after the checks',
-      usage: 'corami sync rm <project> [--force] [--dry-run]',
-      flags: [
-        { name: 'force', description: 'Proceeds even with conflicts or local-only files' },
-        DRY_RUN_FLAG,
-      ],
-      examples: ['corami sync rm myapp', 'corami sync rm myapp --dry-run'],
-      run: rm,
     },
     {
       name: 'stop',

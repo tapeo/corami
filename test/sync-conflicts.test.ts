@@ -45,7 +45,7 @@ describe('conflict copies', () => {
     const fix = conflictFix('myapp', ['']);
 
     expect(fix).toContain('corami sync stop myapp');
-    expect(fix).toContain('corami sync rm myapp --force');
+    expect(fix).toContain('corami project rm myapp --on client --force');
     expect(fix).not.toContain(CONFLICT_RESOLUTION);
     expect(conflictFix('myapp', ['app/page.tsx'])).toBe(CONFLICT_RESOLUTION);
   });
@@ -78,7 +78,7 @@ describe('removal fix', () => {
     const fix = removalFix('myapp', 'conflicts', true);
 
     expect(fix).toContain('corami sync stop myapp');
-    expect(fix).toContain('corami sync rm myapp --force');
+    expect(fix).toContain('corami project rm myapp --on client --force');
     expect(fix).not.toContain(CONFLICT_RESOLUTION);
   });
 });

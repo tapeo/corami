@@ -16,7 +16,11 @@ export interface Prompter {
    * must fit the terminal width, or it cannot be erased.
    */
   progress(line: string): void;
-  ask(question: string): Promise<string>;
+  /**
+   * A line of text, with a value the person can change already written in the
+   * line. An empty answer takes it as it stands.
+   */
+  ask(question: string, initial?: string): Promise<string>;
   confirm(question: string, fallback: boolean): Promise<boolean>;
   choose<T>(question: string, choices: Choice<T>[], fallback?: number): Promise<T>;
 }
@@ -52,9 +56,9 @@ export function terminalPrompter(): Prompter {
       pending = true;
     },
 
-    ask(question) {
+    ask(question, initial = '') {
       clear();
-      return readLine(`${question} `);
+      return readLine(`${question} `, initial);
     },
 
     async confirm(question, fallback) {
@@ -96,14 +100,23 @@ export function terminalPrompter(): Prompter {
 }
 
 // One reader per question: between questions the setup runs installers that
-// write to the same terminal.
-async function readLine(prompt: string): Promise<string> {
+// write to the same terminal. The value suggested is written after the
+// question, so it stays in the line and the person can change it.
+async function readLine(prompt: string, initial = ''): Promise<string> {
   const reader = createInterface({ input: process.stdin, output: process.stdout });
 
   reader.on('SIGINT', () => stop(reader));
 
   try {
-    return (await reader.question(prompt)).trim();
+    const answer = reader.question(prompt);
+
+    if (initial !== '') {
+      reader.write(initial);
+    }
+
+    const given = (await answer).trim();
+
+    return given === '' ? initial : given;
   } catch {
     // Ctrl+D closes the input: the person is leaving the setup.
     return stop(reader);

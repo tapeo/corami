@@ -222,7 +222,7 @@ export function removalFix(project: string, step: string | undefined, folderGone
   }
 
   if (folderGone) {
-    return `The folder of the project is gone on the server: corami sync stop ${project} keeps the files of this copy, corami sync rm ${project} --force removes them`;
+    return `The folder of the project is gone on the server: corami sync stop ${project} keeps the files of this copy, corami project rm ${project} --on client --force removes them`;
   }
 
   return `See both copies of each conflict with corami sync status ${project}, then ${CONFLICT_RESOLUTION}`;

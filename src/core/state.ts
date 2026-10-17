@@ -1,13 +1,20 @@
 import { Database } from 'bun:sqlite';
 
-import { paths } from '@/core/config.ts';
+import { paths, projectRoot } from '@/core/config.ts';
 import type { PreviewRow } from '@/core/previews.ts';
+import { serverFolderRemoval } from '@/core/projects.ts';
 
 export interface ProjectRow {
   name: string;
   path: string;
   repo_url: string | null;
   created_at: string;
+  /**
+   * Whether Corami created the folder of the project: a clone, or the import
+   * of a folder. A folder registered where it was is not ours, and a removal
+   * leaves it on disk.
+   */
+  owned: boolean;
 }
 
 let database: Database | undefined;
@@ -31,7 +38,8 @@ export function migrate(target: Database): void {
       name TEXT PRIMARY KEY,
       path TEXT NOT NULL,
       repo_url TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      owned INTEGER NOT NULL DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS previews (
@@ -43,30 +51,60 @@ export function migrate(target: Database): void {
       PRIMARY KEY (project, name)
     );
   `);
+
+  // A database written before `owned` existed: the column arrives with the
+  // rule of the day, the folder under the projects root was one Corami made.
+  const columns = target
+    .query<{ name: string }, []>("SELECT name FROM pragma_table_info('projects')")
+    .all();
+
+  if (columns.some((column) => column.name === 'owned')) {
+    return;
+  }
+
+  target.exec('ALTER TABLE projects ADD COLUMN owned INTEGER NOT NULL DEFAULT 1');
+
+  const root = projectRoot();
+
+  for (const row of target
+    .query<{ name: string; path: string }, []>('SELECT name, path FROM projects')
+    .all()) {
+    if (serverFolderRemoval(row.path, root) === 'keep') {
+      target.query('UPDATE projects SET owned = 0 WHERE name = ?').run(row.name);
+    }
+  }
 }
 
 export function listProjects(): ProjectRow[] {
   return db()
-    .query<ProjectRow, []>('SELECT name, path, repo_url, created_at FROM projects ORDER BY name')
-    .all();
+    .query<ProjectRow, []>(
+      'SELECT name, path, repo_url, created_at, owned FROM projects ORDER BY name',
+    )
+    .all()
+    .map(withOwnedFlag);
 }
 
 export function getProject(name: string): ProjectRow | undefined {
-  return (
+  const row =
     db()
       .query<ProjectRow, [string]>(
-        'SELECT name, path, repo_url, created_at FROM projects WHERE name = ?',
+        'SELECT name, path, repo_url, created_at, owned FROM projects WHERE name = ?',
       )
-      .get(name) ?? undefined
-  );
+      .get(name) ?? undefined;
+
+  return row === undefined ? undefined : withOwnedFlag(row);
+}
+
+function withOwnedFlag(row: ProjectRow): ProjectRow {
+  return { ...row, owned: Boolean(row.owned) };
 }
 
 export function upsertProject(row: ProjectRow): void {
   db()
     .query(
-      'INSERT INTO projects (name, path, repo_url, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET path = excluded.path, repo_url = excluded.repo_url',
+      'INSERT INTO projects (name, path, repo_url, created_at, owned) VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET path = excluded.path, repo_url = excluded.repo_url, owned = excluded.owned',
     )
-    .run(row.name, row.path, row.repo_url, row.created_at);
+    .run(row.name, row.path, row.repo_url, row.created_at, row.owned ? 1 : 0);
 }
 
 export function deleteProject(name: string): void {

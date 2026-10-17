@@ -22,11 +22,11 @@ export function invalidProjectNameReason(name: string): string {
 }
 
 /**
- * Whether `project rm` may delete the folder of a project on the server: only
- * the folders Corami created, inside the projects root. One registered with
- * `project add --path` lives elsewhere: it leaves the registry and stays on
- * disk, like the root itself and every path that leaves it. A path that is
- * not absolute is kept: it would depend on the folder the daemon runs in.
+ * Whether `project rm --on server` may delete the folder of a project on the
+ * server. Kept for the database written before the registry remembered who
+ * made the folder: the rule of the day was "inside the projects root, Corami
+ * made it". Today the `owned` column of the registry answers, and a path that
+ * is not absolute is kept: it would depend on the folder the daemon runs in.
  */
 export function serverFolderRemoval(path: string, root: string): 'delete' | 'keep' {
   if (!posix.isAbsolute(path) || !posix.isAbsolute(root)) {
@@ -67,16 +67,16 @@ export type LocalCopyTarget = 'existing' | 'create' | 'move' | 'missing' | 'nest
 
 /**
  * What to do with the folder of a local copy. The folder is never guessed: it
- * is the one of the session of the project, or the one asked with `--path`.
- * A session wins, and a different folder asked for it is a move the caller
- * refuses. Without a session, a folder inside the copy of another project,
- * or around it, would sync into that project; a folder with something else
- * in it is not touched, the sync would mix the two trees. Paths come in
- * absolute and in the same form, the caller turns every state but 'existing'
- * and 'create' into the usage error that says what to do.
+ * is the one of the session of the project, or the one asked with
+ * `--local-path`. A session wins, and a different folder asked for it is a
+ * move the caller refuses. Without a session, a folder inside the copy of
+ * another project, or around it, would sync into that project; a folder with
+ * something else in it is not touched, the sync would mix the two trees. Paths
+ * come in absolute and in the same form, the caller turns every state but
+ * 'existing' and 'create' into the usage error that says what to do.
  */
 export function localCopyTarget(state: {
-  /** `--path`, undefined without the flag. */
+  /** `--local-path`, undefined without the flag. */
   requested?: string | undefined;
   /** The folder of the session of the project, when there is one. */
   session?: string | undefined;

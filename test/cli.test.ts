@@ -135,58 +135,102 @@ describe('cli', () => {
     expect(alone.exitCode).toBe(2);
     expect(parsed.error.code).toBe('usage');
     expect(parsed.error.message).toBe('Missing action for corami sync');
-    expect(parsed.error.fix).toContain('corami sync add');
+    expect(parsed.error.fix).toContain('corami sync status');
     expect(named.exitCode).toBe(2);
     expect(namedParsed.error.code).toBe('usage');
     expect(namedParsed.error.message).toBe('Unknown action for corami sync: myapp');
-    expect(namedParsed.error.fix).toContain('corami sync add');
+    expect(namedParsed.error.fix).toContain('corami sync status');
   });
 
-  test('gives sync add its flags and sync ls none', async () => {
-    const add = JSON.parse((await corami(['sync', 'add', '--help'])).stdout).data;
-    const ls = JSON.parse((await corami(['sync', 'ls', '--help'])).stdout).data;
+  test('gives project add its flags, and sync stop none', async () => {
+    const add = JSON.parse((await corami(['project', 'add', '--help'])).stdout).data;
     const stop = JSON.parse((await corami(['sync', 'stop', '--help'])).stdout).data;
+    const names = (spec: { flags: Array<{ name: string }> }) => spec.flags.map((flag) => flag.name);
 
-    expect(add.usage).toStartWith('corami sync add');
-    expect(add.flags.map((flag: { name: string }) => flag.name)).toContain('no-git');
-    expect(ls.usage).toBe('corami sync ls');
-    expect(ls.flags).toEqual([]);
+    expect(add.usage).toStartWith('corami project add');
+    expect(names(add)).toContain('from-git');
+    expect(names(add)).toContain('from-local');
+    expect(names(add)).toContain('from-server');
+    expect(names(add)).toContain('local-path');
+    expect(names(add)).toContain('server-path');
     expect(stop.usage).toBe('corami sync stop [<project>]');
     expect(stop.flags).toEqual([]);
   });
 
-  test('takes the folder of a copy only where it creates one', async () => {
-    const add = JSON.parse((await corami(['sync', 'add', '--help'])).stdout).data;
-    const rm = JSON.parse((await corami(['sync', 'rm', '--help'])).stdout).data;
-    const project = JSON.parse((await corami(['project', 'add', '--help'])).stdout).data;
+  test('takes the two folders apart, and no plain --path', async () => {
+    const add = JSON.parse((await corami(['project', 'add', '--help'])).stdout).data;
+    const rm = JSON.parse((await corami(['project', 'rm', '--help'])).stdout).data;
     const names = (spec: { flags: Array<{ name: string }> }) => spec.flags.map((flag) => flag.name);
 
-    expect(names(add)).toContain('path');
-    expect(names(rm)).not.toContain('path');
-    expect(names(project)).not.toContain('no-sync');
+    expect(names(add)).toContain('local-path');
+    expect(names(add)).toContain('server-path');
+    expect(names(add)).not.toContain('path');
+    expect(names(rm)).not.toContain('local-path');
 
-    const removal = await corami(['sync', 'rm', 'myapp', '--path', '/tmp/myapp']);
+    const removal = await corami(['project', 'rm', 'myapp', '--local-path', '/tmp/myapp']);
 
     expect(removal.exitCode).toBe(2);
-    expect(JSON.parse(removal.stdout).error.code).toBe('usage');
-    expect(rm.usage).toStartWith('corami sync rm <project>');
+    expect(JSON.parse(removal.stdout).error.message).toBe(
+      'Unknown flag for corami project rm: --local-path',
+    );
+
+    const missing = await corami(['project', 'add', '--from-git', 'git@example.com:me/app.git']);
+
+    expect(missing.exitCode).toBe(2);
+    expect(JSON.parse(missing.stdout).error.message).toBe('Missing --local-path');
   });
 
   test('never takes the copy to remove from the current folder', async () => {
-    const result = await corami(['sync', 'rm']);
+    const result = await corami(['project', 'rm']);
     const parsed = JSON.parse(result.stdout);
 
     expect(result.exitCode).toBe(2);
     expect(parsed.error.message).toContain('Missing project');
   });
 
-  test('asks project import for its folder', async () => {
-    const result = await corami(['project', 'import']);
+  test('asks project add where the project comes from, and where its copy goes', async () => {
+    const source = await corami(['project', 'add']);
+    const parsedSource = JSON.parse(source.stdout);
+
+    expect(source.exitCode).toBe(2);
+    expect(parsedSource.error.message).toBe('Missing --from-git, --from-local or --from-server');
+
+    const folder = await corami(['project', 'add', '--from-local']);
+    const parsedFolder = JSON.parse(folder.stdout);
+
+    expect(folder.exitCode).toBe(2);
+    expect(parsedFolder.error.message).toBe('Missing --local-path');
+  });
+
+  test('refuses two sources of a project at once', async () => {
+    const result = await corami([
+      'project',
+      'add',
+      '--from-git',
+      'git@example.com:me/app.git',
+      '--from-local',
+      '--local-path',
+      '/tmp/app',
+    ]);
     const parsed = JSON.parse(result.stdout);
 
     expect(result.exitCode).toBe(2);
-    expect(parsed.error.message).toBe('Missing folder');
-    expect(parsed.error.fix).toContain('corami project import .');
+    expect(parsed.error.message).toBe('Give one of --from-git, --from-local or --from-server');
+  });
+
+  test('asks project rm where the project leaves from', async () => {
+    const missing = await corami(['project', 'rm', 'myapp', '--yes']);
+    const wrong = await corami(['project', 'rm', 'myapp', '--on', 'both', '--yes']);
+    const unconfirmed = await corami(['project', 'rm', 'myapp', '--on', 'server']);
+    const forced = await corami(['project', 'rm', 'myapp', '--on', 'server', '--force', '--yes']);
+
+    expect(missing.exitCode).toBe(2);
+    expect(JSON.parse(missing.stdout).error.message).toContain('Missing --on');
+    expect(JSON.parse(wrong.stdout).error.message).toBe('Unknown --on both');
+    expect(JSON.parse(unconfirmed.stdout).error.fix).toContain('--on server --yes');
+    expect(JSON.parse(forced.stdout).error.message).toBe(
+      '--force applies to the copy of this machine',
+    );
   });
 
   test('asks for the role when setup is called alone', async () => {

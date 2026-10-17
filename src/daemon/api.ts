@@ -1,14 +1,15 @@
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 
-import { projectRoot } from '@/core/config.ts';
+import { homeDirectory, projectRoot } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { run, runOrThrow } from '@/core/exec.ts';
 import { gitOriginUrl, readGitState } from '@/core/git.ts';
 import { gitStateJson } from '@/core/git-align.ts';
 import { gitOriginState, originStatusJson } from '@/core/git-follow.ts';
 import { validatePreviewName, validateTargetPort } from '@/core/previews.ts';
-import { serverFolderRemoval, validProjectName } from '@/core/projects.ts';
+import { serverFolderOverlaps, serverPathFrom, validServerPath } from '@/core/project-add.ts';
+import { validProjectName } from '@/core/projects.ts';
 import { deleteProject, getProject, listProjects, upsertProject } from '@/core/state.ts';
 import {
   applyPreview,
@@ -242,6 +243,10 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
   const url = typeof body.url === 'string' ? body.url : undefined;
   const name = typeof body.name === 'string' ? body.name : undefined;
   const path = typeof body.path === 'string' ? body.path : undefined;
+  // Whether the folder is one Corami made or is making here: the import moves
+  // a folder of a client onto the server and says so. A folder only registered
+  // keeps its `false`, and a removal leaves it on disk.
+  const owned = body.owned === true || url !== undefined;
 
   if (name === undefined || (url === undefined && path === undefined)) {
     throw new CoramiError({
@@ -258,14 +263,6 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
     });
   }
 
-  if (url !== undefined && path !== undefined) {
-    throw new CoramiError({
-      code: 'usage',
-      message: 'Give a url or a path, not both',
-      fix: 'corami project add <url> clones on the server, corami project add --path <folder> registers a folder that is already there',
-    });
-  }
-
   // `git clone` reads a url that starts with a dash as an option, and one of
   // its options runs a command.
   if (url !== undefined && (url.startsWith('-') || url.trim() === '')) {
@@ -276,22 +273,57 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
     });
   }
 
-  const target = path ?? join(projectRoot(), name);
+  if (path !== undefined && !validServerPath(path)) {
+    throw new CoramiError({
+      code: 'usage',
+      message: `The path of a project on the server is absolute or starts with ~/: ${path}`,
+      fix: 'Give the folder in full, as the server sees it',
+    });
+  }
+
+  const home = homeDirectory();
+  const underHome = path?.startsWith('~/') === true;
+
+  // `~/` is the home of the account that owns the projects: without one the
+  // path would land somewhere of the daemon.
+  if (underHome && !posix.isAbsolute(home)) {
+    throw new CoramiError({
+      code: 'config_invalid',
+      message: 'The daemon does not know the home of the account that owns the projects',
+      fix: 'Run corami setup server again on this machine',
+    });
+  }
+
+  const target = path === undefined ? join(projectRoot(), name) : serverPathFrom(home, path);
   const existing = getProject(name);
 
   if (existing !== undefined) {
     throw new CoramiError({
       code: 'project_exists',
       message: `Already a project named ${name} on the server: ${existing.path}`,
-      fix: `corami project ls to see it, or corami project rm ${name} --yes to remove it first`,
+      fix: `corami project ls to see it, or corami project rm ${name} --on server --yes to remove it first`,
     });
   }
 
-  if (url === undefined && path !== undefined && !existsSync(path)) {
+  if (url === undefined && path !== undefined && !existsSync(target)) {
     throw new CoramiError({
       code: 'config_invalid',
-      message: `Folder not found on the server: ${path}`,
-      fix: 'corami project add --path refers to a folder on the server. From a client, use corami project import <folder>',
+      message: `Folder not found on the server: ${target}`,
+      fix: '--server-path refers to a folder of the server, and it is not there',
+    });
+  }
+
+  // Two projects whose folders sit inside each other would sync the same
+  // files: the folder of one project is not part of another one.
+  const others = listProjects().map((project) => project.path);
+
+  if (serverFolderOverlaps(target, others)) {
+    const other = others.find((folder) => serverFolderOverlaps(target, [folder]));
+
+    throw new CoramiError({
+      code: 'usage',
+      message: `The folder ${target} is inside the project at ${other ?? ''}, or around it`,
+      fix: 'Pick a folder outside the other projects: corami project ls lists them',
     });
   }
 
@@ -311,6 +343,7 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
     path: target,
     repo_url: url ?? null,
     created_at: new Date().toISOString(),
+    owned,
   });
 
   return { status: 200, body: { ok: true, data: await projectDetail(name, context) } };
@@ -325,9 +358,9 @@ async function removeProject(name: string): Promise<ApiResult> {
 
   await removeProjectPreviews(name);
 
-  // The folder of a project registered with `project add --path` is not ours:
-  // it leaves the registry and stays where it is.
-  const removal = serverFolderRemoval(row.path, projectRoot());
+  // The folder of a project that was only registered is not ours: it leaves
+  // the registry and stays where it is.
+  const removal = row.owned ? 'delete' : 'keep';
 
   if (removal === 'delete') {
     await run('rm', ['-rf', row.path]);

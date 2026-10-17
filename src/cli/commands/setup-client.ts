@@ -432,7 +432,7 @@ function render(steps: StepResult[], withNext: boolean, withSteps: boolean): str
   if (withNext) {
     lines.push(
       ...renderNextSteps([
-        'corami sync add <project>, or corami project import <folder> for a project of this machine',
+        'corami project add --from-server --name <project> --local-path <folder> takes the copy of a project of the server',
       ]),
     );
   }

@@ -5,7 +5,7 @@ Corami does not back anything up: it is yours to choose. The server is the sourc
 ## What the sync already protects
 
 - **Committed work** is on `origin`.
-- **Uncommitted work** is on every client that synced the project: `corami sync add <project>` keeps a real copy on the disk of each machine, both ways.
+- **Uncommitted work** is on every client that synced the project: the copy that `corami project add` creates on each machine is real, on its disk, both ways.
 - **What is not protected:** a project that no client ever synced. Its files exist only on the server. Sync it once from your laptop, or include the server in a backup.
 
 ## What to save
@@ -94,18 +94,18 @@ With `loginctl enable-linger` (the Corami setup does it) the timer runs with no 
 
 1. Install Corami and run `corami setup server` (`docs/quickstart.md`).
 2. Restore the folders: `~/projects` from the snapshot or with `restic restore --target /`, then `~/.ssh` and `~/.corami/config.json`.
-3. Add the projects back to the registry if you restored `state.db` and it is from an older version, or when you did not restore it: `corami project add --path ~/projects/<project>`.
+3. Add the projects back to the registry if you restored `state.db` and it is from an older version, or when you did not restore it. From one client, for each project: `corami project add --from-server --server-path ~/projects/<project> --local-path <folder>`.
 4. On the server, restart the dev servers (a user service, `docker compose up -d`) and register their addresses: `corami serve <port>`.
-5. On every client, `corami sync add <project>` and `corami update`.
+5. On every client, `corami project add --from-server --name <project> --local-path <folder>` and `corami update`.
 
-The projects are folders: the clients of a restored server find the sync sessions again by running `corami sync add <project>`, and git realigns itself through `corami-git-watch`. That holds when the new server keeps the name of the old one in the tailnet. With another name, follow the next section.
+The projects are folders: the clients of a restored server find the sync sessions again by running `corami project add --from-server --name <project> --local-path <folder>`, and git realigns itself through `corami-git-watch`. That holds when the new server keeps the name of the old one in the tailnet. With another name, follow the next section.
 
 ## Moving the clients to another server
 
-Corami knows a copy by the name of its project, not by the server it syncs with. After a change of server name the sessions of a client still point at the old one: `corami sync add <project>` would resume them, and `corami sync rm <project>` would act on their copies. On every client, before anything else:
+Corami knows a copy by the name of its project, not by the server it syncs with. After a change of server name the sessions of a client still point at the old one: `corami project add --from-server` would resume them, and `corami project rm --on client` would act on their copies. On every client, before anything else:
 
-1. `corami sync ls` lists the copies and their folders: note them.
+1. `corami project ls` lists the copies and their folders in the `Local` column: note them.
 2. `corami sync stop <project>` for each copy: the session goes, the files stay where they are.
 3. `corami setup client <new-server>`.
-4. For each project, move the old folder away and create the copy in its place: `mv ~/dev/myapp ~/dev/myapp.old`, then `corami sync add myapp --path ~/dev/myapp`. `sync add` refuses a folder that is not empty, so the old copy never mixes with the new one.
-5. Compare the two folders. Work that is only in the old one goes into the new copy by hand, then delete the old folder yourself: it has no session, and `sync rm` does not touch it.
+4. For each project, move the old folder away and create the copy in its place: `mv ~/dev/myapp ~/dev/myapp.old`, then `corami project add --from-server --name myapp --local-path ~/dev/myapp`. The command refuses a folder that is not empty, so the old copy never mixes with the new one.
+5. Compare the two folders. Work that is only in the old one goes into the new copy by hand, then delete the old folder yourself: it has no session, and `corami project rm --on client` does not touch it.

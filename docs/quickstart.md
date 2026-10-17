@@ -62,12 +62,12 @@ The setup finds the server in your tailnet and asks you to confirm it. Open a ne
 Pick the line that matches where the project is today:
 
 ```bash
-corami project import ~/dev/myapp                 # only on this laptop, uncommitted work included
-corami project add git@github.com:me/myapp.git    # on GitHub, GitLab or another git remote
-corami sync add myapp --path ~/dev/myapp          # after project add: the copy of this laptop
+corami project add --from-local --local-path ~/dev/myapp             # only on this laptop, uncommitted work included
+corami project add --from-git git@github.com:me/myapp.git --local-path ~/dev/myapp   # on GitHub, GitLab or another git remote
+corami project add --from-server --name myapp --local-path ~/dev/myapp # on another client: the project is already on the server
 ```
 
-`project import` moves the project to the server and turns the folder into the synced copy, with a backup next to it. Everything in the folder travels, keys and env files included: a build or a preview on the server has what the laptop has. `project add` clones on the server only; `sync add` then creates the copy of this laptop in the folder you give it, because Corami never picks one for you. Run `project add` from a folder that is already a clone of the repository and it stops instead, pointing at `project import`: the project is already here, and the import is what turns that folder into the synced copy.
+Every line ends with the same two things: the project on the server, in `~/projects/myapp`, and the synced copy of this laptop in the folder you give with `--local-path`. `--from-local` moves the folder itself, keys and env files included, and leaves a backup next to it: a build or a preview on the server has what the laptop has. `--from-git` clones the repository and then creates the copy here. In a terminal, a missing flag is asked with a value already written, so you can change it as you read it. Run `--from-git` from a folder that is already a clone of the repository and the command stops instead, pointing at `--from-local`: the project is already here, and moving that folder is what makes it the copy.
 
 That is all: no configuration file. The project lives in `~/projects/myapp` on the server, and every file you save on either side reaches the other within seconds. Dependencies and build outputs (`node_modules`, `build`, `Pods`...) are not synced: each machine regenerates them. Everything else is, keys and env files included: if a key must not travel, keep it out of the folder, or inject it from a secret manager.
 
@@ -148,7 +148,7 @@ Open that address from any device in your tailnet, phone included. It is stable:
 Every file you save reaches the server within seconds, so when you close the laptop your work is already there, committed or not. On another computer, install Corami as in [step 2](#2-laptop), then:
 
 ```bash
-corami sync add myapp --path ~/dev/myapp
+corami project add --from-server --name myapp --local-path ~/dev/myapp
 ```
 
 The files arrive in that folder, uncommitted changes included, and the copy gets its own `.git` on the branch of the server. Run the install command of the project when you need the dependencies.

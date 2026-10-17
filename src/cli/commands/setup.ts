@@ -398,7 +398,7 @@ function render(
         ...renderNextSteps([
           ...switchUser,
           `On your laptop, install Corami and answer client, or run there: corami setup client ${fqdn}`,
-          'Add a project: corami project import <folder> from the laptop, or corami project add <git-url>',
+          'Add a project from the laptop: corami project add --from-git <url> --local-path <folder>',
         ]),
       );
     }

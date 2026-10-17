@@ -218,6 +218,8 @@ export async function addProject(input: {
   name: string;
   url?: string;
   path?: string;
+  /** The import made the folder on the server: a removal may delete it. */
+  owned?: boolean;
 }): Promise<Record<string, unknown>> {
   return request('/v1/projects', {
     method: 'POST',

@@ -1,16 +1,22 @@
 import { cpSync, existsSync, mkdirSync, renameSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 
-import type { CommandContext } from '@/cli/command.ts';
+import type { CommandResult } from '@/cli/command.ts';
 import type { StepResult } from '@/cli/commands/setup-steps.ts';
-import { copyPlace, createSyncFor, givenPath } from '@/cli/commands/sync.ts';
+import { copyPlace, createSyncFor } from '@/cli/commands/sync.ts';
+import type { OutputOptions } from '@/cli/output.ts';
 import { renderSteps } from '@/cli/output.ts';
-import { booleanFlag, stringFlag } from '@/cli/parser.ts';
-import { addProject, projectDetail, serverUserForSync } from '@/cli/server-client.ts';
+import {
+  addProject,
+  projectDetail,
+  removeProject,
+  serverUserForSync,
+} from '@/cli/server-client.ts';
 import { readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { run, shellQuote } from '@/core/exec.ts';
 import { findLocalOnlyFiles, type LocalOnlyFile } from '@/core/local-copy.ts';
+import { serverPathFrom } from '@/core/project-add.ts';
 import { validProjectName } from '@/core/projects.ts';
 import {
   factsMatch,
@@ -23,20 +29,20 @@ import {
 } from '@/core/transfer.ts';
 import { MutagenEngine } from '@/integrations/mutagen.ts';
 
-export async function runImport(
-  context: CommandContext,
-): Promise<{ data?: unknown; text?: string }> {
-  const folder = context.args.positionals[0];
+export interface ImportOptions {
+  project: string;
+  /** The folder of this machine: it moves to the server and becomes the copy. */
+  localPath: string;
+  /** The folder on the server: absolute, or starting with `~/`. */
+  serverPath?: string | undefined;
+  /** The account of the server, `--user`: default the one of the configuration. */
+  user?: string | undefined;
+  dryRun: boolean;
+  output: OutputOptions;
+}
 
-  if (folder === undefined) {
-    throw new CoramiError({
-      code: 'usage',
-      message: 'Missing folder',
-      fix: 'corami project import <folder>, or corami project import . for the current one',
-    });
-  }
-
-  const target = givenPath(folder);
+export async function runImport(options: ImportOptions): Promise<CommandResult> {
+  const target = options.localPath;
   const config = await readGlobalConfig();
   const host = config?.server_host;
 
@@ -48,9 +54,9 @@ export async function runImport(
     });
   }
 
-  const user = stringFlag(context.args, 'user') ?? (await serverUserForSync());
-  const projectName = stringFlag(context.args, 'name') ?? basename(target);
-  const dryRun = booleanFlag(context.args, 'dry-run');
+  const user = options.user ?? (await serverUserForSync());
+  const projectName = options.project;
+  const dryRun = options.dryRun;
   const steps: StepResult[] = [];
 
   if (!validProjectName(projectName)) {
@@ -65,7 +71,7 @@ export async function runImport(
 
   if (facts === undefined) {
     steps.push({ step: 'git', status: 'failed', summary: `${target} is not a git repository` });
-    return finish(context, steps, projectName, target, dryRun);
+    return finish(options, steps, projectName, target, undefined);
   }
 
   steps.push({
@@ -83,7 +89,7 @@ export async function runImport(
       status: 'failed',
       summary: `A project named ${projectName} already exists on the server`,
     });
-    return finish(context, steps, projectName, target, dryRun);
+    return finish(options, steps, projectName, target, undefined);
   }
 
   // The folder becomes the copy: the session of the name and the copies of the
@@ -97,7 +103,7 @@ export async function runImport(
       summary: error instanceof Error ? error.message : String(error),
       detail: error instanceof CoramiError ? error.fix : undefined,
     });
-    return finish(context, steps, projectName, target, dryRun);
+    return finish(options, steps, projectName, target, undefined);
   }
 
   steps.push({
@@ -130,7 +136,7 @@ export async function runImport(
       status: 'skipped',
       summary: 'Would copy the repository to the server',
     });
-    return finish(context, steps, projectName, target, dryRun);
+    return finish(options, steps, projectName, target, options.serverPath);
   }
 
   const home = await remoteHome(user, host);
@@ -142,10 +148,13 @@ export async function runImport(
       summary: `Cannot read the home directory of ${user} on the server`,
       detail: 'Check that ssh works, and that the account owns the projects',
     });
-    return finish(context, steps, projectName, target, dryRun);
+    return finish(options, steps, projectName, target, options.serverPath);
   }
 
-  const serverPath = serverProjectPath(home, projectName);
+  const serverPath =
+    options.serverPath === undefined
+      ? serverProjectPath(home, projectName)
+      : serverPathFrom(home, options.serverPath);
   const transferred = await transfer(target, user, host, serverPath);
 
   if (!transferred.ok) {
@@ -155,7 +164,7 @@ export async function runImport(
       summary: 'Transfer failed',
       detail: transferred.detail,
     });
-    return finish(context, steps, projectName, target, dryRun);
+    return finish(options, steps, projectName, target, serverPath);
   }
 
   steps.push({
@@ -178,7 +187,7 @@ export async function runImport(
       summary: 'The copies do not match',
       detail: `local ${localManifestResult.files} files, remote ${remoteManifestResult?.files ?? 0}`,
     });
-    return finish(context, steps, projectName, target, dryRun);
+    return finish(options, steps, projectName, target, serverPath);
   }
 
   const remoteFacts = await remoteGitFacts(host, user, serverPath);
@@ -190,7 +199,7 @@ export async function runImport(
       summary: 'Git history does not match',
       detail: `local ${facts.refs} refs, remote ${remoteFacts?.refs ?? 0}; local stash ${facts.stashes}, remote ${remoteFacts?.stashes ?? 0}`,
     });
-    return finish(context, steps, projectName, target, dryRun);
+    return finish(options, steps, projectName, target, serverPath);
   }
 
   steps.push({
@@ -199,7 +208,24 @@ export async function runImport(
     summary: `Verified: ${localManifestResult.files} files, ${facts.refs} refs, ${facts.stashes} stashes, same HEAD`,
   });
 
-  await addProject({ name: projectName, path: serverPath });
+  try {
+    await addProject({ name: projectName, path: serverPath, owned: true });
+  } catch (error) {
+    // The folder was copied here by this command: a registration that fails
+    // takes it away again, and this machine keeps everything.
+    const cleared = await removeServerFolder(user, host, serverPath);
+
+    steps.push({
+      step: 'register',
+      status: 'failed',
+      summary: `The server did not register the project: ${asMessage(error)}`,
+      detail: cleared
+        ? 'The folder copied to the server was removed again'
+        : `The folder stays at ${host}:${serverPath}`,
+    });
+    return finish(options, steps, projectName, target, serverPath);
+  }
+
   steps.push({
     step: 'register',
     status: 'done',
@@ -216,13 +242,24 @@ export async function runImport(
     const sync = await createSyncFor({ project: projectName, localPath: target, serverPath, user });
     localCopy = sync.local;
   } catch (error) {
+    // The project is on the server without its copy, the one thing the
+    // command never leaves behind.
+    const taken = await removeProject(projectName).then(
+      () => true,
+      () => false,
+    );
+
     steps.push({
       step: 'sync',
       status: 'failed',
       summary: 'The local copy could not be created',
-      detail: error instanceof Error ? error.message : String(error),
+      detail: `${asMessage(error)}. ${
+        taken
+          ? 'The project was taken off the server again: nothing is left there without a copy'
+          : 'The project stays on the server, with no copy'
+      }`,
     });
-    return finish(context, steps, projectName, target, dryRun);
+    return finish(options, steps, projectName, target, serverPath);
   }
 
   steps.push({ step: 'sync', status: 'done', summary: `Local copy created in ${localCopy}` });
@@ -245,7 +282,36 @@ export async function runImport(
     });
   }
 
-  return finish(context, steps, projectName, target, dryRun);
+  return finish(options, steps, projectName, target, serverPath);
+}
+
+function asMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Takes the folder away again: the import copied it there, and a project that
+ * the server would not register leaves nothing behind.
+ */
+async function removeServerFolder(
+  user: string,
+  host: string,
+  serverPath: string,
+): Promise<boolean> {
+  const result = await run(
+    'ssh',
+    [
+      '-o',
+      'BatchMode=yes',
+      '-o',
+      'ConnectTimeout=15',
+      `${user}@${host}`,
+      `rm -rf ${shellQuote(serverPath)}`,
+    ],
+    { timeoutMs: 60_000 },
+  );
+
+  return result.ok;
 }
 
 export async function remoteHome(user: string, host: string): Promise<string | undefined> {
@@ -382,14 +448,23 @@ function stamp(): string {
 }
 
 function finish(
-  context: CommandContext,
+  options: ImportOptions,
   steps: StepResult[],
   project: string,
   target: string,
-  dryRun: boolean,
-): { data?: unknown; text?: string } {
-  if (context.output.json) {
-    return { data: { project, local: target, dry_run: dryRun, steps } };
+  serverPath: string | undefined,
+): CommandResult {
+  if (options.output.json) {
+    return {
+      data: {
+        project,
+        from: 'local',
+        server_path: serverPath ?? null,
+        local_path: target,
+        dry_run: options.dryRun,
+        steps,
+      },
+    };
   }
 
   return { text: renderSteps(steps).join('\n') };

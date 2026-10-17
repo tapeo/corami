@@ -1,4 +1,6 @@
+import { basename, join, posix } from 'node:path';
 import type { Role } from '@/core/config.ts';
+import { serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { git, gitOriginUrl } from '@/core/git.ts';
 
@@ -10,9 +12,9 @@ export interface CwdRepository {
 
 /**
  * The repository that contains `cwd`, the root and the url of its `origin`.
- * A folder of the server that is only registered with `--path` has a path of
- * the server, but this reads this machine: the import check is about a clone
- * that is really here.
+ * A folder of the server that is only registered has a path of the server, but
+ * this reads this machine: the import check is about a clone that is really
+ * here.
  */
 export async function repositoryAt(cwd: string): Promise<CwdRepository | undefined> {
   const top = await git(cwd, ['rev-parse', '--show-toplevel']);
@@ -24,70 +26,191 @@ export async function repositoryAt(cwd: string): Promise<CwdRepository | undefin
   return { root: top.stdout, origin: await gitOriginUrl(top.stdout) };
 }
 
+/** Where the project comes from: a repository, this machine, or the server. */
+export type AddFrom = 'git' | 'local' | 'server';
+
 export interface ProjectAddState {
   role: Role | undefined;
-  /** The name of the project, given or derived from the url. */
+  from: AddFrom;
+  /** The name of the project: given, prompted, or derived from the origin. */
   project: string;
   url?: string | undefined;
-  /** The folder registered with `--path`: the server only. */
-  path?: string | undefined;
-  /** The name given with `--name`: the fix of the import check gives it back. */
+  /** The name given with `--name`: the checks give it back in their fix. */
   explicitName?: string | undefined;
-  cwdRepository?: CwdRepository | undefined;
+  /** The path asked with `--server-path`, when the flag was given. */
+  serverPath?: string | undefined;
+  /** The path on the server, when a project of that name is registered. */
+  registeredPath?: string | undefined;
   /** The folder of a session of the sync engine that already carries the name. */
   session?: string | undefined;
-  /** Whether the server already has a project with the name. */
-  onServer: boolean;
+  cwdRepository?: CwdRepository | undefined;
 }
 
 /**
- * Whether `project add` may go on. It only adds the project on the server:
- * the copy of a client comes from `sync add`, with the folder it is given.
- * Nothing here touches the disk or the network: the command gathers the state
- * and asks, and every stop is a usage error that says what to do.
+ * Whether `project add` may go on. It registers the project on the server and
+ * leaves the copy of this machine with its session: every source ends with
+ * both, so the command only runs on a client. Nothing here touches the disk or
+ * the network: the command gathers the state and asks, and every stop is a
+ * usage error that says what to do.
  */
 export function planProjectAdd(state: ProjectAddState): void {
   const name = state.explicitName === undefined ? '' : ` --name ${state.explicitName}`;
 
-  // A folder of the server cannot be registered from a client: the path would
-  // be resolved on the wrong machine.
-  if (state.path !== undefined && state.role === 'client') {
+  if (state.role !== 'client') {
     throw new CoramiError({
       code: 'usage',
-      message: '--path registers a folder that is already on the server',
-      fix: 'corami project import <folder> to move a folder of this machine to the server',
+      message:
+        'corami project add registers the project on the server and creates the copy of this machine',
+      fix: 'Run it from a client: the copy of a project lives on the machines that work on it',
     });
   }
 
-  if (state.role !== 'client' || state.url === undefined) {
-    return;
+  // The project is registered somewhere else on the server: that path is the
+  // source, not the one the default suggests.
+  if (
+    state.from === 'server' &&
+    state.serverPath !== undefined &&
+    state.registeredPath !== undefined &&
+    state.serverPath !== state.registeredPath
+  ) {
+    throw new CoramiError({
+      code: 'usage',
+      message: `${state.project} is registered on the server at ${state.registeredPath}`,
+      fix: `corami project add --from-server --server-path ${state.registeredPath} --local-path <folder>`,
+    });
+  }
+
+  // The name is taken: what is left to add is the copy of this machine.
+  if ((state.from === 'git' || state.from === 'local') && state.registeredPath !== undefined) {
+    throw new CoramiError({
+      code: 'usage',
+      message: `A project named ${state.project} is already on the server: ${state.registeredPath}`,
+      fix: `To take its copy: corami project add --from-server --name ${state.project} --local-path <folder>`,
+    });
   }
 
   // The project of this folder is already here: the import converts it instead
-  // of leaving it aside, and a copy made later would be a second one.
-  const origin = state.cwdRepository?.origin;
+  // of cloning a second one.
+  if (state.from === 'git' && state.url !== undefined) {
+    const origin = state.cwdRepository?.origin;
 
-  if (origin !== undefined && sameRepository(origin, state.url)) {
-    const root = state.cwdRepository?.root ?? '.';
+    if (origin !== undefined && sameRepository(origin, state.url)) {
+      const root = state.cwdRepository?.root ?? '.';
 
-    throw new CoramiError({
-      code: 'usage',
-      message: `This machine already has a clone of ${state.url}: ${root}`,
-      fix: `corami project import ${root}${name} instead: it moves that folder to the server and turns it into the synced copy`,
-    });
+      throw new CoramiError({
+        code: 'usage',
+        message: `This machine already has a clone of ${state.url}: ${root}`,
+        fix: `corami project add --from-local --local-path ${root}${name} instead: it moves that folder to the server and turns it into the synced copy`,
+      });
+    }
   }
 
   // A session for the name, while the project is not on the server: the copy
-  // of a project that was removed. It points at the folder the new clone goes
-  // to, and would reconcile an older copy with a fresh clone as soon as it is
-  // there. A project that is on the server is refused by the server itself.
-  if (state.session !== undefined && !state.onServer) {
+  // of a project that was removed. It points at the folder of the new copy,
+  // and would reconcile an older copy with the new one as soon as it is there.
+  if (state.session !== undefined && state.registeredPath === undefined) {
     throw new CoramiError({
       code: 'usage',
       message: `A sync session for ${state.project} already exists at ${state.session}, from a project removed from the server`,
       fix: `corami sync stop ${state.project} closes it and keeps its files, then add the project again`,
     });
   }
+}
+
+/**
+ * A folder of the server: absolute, or starting with `~/` that the server
+ * expands. Everything else would be resolved on the wrong machine.
+ */
+export function validServerPath(path: string): boolean {
+  return posix.isAbsolute(path) || /^~\/[^/]/.test(path);
+}
+
+/** The path asked for on the server, with `~` expanded against its home. */
+export function serverPathFrom(home: string, path: string): string {
+  return path.startsWith('~/') ? posix.join(home, path.slice(2)) : path;
+}
+
+/**
+ * Whether a folder of the server overlaps the folder of another project: the
+ * same folder, one inside the other. The two would sync the same files. Paths
+ * absolute, with `~` already expanded.
+ */
+export function serverFolderOverlaps(path: string, others: string[]): boolean {
+  const normalized = posix.normalize(path);
+
+  return others.some((other) => {
+    const folder = posix.normalize(other);
+
+    return within(folder, normalized) || within(normalized, folder);
+  });
+}
+
+function within(folder: string, path: string): boolean {
+  const between = posix.relative(folder, path);
+
+  return (
+    between === '' || (between !== '..' && !between.startsWith('../') && !posix.isAbsolute(between))
+  );
+}
+
+/** The folder the copy goes to without `--local-path`: a folder of this machine. */
+export function defaultLocalPath(cwd: string, name: string): string {
+  return join(cwd, name);
+}
+
+/** The folder of the project on the server without `--server-path`. */
+export function defaultServerPath(name: string): string {
+  return serverProjectPath('~', name);
+}
+
+/**
+ * The name to suggest, without asking: the one given, the one derived from the
+ * url, from the folder of the server or from the folder of this machine.
+ */
+export function suggestedProjectName(state: {
+  name?: string | undefined;
+  url?: string | undefined;
+  serverPath?: string | undefined;
+  localPath?: string | undefined;
+}): string | undefined {
+  if (state.name !== undefined) {
+    return state.name;
+  }
+
+  if (state.url !== undefined) {
+    try {
+      return projectNameFromUrl(state.url);
+    } catch {
+      return undefined;
+    }
+  }
+
+  const folder = state.serverPath ?? state.localPath;
+
+  if (folder === undefined) {
+    return undefined;
+  }
+
+  const last = basename(folder.replace(/\/+$/, ''));
+
+  return last === '' || last === '.' ? undefined : last;
+}
+
+/** The name of a project cloned from a url: the last part of its path. */
+export function projectNameFromUrl(url: string): string {
+  const cleaned = url.replace(/\.git$/, '').replace(/\/$/, '');
+  const parts = cleaned.split(/[/:]/);
+  const last = parts.at(-1);
+
+  if (last === undefined || last === '') {
+    throw new CoramiError({
+      code: 'usage',
+      message: `Cannot derive a project name from ${url}`,
+      fix: 'Pass --name <name>',
+    });
+  }
+
+  return last;
 }
 
 /**
