@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
 import { parseDuration, renderCandidates } from '@/cli/commands/sync.ts';
+import { applyRemoval, planRemoval, type RemovalEngine } from '@/cli/commands/sync-remove.ts';
+import { CoramiError } from '@/core/errors.ts';
 import { directorySize, findLocalOnlyFiles, isSensitiveName, localGit } from '@/core/local-copy.ts';
+import type { SyncSession } from '@/integrations/mutagen.ts';
 import { collectConflicts, parseSessions, sessionName } from '@/integrations/mutagen.ts';
 
 async function git(cwd: string, args: string[]): Promise<void> {
@@ -177,5 +179,84 @@ describe('mutagen parsing', () => {
 
   test('builds the session name', () => {
     expect(sessionName('demo')).toBe('corami-demo');
+  });
+});
+
+describe('removal checks', () => {
+  const watching: SyncSession = {
+    name: 'corami-demo',
+    project: 'demo',
+    status: 'watching',
+    mode: 'two-way-safe',
+    alpha: 'corami@vps:~/projects/demo',
+    beta: '/tmp/copy',
+    conflicts: [],
+    lastError: undefined,
+  };
+
+  function fakeEngine(session: SyncSession | undefined, failFlush = false): RemovalEngine {
+    return {
+      status: async () => session,
+      flush: async () => {
+        if (failFlush) {
+          throw new CoramiError({ code: 'sync_pending', message: 'flush failed' });
+        }
+      },
+      terminate: async () => undefined,
+    };
+  }
+
+  test('an unflushed copy is blocked before anything is deleted', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-removal-'));
+
+    const plan = await planRemoval(
+      { project: 'demo', localPath: root },
+      fakeEngine(watching, true),
+    );
+
+    expect(plan.checks.some((check) => check.status === 'blocked')).toBe(true);
+    const error = await applyRemoval(plan, false, fakeEngine(watching)).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(CoramiError);
+    expect((error as CoramiError).code).toBe('sync_pending');
+    expect(existsSync(root)).toBe(true);
+  });
+
+  test('a session that is not watching is blocked', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-removal-'));
+    const paused = { ...watching, status: 'disconnected from alpha', lastError: 'connection lost' };
+
+    const plan = await planRemoval({ project: 'demo', localPath: root }, fakeEngine(paused));
+
+    expect(plan.checks.find((check) => check.step === 'sync')?.status).toBe('blocked');
+    expect(plan.checks.find((check) => check.step === 'sync')?.code).toBe('sync_pending');
+  });
+
+  test('a healthy copy of an untouched folder goes through', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-removal-'));
+    writeFileSync(join(root, 'app.ts'), 'code');
+
+    const plan = await planRemoval({ project: 'demo', localPath: root }, fakeEngine(watching));
+
+    expect(plan.checks.filter((check) => check.status === 'blocked')).toEqual([]);
+
+    const result = await applyRemoval(plan, false, fakeEngine(watching));
+    expect(result.removed).toBe(true);
+    expect(existsSync(root)).toBe(false);
+  });
+
+  test('a file only this machine has blocks the removal', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-removal-'));
+    writeFileSync(join(root, '.env.local'), 'SECRET=1');
+
+    const plan = await planRemoval({ project: 'demo', localPath: root }, fakeEngine(watching));
+    const blocked = plan.checks.find((check) => check.step === 'local_only');
+
+    expect(blocked?.status).toBe('blocked');
+    expect(blocked?.code).toBe('local_only_files');
+
+    const error = await applyRemoval(plan, false, fakeEngine(watching)).catch((caught) => caught);
+    expect((error as CoramiError).code).toBe('local_only_files');
+    expect(existsSync(root)).toBe(true);
   });
 });

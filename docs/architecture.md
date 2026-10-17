@@ -343,14 +343,15 @@ A session already created keeps the ignores it was created with: to take the new
 
 Sequence, in order:
 
-1. **Flush:** `mutagen sync flush`, so every local change reaches the server.
-2. **Conflicts:** when the session has open conflicts, it stops with `sync_conflict`. The local side of a conflict would be lost.
-3. **Sync problems:** when Mutagen reports unreadable or untransferred files, it stops with the list of files.
-4. **Local-only files:** it looks for the files the sync ignores and nothing regenerates, from the same rules the sync uses (`PATH_RULES` in `local-copy.ts`). For example `.env.local`, `*.jks`, `*.p8`, `android/key.properties`. When there are any, it stops with `local_only_files` and the list; `--force` deletes them anyway.
-5. **Local git:** when the `.git` of the copy has commits or stashes that exist in no remote (typically work done on the copy without a push), it stops with `local_only_files`. Commits already elsewhere do not block.
-6. **Closing the sync:** `mutagen sync terminate`. It must be done **before** deleting: with the session active, Mutagen would propagate the deletions to the server.
-7. **Deletion** of the local folder.
-8. **State cleanup:** a record in `~/.corami/sync-state.json` (removal date, freed space).
+1. **Flush:** `mutagen sync flush`, so every local change reaches the server. When it fails, the removal stops with `sync_pending`: nothing of the copy may go before its work is on the server.
+2. **State:** the session must be `watching`, with no last error and no conflicts. Any other state (`connecting`, `scanning`, `staging`, `disconnected`) is a `sync_pending`: the changes may still be on the way.
+3. **Conflicts:** when the session has open conflicts, it stops with `sync_conflict`. The local side of a conflict would be lost.
+4. **Sync problems:** when Mutagen reports unreadable or untransferred files, it stops with the list of files.
+5. **Local-only files:** it looks for the files the sync ignores and nothing regenerates, from the same rules the sync uses (`PATH_RULES` in `local-copy.ts`). For example `.env.local`, `*.jks`, `*.p8`, `android/key.properties`. When there are any, it stops with `local_only_files` and the list; `--force` deletes them anyway.
+6. **Local git:** when the `.git` of the copy has commits or stashes that exist in no remote (typically work done on the copy without a push), it stops with `local_only_files`. Commits already elsewhere do not block.
+7. **Closing the sync:** `mutagen sync terminate`. It must be done **before** deleting: with the session active, Mutagen would propagate the deletions to the server.
+8. **Deletion** of the local folder.
+9. **State cleanup:** a record in `~/.corami/sync-state.json` (removal date, freed space).
 
 When the deletion is interrupted (e.g. an open file on Windows), the server is not at risk because the session is already closed. The state becomes `removal_incomplete` and running the command again completes the work.
 
@@ -510,7 +511,7 @@ previews(project, name, public_port, target_port, created_at)
 | 4 | sync conflict |
 | 5 | server unreachable |
 
-Stable error codes: `capability_missing`, `server_unreachable`, `sync_conflict`, `local_only_files`, `project_exists`, `config_invalid`, `usage`, `generic`.
+Stable error codes: `capability_missing`, `server_unreachable`, `sync_conflict`, `sync_pending`, `local_only_files`, `project_exists`, `config_invalid`, `usage`, `generic`. `sync_pending` is a copy whose last changes have not reached the server: it exits with 4, like a conflict.
 
 ## Harness
 

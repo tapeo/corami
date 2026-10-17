@@ -142,14 +142,36 @@ export class MutagenEngine implements SyncEngine {
   }
 
   async flush(project: string): Promise<void> {
-    await this.simple(['sync', 'flush', sessionName(project)], true);
+    const binary = await this.path();
+    const result = await run(binary, ['sync', 'flush', sessionName(project)], {
+      timeoutMs: 300_000,
+    });
+
+    if (result.ok) {
+      return;
+    }
+
+    const output = `${result.stdout}${result.stderr}`;
+
+    // The session of a project that is gone from the registry is the one case
+    // where there is nothing to flush: every other failure is real, and the
+    // caller of `flush` decides on it.
+    if (/did not match any sessions|no sessions/i.test(output)) {
+      return;
+    }
+
+    throw new CoramiError({
+      code: 'sync_pending',
+      message: `mutagen sync flush failed for ${project}`,
+      fix: output.trim().split('\n').slice(-2).join(' '),
+    });
   }
 
-  private async simple(args: string[], tolerateMissing = false): Promise<void> {
+  private async simple(args: string[]): Promise<void> {
     const binary = await this.path();
     const result = await run(binary, args, { timeoutMs: 300_000 });
 
-    if (result.ok || tolerateMissing) {
+    if (result.ok) {
       return;
     }
 

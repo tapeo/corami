@@ -108,6 +108,8 @@ Inside a synced copy the project name is not needed, except for `sync rm`: the c
 
 The folder of a copy is never guessed. `sync add` without a session needs `--path`, and a session already there keeps its folder: another `--path` is a `usage` error, the copy moves with `sync rm` then `sync add --path`. The folder cannot be inside the copy of another project, or contain it. A path that still starts with `~` is refused, because only a shell expands it: give it in full or relative to the current folder. `sync rm` deletes only the folder of a session: a folder whose sync was stopped is not a copy any more, and Corami leaves it to you.
 
+`sync rm` flushes first and then reads the session: when Mutagen does not answer, the flush fails, or the session is not `watching`, it stops with `sync_pending` and deletes nothing. That is the safe answer when a laptop was offline or the server did not answer: run the removal again when the session is back, or `corami sync status` to see what it is waiting for.
+
 The account of the server for the sync and the import is `server_user` of the configuration, saved by `corami setup client`, then `user` of the health answer of the daemon, then `root`. `--user` overrides it for one command.
 
 Every side is a peer and follows only `origin`: `corami git watch` runs one cycle at startup and then one every minute, downloads the refs of `origin` and, when it is behind and the files have already arrived with the sync, moves its HEAD without touching the files. The push is done by whoever makes the commit: `git push` from the side that has the commits, and the other aligns after the push. A merged PR on GitHub enters with a `git pull` on any side, and the other follows when the files arrive with the sync.
