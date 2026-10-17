@@ -1,22 +1,22 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { remoteExtractCommand, runImport } from '@/cli/commands/import.ts';
+import { remoteExtractCommand, restoreLocalFiles, runImport } from '@/cli/commands/import.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { shellQuote } from '@/core/exec.ts';
+import { copyInventory } from '@/core/local-copy.ts';
 import { MUTAGEN } from '@/core/pinned-tools.ts';
 import { checksumFor } from '@/core/release.ts';
 import {
+  archiveList,
   factsMatch,
-  findExcludeArgs,
   localManifest,
   manifestsMatch,
   remoteFolderState,
   remoteFolderStateCommand,
-  tarExcludeArgs,
 } from '@/core/transfer.ts';
 import { DEFAULT_IGNORES } from '@/integrations/mutagen.ts';
 
@@ -32,8 +32,9 @@ function git(root: string, args: string[]): void {
 describe('sync ignores', () => {
   test('cover what the sync rebuilds and what belongs to one machine', () => {
     expect(DEFAULT_IGNORES).toContain('node_modules/');
-    expect(DEFAULT_IGNORES).toContain('android/local.properties');
-    expect(DEFAULT_IGNORES).toContain('ios/Flutter/Generated.xcconfig');
+    expect(DEFAULT_IGNORES).toContain('**/android/local.properties');
+    expect(DEFAULT_IGNORES).toContain('**/ios/Flutter/Generated.xcconfig');
+    expect(DEFAULT_IGNORES).toContain('**/ios/.symlinks/');
   });
 
   test('nothing about keys or env files: they are files of the project', () => {
@@ -43,19 +44,8 @@ describe('sync ignores', () => {
   });
 });
 
-describe('tar arguments', () => {
-  test('exclude regenerable folders at any depth, and by name', () => {
-    const args = tarExcludeArgs();
-    expect(args).toContain('--exclude=node_modules');
-    expect(args).toContain('--exclude=ephemeral');
-    expect(args).toContain('--exclude=./android/local.properties');
-  });
-
-  test('keep the git folder: the project on the server is a clone', () => {
-    expect(tarExcludeArgs()).not.toContain('--exclude=.git');
-  });
-
-  test('the archive carries the history and leaves the regenerable folders out', async () => {
+describe('the archive', () => {
+  test('carries the history and leaves the regenerable folders out', async () => {
     const root = await mkdtemp(join(tmpdir(), 'corami-archive-git-'));
     mkdirSync(join(root, 'src'), { recursive: true });
     mkdirSync(join(root, 'node_modules', 'left-pad'), { recursive: true });
@@ -66,10 +56,13 @@ describe('tar arguments', () => {
     git(root, ['-c', 'user.name=test', '-c', 'user.email=test@test', 'add', '.']);
     git(root, ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-qm', 'first']);
 
+    const inventory = copyInventory(root);
+    const list = archiveList(root, inventory);
     const archive = `${root}.tgz`;
-    const packed = Bun.spawnSync(['tar', '-czf', archive, ...tarExcludeArgs(), '-C', root, '.'], {
-      stderr: 'pipe',
-    });
+    const packed = Bun.spawnSync(
+      ['tar', '-czf', archive, '-C', root, '--null', '--no-recursion', '-T', '-'],
+      { stdin: new TextEncoder().encode(`${list.join('\0')}\0`), stderr: 'pipe' },
+    );
     expect(packed.exitCode).toBe(0);
 
     const listed = Bun.spawnSync(['tar', '-tzf', archive], { stderr: 'pipe' });
@@ -80,6 +73,7 @@ describe('tar arguments', () => {
       .filter((line) => line !== '');
 
     expect(paths).toContain('.git/HEAD');
+    expect(paths).toContain('src/index.ts');
     expect(paths.some((path) => path.startsWith('node_modules/'))).toBe(false);
 
     // The manifest leaves the history out on both sides: git is compared on
@@ -87,34 +81,43 @@ describe('tar arguments', () => {
     expect(localManifest(root).files).toBe(1);
   });
 
-  test('carry keys and env files: they are files of the project', () => {
-    const args = tarExcludeArgs();
-    for (const pattern of [
-      '.jks',
-      'keystore',
-      '.p8',
-      '.p12',
-      'service-account',
-      'key.properties',
-      '.env',
-    ]) {
-      expect(args.some((arg) => arg.includes(pattern))).toBe(false);
-    }
+  test('carry keys and env files: they are files of the project', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-archive-keys-'));
+    writeFileSync(join(root, 'upload.jks'), 'key');
+    writeFileSync(join(root, 'service-account.json'), '{}');
+    writeFileSync(join(root, '.env'), 'SECRET=1');
+
+    const paths = archiveList(root);
+
+    expect(paths).toContain('upload.jks');
+    expect(paths).toContain('service-account.json');
+    expect(paths).toContain('.env');
   });
 });
 
-describe('remote manifest arguments', () => {
-  test('match the tar exclusions', () => {
-    const args = findExcludeArgs().join(' ');
-    expect(args).toContain("-name 'node_modules'");
-    expect(args).toContain("-path '*/node_modules/*'");
-    expect(args).toContain("-path './android/local.properties'");
-  });
+describe('the copy that comes back', () => {
+  test('a link keeps its target and a folder of this machine keeps its links', async () => {
+    const backup = await mkdtemp(join(tmpdir(), 'corami-backup-'));
+    const target = await mkdtemp(join(tmpdir(), 'corami-copy-'));
+    const outside = await mkdtemp(join(tmpdir(), 'corami-outside-'));
 
-  test('leave the git folder out on both sides', () => {
-    const args = findExcludeArgs().join(' ');
-    expect(args).toContain("-name '.git'");
-    expect(args).toContain("-path '*/.git/*'");
+    mkdirSync(join(backup, 'android'), { recursive: true });
+    mkdirSync(join(backup, 'ios', '.symlinks', 'plugins'), { recursive: true });
+    writeFileSync(join(backup, 'android', 'local.properties'), 'sdk.dir=/opt');
+    symlinkSync(outside, join(backup, 'pub-cache'));
+    symlinkSync(
+      '/Users/me/.pub-cache/camera',
+      join(backup, 'ios', '.symlinks', 'plugins', 'camera'),
+    );
+
+    const entries = copyInventory(backup).localOnly;
+    expect(restoreLocalFiles(backup, target, entries)).toBe(entries.length);
+
+    expect(readlinkSync(join(target, 'pub-cache'))).toBe(outside);
+    expect(lstatSync(join(target, 'ios', '.symlinks')).isDirectory()).toBe(true);
+    expect(readlinkSync(join(target, 'ios', '.symlinks', 'plugins', 'camera'))).toBe(
+      '/Users/me/.pub-cache/camera',
+    );
   });
 });
 
@@ -132,6 +135,7 @@ describe('manifests', () => {
     // page.tsx and android.jks: a key is a file of the project like the others.
     const manifest = localManifest(root);
     expect(manifest.files).toBe(2);
+    expect(manifest.dirs).toBe(1);
     expect(manifest.bytes).toBe(1050);
   });
 
@@ -144,7 +148,7 @@ describe('manifests', () => {
   });
 
   test('compare manifests and git facts', () => {
-    const manifest = { files: 2, bytes: 10, hash: 'abc' };
+    const manifest = { files: 2, links: 0, dirs: 1, bytes: 10, hash: 'abc', entries: [] };
     expect(manifestsMatch(manifest, { ...manifest })).toBe(true);
     expect(manifestsMatch(manifest, { ...manifest, files: 3 })).toBe(false);
   });

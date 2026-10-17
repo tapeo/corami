@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -78,6 +78,34 @@ describe('local only files', () => {
 
     const found = findLocalOnlyFiles(root);
     expect(found.map((entry) => entry.path)).toEqual(['android/local.properties']);
+  });
+
+  test('counts a link by its own size, never by what it points at', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-copy-'));
+    const outside = await mkdtemp(join(tmpdir(), 'corami-outside-'));
+
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    writeFileSync(join(root, 'a.txt'), 'x'.repeat(10));
+    writeFileSync(join(root, 'node_modules', 'big.js'), 'y'.repeat(1_000));
+    writeFileSync(join(outside, 'huge.bin'), 'z'.repeat(10_000));
+    symlinkSync(outside, join(root, 'pub-cache'));
+
+    const found = findLocalOnlyFiles(root);
+
+    expect(found.map((entry) => entry.path)).toEqual(['pub-cache']);
+    expect(found[0]?.kind).toBe('link');
+    expect(directorySize(root)).toBe(10 + Buffer.byteLength(outside));
+  });
+
+  test('reports every entry, not the first two hundred', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-many-'));
+    for (let index = 0; index < 250; index += 1) {
+      const android = join(root, 'apps', `app-${index}`, 'android');
+      mkdirSync(android, { recursive: true });
+      writeFileSync(join(android, 'local.properties'), 'sdk.dir=/opt');
+    }
+
+    expect(findLocalOnlyFiles(root, 1_000)).toHaveLength(250);
   });
 
   test('measures the size without counting regenerable folders', async () => {
@@ -161,6 +189,44 @@ describe('mutagen parsing', () => {
     expect(collectConflicts(record)).toEqual([]);
   });
 
+  test('names a link of this machine as such, not as a broken session', () => {
+    const record = [
+      {
+        name: 'corami-demo',
+        status: 'watching',
+        alpha: { path: '/home/me/demo' },
+        beta: {
+          path: '/Users/me/demo',
+          scanProblems: [
+            { path: 'pub-cache', error: 'target is absolute' },
+            { path: 'ios/flutter', error: 'target is absolute' },
+          ],
+        },
+      },
+    ];
+
+    const [session] = parseSessions(JSON.stringify(record));
+    expect(session?.localLinks).toEqual(['pub-cache', 'ios/flutter']);
+    expect(session?.lastError).toBeUndefined();
+  });
+
+  test('keeps a problem that is not about a link', () => {
+    const record = [
+      {
+        name: 'corami-demo',
+        status: 'watching',
+        alpha: { path: '/home/me/demo' },
+        beta: {
+          path: '/Users/me/demo',
+          scanProblems: [{ path: 'dist', error: 'permission denied' }],
+        },
+      },
+    ];
+
+    const [session] = parseSessions(JSON.stringify(record));
+    expect(session?.lastError).toContain('permission denied');
+  });
+
   test('builds the session name', () => {
     expect(sessionName('demo')).toBe('corami-demo');
   });
@@ -176,6 +242,7 @@ describe('removal checks', () => {
     beta: '/tmp/copy',
     conflicts: [],
     lastError: undefined,
+    localLinks: [],
   };
 
   function fakeEngine(session: SyncSession | undefined, failFlush = false): RemovalEngine {
@@ -227,6 +294,19 @@ describe('removal checks', () => {
     const result = await applyRemoval(plan, false, fakeEngine(watching));
     expect(result.removed).toBe(true);
     expect(existsSync(root)).toBe(false);
+  });
+
+  test('a link to another folder blocks the removal as a file of this machine', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-removal-'));
+    const outside = await mkdtemp(join(tmpdir(), 'corami-removal-outside-'));
+    symlinkSync(outside, join(root, 'pub-cache'));
+
+    const plan = await planRemoval({ project: 'demo', localPath: root }, fakeEngine(watching));
+    const blocked = plan.checks.find((check) => check.step === 'local_only');
+
+    expect(blocked?.status).toBe('blocked');
+    expect(blocked?.paths).toEqual([`pub-cache -> ${outside}`]);
+    expect(readlinkSync(join(root, 'pub-cache'))).toBe(outside);
   });
 
   test('a file only this machine has blocks the removal', async () => {

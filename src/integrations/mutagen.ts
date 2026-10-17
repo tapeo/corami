@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { CoramiError } from '@/core/errors.ts';
 import { run } from '@/core/exec.ts';
-import { patternsOf } from '@/core/local-copy.ts';
+import { PATH_RULES, type PathRule } from '@/core/local-copy.ts';
 import { ensureTool, findTool, MUTAGEN } from '@/core/pinned-tools.ts';
 import {
   installService,
@@ -23,6 +23,8 @@ export interface SyncSession {
   beta: string;
   conflicts: string[];
   lastError: string | undefined;
+  /** Links Mutagen leaves on this machine, one by one: they are not an error. */
+  localLinks: string[];
 }
 
 export interface SyncEngine {
@@ -42,14 +44,28 @@ export interface CreateOptions {
   ignore: string[];
 }
 
+/**
+ * A path rule as Mutagen reads it. A pattern with a slash matches at any
+ * depth, like a name rule does in Mutagen, and the doublestar prefix also
+ * matches the pattern at the root: `ios/.symlinks` becomes a doublestar
+ * prefix followed by `ios/.symlinks/`, which covers the app at the root and
+ * the one under `apps/demo`, as `classifyPath` does. A folder rule keeps its
+ * trailing slash: a file with the same name travels.
+ */
+export function mutagenPattern(rule: PathRule): string {
+  const base = rule.pattern.includes('/') ? `**/${rule.pattern}` : rule.pattern;
+
+  return rule.directories === true ? `${base}/` : base;
+}
+
 // `.git` and `._*` are not here: the first is the `--ignore-vcs` of the
 // session, the second is an AppleDouble artifact the import already leaves
 // out. The rest comes from the path rules, so the sync, the import and the
 // removal checks agree on what a copy never carries: what is regenerable, and
 // what belongs to one machine. Everything else travels, keys included.
-export const DEFAULT_IGNORES = patternsOf('regenerable', 'local_only').filter(
-  (pattern) => pattern !== '.git/' && pattern !== '._*',
-);
+export const DEFAULT_IGNORES = PATH_RULES.filter(
+  (rule) => rule.class !== 'synced' && rule.pattern !== '.git' && rule.pattern !== '._*',
+).map(mutagenPattern);
 
 export function sessionName(project: string): string {
   return `corami-${project}`;
@@ -211,6 +227,8 @@ export function parseSessions(raw: string): SyncSession[] {
       continue;
     }
 
+    const described = describeProblems(record);
+
     sessions.push({
       name,
       project: name.slice('corami-'.length),
@@ -219,7 +237,8 @@ export function parseSessions(raw: string): SyncSession[] {
       alpha: describeEndpoint(record.alpha),
       beta: describeEndpoint(record.beta),
       conflicts: collectConflicts(record),
-      lastError: describeProblem(record),
+      lastError: described.error,
+      localLinks: described.links,
     });
   }
 
@@ -269,7 +288,28 @@ export function collectConflicts(record: Record<string, unknown>): string[] {
   });
 }
 
-function describeProblem(record: Record<string, unknown>): string | undefined {
+/**
+ * The reason Mutagen gives for an entry it leaves alone. Only the ones about a
+ * link are read: Corami keeps such a link on this machine on purpose, so the
+ * session says it instead of showing a problem of the transport. The texts are
+ * the errors of `normalizeSymbolicLinkAndEnsurePortable` in Mutagen v0.18.1.
+ */
+const LINK_PROBLEMS = [
+  'target empty',
+  'target too long',
+  'colon in target',
+  'backslash in target',
+  'target is absolute',
+  'target references location outside synchronization root',
+];
+
+function describeProblems(record: Record<string, unknown>): {
+  error: string | undefined;
+  links: string[];
+} {
+  const links: string[] = [];
+  let error: string | undefined;
+
   for (const side of ['alpha', 'beta']) {
     const endpoint = record[side];
 
@@ -281,17 +321,53 @@ function describeProblem(record: Record<string, unknown>): string | undefined {
       (endpoint as Record<string, unknown>).scanProblems ??
       (endpoint as Record<string, unknown>).transitionProblems;
 
-    if (Array.isArray(problems) && problems.length > 0) {
-      return `${side}: ${problems.map((item) => (typeof item === 'string' ? item : JSON.stringify(item))).join(', ')}`.slice(
-        0,
-        300,
-      );
+    if (!Array.isArray(problems)) {
+      continue;
+    }
+
+    const described = problems.map((item) => describeProblemEntry(item));
+
+    for (const entry of described) {
+      if (entry.link) {
+        if (!links.includes(entry.path)) {
+          links.push(entry.path);
+        }
+      }
+    }
+
+    const rest = described.filter((entry) => !entry.link);
+
+    if (rest.length > 0 && error === undefined) {
+      error = `${side}: ${rest.map((entry) => entry.text).join(', ')}`.slice(0, 300);
     }
   }
 
-  const error = record.lastError;
+  if (error === undefined) {
+    const last = record.lastError;
 
-  return typeof error === 'string' ? error : undefined;
+    error = typeof last === 'string' ? last : undefined;
+  }
+
+  return { error, links };
+}
+
+function describeProblemEntry(item: unknown): { text: string; path: string; link: boolean } {
+  if (typeof item !== 'object' || item === null) {
+    const text = String(item);
+
+    return { text, path: '', link: false };
+  }
+
+  const record = item as Record<string, unknown>;
+  const path = typeof record.path === 'string' ? record.path : '';
+  const error = typeof record.error === 'string' ? record.error : JSON.stringify(item);
+  const link = LINK_PROBLEMS.some((known) => error.toLowerCase().includes(known));
+
+  return {
+    text: path === '' ? error : `${path}: ${error}`,
+    path: path === '' ? error : path,
+    link: link && path !== '',
+  };
 }
 
 // The Mutagen daemon carries the sync sessions. Started on demand by the CLI it

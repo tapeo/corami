@@ -395,6 +395,10 @@ async function status(context: CommandContext): Promise<{ data?: unknown; text?:
       lines.push(`  to resolve: ${conflictFix(session.project, session.conflicts)}`);
     }
 
+    if (session.localLinks.length > 0) {
+      lines.push(`  symlinks of this machine, not synced: ${session.localLinks.join(', ')}`);
+    }
+
     if (session.lastError !== undefined) {
       lines.push(`  last error: ${session.lastError}`);
     }

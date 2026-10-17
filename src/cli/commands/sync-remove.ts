@@ -68,7 +68,11 @@ export async function planRemoval(
       status: 'blocked',
       code: 'local_only_files',
       detail: `${localOnly.length} files exist only here`,
-      paths: localOnly.slice(0, 20).map((entry) => entry.path),
+      paths: localOnly
+        .slice(0, 20)
+        .map((entry) =>
+          entry.kind === 'link' ? `${entry.path} -> ${entry.target ?? ''}` : entry.path,
+        ),
     });
   } else {
     checks.push({ step: 'local_only', status: 'ok', detail: 'nothing local-only' });

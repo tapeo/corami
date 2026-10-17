@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readlinkSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 import { paths } from '@/core/config.ts';
@@ -20,9 +20,14 @@ import { run } from '@/core/exec.ts';
  * is a file of the project. Keeping one out of the machines is the user's
  * decision, made by keeping it out of the folder or by injecting it from an
  * external store.
+ *
+ * A pattern with `/` matches at any depth, like a name rule: `ios/.symlinks`
+ * covers the Flutter app at the root and the one under `apps/demo`. A folder
+ * whose path is `local_only` is never entered: it belongs to this machine
+ * whole, with the links it holds.
  */
 export interface PathRule {
-  /** Without `/` the name matches at any level; with `/` it matches from the root. */
+  /** Without `/` the name matches at any level; with `/` the path matches at any level too. */
   pattern: string;
   class: PathClass;
   /** A trailing `/` matches directories only. */
@@ -64,13 +69,13 @@ export const PATH_RULES: PathRule[] = [
 interface CompiledRule {
   rule: PathRule;
   matcher: RegExp;
-  rooted: boolean;
+  segments: string[];
 }
 
 const COMPILED_RULES: CompiledRule[] = PATH_RULES.map((rule) => ({
   rule,
   matcher: globToRegExp(rule.pattern),
-  rooted: rule.pattern.includes('/'),
+  segments: rule.pattern.split('/'),
 }));
 
 /** Whether a folder name, alone or as any folder of a path, is regenerable. */
@@ -84,20 +89,16 @@ export function isRegenerableFolder(folderName: string): boolean {
   );
 }
 
-/** The patterns of the given classes, in the syntax the rules describe. */
-export function patternsOf(...classes: PathClass[]): string[] {
-  return PATH_RULES.filter((rule) => classes.includes(rule.class)).map((rule) =>
-    rule.directories === true ? `${rule.pattern}/` : rule.pattern,
-  );
-}
-
 /**
  * The class of one path inside a copy, relative to its root and with `/` as
- * separator. A rule matches the name of a file or the name of any folder above
- * it; the first match wins, exactly as in a gitignore. A path no rule matches
- * is `synced`: it travels.
+ * separator. A rule matches a path at any depth, exactly as in a gitignore: a
+ * pattern with `/` matches the path itself at any level, a name at any level
+ * matches the name. A folder rule matches a folder only, so the walk of a copy
+ * passes `isDirectory` for the entries it lists: a file named `build` travels,
+ * the folder `build` does not. The first match wins. A path no rule matches is
+ * `synced`: it travels.
  */
-export function classifyPath(relativePath: string): PathClass {
+export function classifyPath(relativePath: string, isDirectory = false): PathClass {
   const segments = relativePath.split('/').filter((segment) => segment !== '');
 
   if (segments.length === 0) {
@@ -105,31 +106,24 @@ export function classifyPath(relativePath: string): PathClass {
   }
 
   for (const entry of COMPILED_RULES) {
-    // The rules see a path, not a file: a folder rule applies to a folder the
-    // path goes through, whether or not the path names the folder itself.
-    if (segments.some((_, index) => matchesAt(entry, segments, index))) {
-      return entry.rule.class;
+    const length = entry.segments.length;
+
+    for (let index = 0; index + length <= segments.length; index += 1) {
+      // A folder rule never matches a file: only a folder, or a path that goes
+      // through the folder.
+      if (entry.rule.directories === true && index + length === segments.length && !isDirectory) {
+        continue;
+      }
+
+      const path = segments.slice(index, index + length).join('/');
+
+      if (entry.matcher.test(path)) {
+        return entry.rule.class;
+      }
     }
   }
 
   return 'synced';
-}
-
-function matchesAt(entry: CompiledRule, segments: string[], index: number): boolean {
-  // A folder rule never matches the last segment alone: the path is a folder
-  // only when it goes through the name, and a file with the same name is not
-  // the folder the rule is about.
-  if (entry.rule.directories === true && index === segments.length - 1) {
-    return false;
-  }
-
-  const path = matchesPath(entry, segments, index);
-
-  return entry.matcher.test(path);
-}
-
-function matchesPath(entry: CompiledRule, segments: string[], index: number): string {
-  return entry.rooted ? segments.slice(0, index + 1).join('/') : (segments[index] ?? '');
 }
 
 export function globToRegExp(pattern: string): RegExp {
@@ -137,72 +131,211 @@ export function globToRegExp(pattern: string): RegExp {
   return new RegExp(`^${escaped}$`);
 }
 
-export interface LocalOnlyFile {
+export type InventoryKind = 'file' | 'dir' | 'link';
+
+export interface InventoryEntry {
   path: string;
+  kind: InventoryKind;
+  /** The bytes of a file, or the length of a link target. Zero for a folder. */
   bytes: number;
+  /** Links only: the target as it is written, never resolved. */
+  target?: string;
+}
+
+export interface Inventory {
+  /** What the import carries and the sync keeps in step. `.git` is not here. */
+  synced: InventoryEntry[];
+  /** What stays on this machine: the archive never carries it, the copy gets it back. */
+  localOnly: InventoryEntry[];
+}
+
+const MAX_PORTABLE_LINK_TARGET = 247;
+
+/**
+ * Whether Mutagen in its `portable` mode, which Corami uses, carries a link:
+ * a relative target of safe characters that never leaves the root. This is the
+ * rule of `normalizeSymbolicLinkAndEnsurePortable` in Mutagen v0.18.1
+ * (`pkg/synchronization/core/symbolic_link.go`), copied here so the import and
+ * the sync agree on what a link of this machine is. A new pinned Mutagen is a
+ * reason to check it again.
+ */
+export function symlinkPortable(path: string, target: string): boolean {
+  if (target === '') {
+    return false;
+  }
+
+  if (Buffer.byteLength(target) > MAX_PORTABLE_LINK_TARGET) {
+    return false;
+  }
+
+  if (target.includes(':')) {
+    return false;
+  }
+
+  let normalized = target;
+
+  if (process.platform === 'win32') {
+    normalized = target.replace(/\\/g, '/');
+  } else if (target.includes('\\')) {
+    return false;
+  }
+
+  if (normalized.startsWith('/')) {
+    return false;
+  }
+
+  // The folder that holds the link: the target climbs at most back to the root.
+  let depth = path.split('/').length - 1;
+
+  for (const component of normalized.split('/')) {
+    if (component === '.') {
+      continue;
+    }
+
+    depth += component === '..' ? -1 : 1;
+
+    if (depth < 0) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**
- * The files the copy carries and the server never sees: the ones the sync
- * ignores that nothing regenerates, and that would break the build of another
- * machine. Inside a regenerable folder nothing is reported, the folder is
- * rebuilt from scratch.
+ * The inventory of one folder: every entry that travels, and every entry that
+ * belongs to this machine. One walk, `lstat` only, so a link is an entry and
+ * never a way into another folder: the manifest, the archive and the copy that
+ * comes back all read the same decision from here. Regenerable folders are
+ * never entered. A folder of this machine is listed whole and not entered.
  */
-export function findLocalOnlyFiles(root: string, limit = 200): LocalOnlyFile[] {
-  const found: LocalOnlyFile[] = [];
+export function copyInventory(root: string): Inventory {
+  const inventory: Inventory = { synced: [], localOnly: [] };
 
-  walk(root, root, found, limit);
+  walkInventory(root, root, inventory);
+  inventory.synced.sort(byPath);
+  inventory.localOnly.sort(byPath);
 
-  return found;
+  return inventory;
 }
 
-function walk(root: string, current: string, found: LocalOnlyFile[], limit: number): void {
-  if (found.length >= limit) {
-    return;
-  }
-
-  let entries: string[];
+function walkInventory(root: string, current: string, inventory: Inventory): void {
+  let names: string[];
 
   try {
-    entries = readdirSync(current);
+    names = readdirSync(current);
   } catch {
     return;
   }
 
-  for (const entry of entries) {
-    if (found.length >= limit) {
-      return;
+  for (const name of names) {
+    const full = join(current, name);
+    const path = toPosix(relative(root, full));
+
+    // The root history is compared on its own, ref by ref, and the import
+    // carries it whole: a `.git` file, as a worktree writes it, is no content
+    // of the project. A `.git` deeper down is a submodule gitlink and travels.
+    if (path === '.git') {
+      continue;
     }
 
-    const full = join(current, entry);
-    const path = toPosix(relative(root, full));
-    let stats: ReturnType<typeof statSync>;
+    let stats: ReturnType<typeof lstatSync>;
 
     try {
-      stats = statSync(full);
+      stats = lstatSync(full);
     } catch {
       continue;
     }
 
-    if (stats.isDirectory()) {
-      if (isRegenerableFolder(entry)) {
+    if (stats.isSymbolicLink()) {
+      const target = linkTarget(full);
+
+      if (target === undefined) {
         continue;
       }
 
-      walk(root, full, found, limit);
+      addEntry(inventory, classifyPath(path), {
+        path,
+        kind: 'link',
+        bytes: Buffer.byteLength(target),
+        target,
+      });
       continue;
     }
 
-    if (classifyPath(path) === 'local_only') {
-      found.push({ path, bytes: stats.size });
+    if (stats.isDirectory()) {
+      const pathClass = classifyPath(path, true);
+
+      if (pathClass === 'regenerable') {
+        continue;
+      }
+
+      addEntry(inventory, pathClass, { path, kind: 'dir', bytes: 0 });
+
+      if (pathClass === 'synced') {
+        walkInventory(root, full, inventory);
+      }
+
+      continue;
+    }
+
+    // Only a regular file or a link is content a copy carries: a FIFO, a socket
+    // and a device are none of the three, and Mutagen leaves them untracked.
+    if (stats.isFile()) {
+      addEntry(inventory, classifyPath(path), { path, kind: 'file', bytes: stats.size });
     }
   }
+}
+
+/**
+ * A link whose target cannot be read, or that the sync would not carry, is a
+ * file of this machine: it stays here and the copy gets it back, never the
+ * server.
+ */
+function addEntry(inventory: Inventory, pathClass: PathClass, entry: InventoryEntry): void {
+  const local =
+    pathClass === 'local_only' ||
+    (entry.kind === 'link' && !symlinkPortable(entry.path, entry.target ?? ''));
+
+  if (local) {
+    inventory.localOnly.push(entry);
+    return;
+  }
+
+  if (pathClass === 'synced') {
+    inventory.synced.push(entry);
+  }
+}
+
+function linkTarget(path: string): string | undefined {
+  try {
+    return readlinkSync(path);
+  } catch {
+    return undefined;
+  }
+}
+
+function byPath(left: InventoryEntry, right: InventoryEntry): number {
+  return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
 }
 
 function toPosix(path: string): string {
   return sep === '/' ? path : path.split(sep).join('/');
 }
 
+/**
+ * The entries the copy carries and the server never sees: the ones the sync
+ * ignores that nothing regenerates, and the links that point outside the
+ * folder, which no other machine could follow.
+ */
+export function findLocalOnlyFiles(root: string, limit = 200): InventoryEntry[] {
+  return copyInventory(root).localOnly.slice(0, limit);
+}
+
+/**
+ * How much a folder takes on this machine. Links are counted by their own
+ * size: following one would count content another folder owns.
+ */
 export function directorySize(root: string): number {
   let total = 0;
   const stack = [root];
@@ -214,22 +347,23 @@ export function directorySize(root: string): number {
       break;
     }
 
-    let entries: string[];
+    let names: string[];
 
     try {
-      entries = readdirSync(current);
+      names = readdirSync(current);
     } catch {
       continue;
     }
 
-    for (const entry of entries) {
-      const full = join(current, entry);
+    for (const name of names) {
+      const full = join(current, name);
 
       try {
-        const stats = statSync(full);
+        const stats = lstatSync(full);
+        const path = toPosix(relative(root, full));
 
         if (stats.isDirectory()) {
-          if (isRegenerableFolder(entry)) {
+          if (classifyPath(path, true) === 'regenerable') {
             continue;
           }
 

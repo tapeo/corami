@@ -1,4 +1,14 @@
-import { cpSync, existsSync, mkdirSync, renameSync, rmdirSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readlinkSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  symlinkSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
 import type { CommandResult } from '@/cli/command.ts';
@@ -16,18 +26,19 @@ import {
 import { readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError, type ErrorCode } from '@/core/errors.ts';
 import { run, shellQuote } from '@/core/exec.ts';
-import { findLocalOnlyFiles, type LocalOnlyFile } from '@/core/local-copy.ts';
+import { copyInventory, type InventoryEntry, symlinkPortable } from '@/core/local-copy.ts';
 import { serverFolderOverlaps, serverPathFrom, serverPathsOf } from '@/core/project-add.ts';
 import { isFolderEmpty, validNewProjectName } from '@/core/projects.ts';
 import {
+  archiveList,
   factsMatch,
   localGitFacts,
-  localManifest,
+  manifestDiff,
+  manifestOf,
   manifestsMatch,
   remoteFolderState,
   remoteGitFacts,
   remoteManifest,
-  tarExcludeArgs,
 } from '@/core/transfer.ts';
 import { MutagenEngine } from '@/integrations/mutagen.ts';
 
@@ -119,22 +130,24 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     summary: `Name ${projectName} is free on the server`,
   });
 
-  // The files the sync never carries are the ones of this machine: they are
-  // not in the archive either, and they are copied back into the new folder
-  // after the import.
-  const localFiles = findLocalOnlyFiles(target);
+  // One walk decides what travels and what stays: the archive and the manifest
+  // read the same inventory, so they cannot count different things.
+  const inventory = copyInventory(target);
+  const localFiles = inventory.localOnly;
+  const outside = localFiles.filter((entry) => entry.kind === 'link' && !isPortable(entry)).length;
 
   steps.push({
     step: 'inventory',
     status: 'done',
     summary:
       localFiles.length === 0
-        ? 'Every file of the folder travels: nothing belongs to this machine alone'
-        : `${localFiles.length} files of this machine stay here: the server never carries them`,
-    detail: localFiles
-      .slice(0, 8)
-      .map((entry) => entry.path)
-      .join(', '),
+        ? 'Every entry of the folder travels: nothing belongs to this machine alone'
+        : `${describeCount(localFiles.length, 'entry', 'entries')} of this machine stay here: the server never carries them${
+            outside === 0
+              ? ''
+              : `, ${describeCount(outside, 'symlink', 'symlinks')} point outside the folder`
+          }`,
+    detail: localFiles.slice(0, 8).map(describeEntry).join(', '),
   });
 
   if (dryRun) {
@@ -168,7 +181,13 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   // transfer, so a refusal leaves the server as it was.
   await checkServerFolder(host, user, serverPath);
 
-  const transferred = await transfer(target, user, host, serverPath);
+  const transferred = await transfer(
+    target,
+    user,
+    host,
+    serverPath,
+    archiveList(target, inventory),
+  );
 
   if (!transferred.ok) {
     steps.push({
@@ -187,7 +206,7 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     detail: transferred.detail,
   });
 
-  const localManifestResult = localManifest(target);
+  const localManifestResult = manifestOf(inventory);
   const remoteManifestResult = await remoteManifest(host, user, serverPath);
 
   if (
@@ -199,7 +218,12 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
       step: 'verify',
       status: 'failed',
       summary: 'The copies do not match',
-      detail: `local ${localManifestResult.files} files, remote ${remoteManifestResult?.files ?? 0}. ${cleanup.detail}`,
+      detail:
+        remoteManifestResult === undefined
+          ? `The server did not answer with the list of its folder. ${cleanup.detail}`
+          : `${describeManifest('here', localManifestResult)}, ${describeManifest('on the server', remoteManifestResult)}. ${
+              manifestDiff(localManifestResult, remoteManifestResult) ?? ''
+            } ${cleanup.detail}`,
     });
     return finish(options, steps, projectName, target, serverPath);
   }
@@ -220,7 +244,7 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   steps.push({
     step: 'verify',
     status: 'done',
-    summary: `Verified: ${localManifestResult.files} files, ${facts.refs} refs, ${facts.stashes} stashes, same HEAD`,
+    summary: `Verified: ${localManifestResult.files} files, ${localManifestResult.links} symlinks, ${localManifestResult.dirs} folders, ${facts.refs} refs, ${facts.stashes} stashes, same HEAD`,
   });
 
   try {
@@ -479,13 +503,24 @@ async function transfer(
   user: string,
   host: string,
   serverPath: string,
+  entries: string[],
 ): Promise<{ ok: boolean; detail: string }> {
   const remote = remoteExtractCommand(serverPath);
-  const reader = Bun.spawn(['tar', '-czf', '-', ...tarExcludeArgs(), '-C', source, '.'], {
-    stdout: 'pipe',
-    stderr: 'pipe',
-    env: { ...process.env, COPYFILE_DISABLE: '1' },
-  });
+  // The list decides what the archive holds: `tar` follows no folder and
+  // matches no pattern, so a link is carried as a link and nothing the
+  // inventory left out can slip in.
+  const reader = Bun.spawn(
+    ['tar', '-czf', '-', '-C', source, '--null', '--no-recursion', '-T', '-'],
+    {
+      stdin: 'pipe',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, COPYFILE_DISABLE: '1' },
+    },
+  );
+  reader.stdin.write(`${entries.join('\0')}\0`);
+  await reader.stdin.end();
+
   const writer = Bun.spawn(
     ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', `${user}@${host}`, remote],
     {
@@ -553,23 +588,63 @@ async function restoreGitDirectory(backup: string, target: string): Promise<bool
  * Puts back into the new copy what the server never carries: the files of this
  * machine, which are the ones the backup kept and the sync would not bring.
  */
-function restoreLocalFiles(backup: string, target: string, files: LocalOnlyFile[]): number {
+export function restoreLocalFiles(backup: string, target: string, files: InventoryEntry[]): number {
   let restored = 0;
 
   for (const file of files) {
     const from = join(backup, file.path);
     const to = join(target, file.path);
 
-    if (!existsSync(from)) {
+    if (!existsSync(from) && file.kind !== 'link') {
       continue;
     }
 
     mkdirSync(join(to, '..'), { recursive: true });
-    cpSync(from, to, { recursive: true, force: true });
+
+    if (file.kind === 'link') {
+      // The target goes back as it was written: resolving it would turn a link
+      // of this machine into a file of another.
+      const link = readlinkSync(from);
+
+      if (existsSync(to)) {
+        // A folder on the server at the same path is real content: the link of
+        // this machine does not replace it.
+        if (lstatSync(to).isDirectory()) {
+          continue;
+        }
+
+        rmSync(to, { force: true });
+      }
+
+      symlinkSync(link, to);
+      restored += 1;
+      continue;
+    }
+
+    cpSync(from, to, { recursive: true, force: true, verbatimSymlinks: true });
     restored += 1;
   }
 
   return restored;
+}
+
+function isPortable(entry: InventoryEntry): boolean {
+  return symlinkPortable(entry.path, entry.target ?? '');
+}
+
+function describeEntry(entry: InventoryEntry): string {
+  return entry.kind === 'link' ? `${entry.path} -> ${entry.target ?? ''}` : entry.path;
+}
+
+function describeCount(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+function describeManifest(
+  side: string,
+  manifest: { files: number; links: number; dirs: number },
+): string {
+  return `${side} ${manifest.files} files, ${manifest.links} symlinks, ${manifest.dirs} folders`;
 }
 
 function stamp(): string {

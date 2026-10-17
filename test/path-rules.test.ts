@@ -1,16 +1,25 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { redactUrl, shellQuote } from '@/core/exec.ts';
-import type { PathClass } from '@/core/local-copy.ts';
-import { classifyPath, findLocalOnlyFiles, PATH_RULES, patternsOf } from '@/core/local-copy.ts';
-import { findExcludeArgs, localManifest, remoteManifest, tarExcludeArgs } from '@/core/transfer.ts';
+import { classifyPath, copyInventory, PATH_RULES, symlinkPortable } from '@/core/local-copy.ts';
+import {
+  archiveList,
+  localManifest,
+  manifestDiff,
+  manifestOf,
+  manifestsMatch,
+  parseManifest,
+  remoteManifest,
+  remoteManifestCommand,
+} from '@/core/transfer.ts';
+import { DEFAULT_IGNORES, mutagenPattern } from '@/integrations/mutagen.ts';
 
 describe('classifyPath', () => {
-  const cases: Array<[string, PathClass]> = [
+  const cases: Array<[string, ReturnType<typeof classifyPath>]> = [
     ['src/index.ts', 'synced'],
     ['README.md', 'synced'],
     // Nothing about a name makes a file special: a key and an env file travel
@@ -22,7 +31,7 @@ describe('classifyPath', () => {
     ['android/key.properties', 'synced'],
     ['signing/certificate.p12', 'synced'],
     // A path alone says nothing about being a folder: the callers that walk
-    // the tree ask `isRegenerableFolder` for the folders.
+    // the tree pass `isDirectory` for the folders they list.
     ['node_modules', 'synced'],
     ['node_modules/left-pad/index.js', 'regenerable'],
     ['packages/web/node_modules/left-pad/index.js', 'regenerable'],
@@ -34,7 +43,7 @@ describe('classifyPath', () => {
     ['ios/Flutter/Generated.xcconfig', 'local_only'],
     ['ios/Flutter/flutter_export_environment.sh', 'local_only'],
     ['ios/.symlinks/plugins/camera', 'local_only'],
-    ['deep/ios/.symlinks/plugins/camera', 'synced'],
+    ['deep/ios/.symlinks/plugins/camera', 'local_only'],
     ['.flutter-plugins', 'regenerable'],
   ];
 
@@ -49,112 +58,254 @@ describe('classifyPath', () => {
     expect(classifyPath('x/y/node_modules/z.js')).toBe('regenerable');
   });
 
-  test('a path rule stays at the root', () => {
+  test('a path rule reaches every level', () => {
     expect(classifyPath('android/local.properties')).toBe('local_only');
-    expect(classifyPath('apps/demo/android/local.properties')).toBe('synced');
-    expect(classifyPath('deep/ios/Flutter/Generated.xcconfig')).toBe('synced');
+    expect(classifyPath('apps/demo/android/local.properties')).toBe('local_only');
+    expect(classifyPath('deep/ios/Flutter/Generated.xcconfig')).toBe('local_only');
+    expect(classifyPath('apps/demo/ios/Flutter/flutter_export_environment.sh')).toBe('local_only');
+  });
+
+  test('a folder rule only matches a folder', () => {
+    expect(classifyPath('build')).toBe('synced');
+    expect(classifyPath('build', true)).toBe('regenerable');
+    expect(classifyPath('apps/demo/ios/.symlinks')).toBe('synced');
+    expect(classifyPath('apps/demo/ios/.symlinks', true)).toBe('local_only');
   });
 });
 
 describe('path rules', () => {
   test('one pattern per rule and no duplicates', () => {
-    const patterns = patternsOf('regenerable', 'local_only');
+    const patterns = PATH_RULES.map((rule) => rule.pattern);
     expect(new Set(patterns).size).toBe(patterns.length);
-    expect(patterns.length).toBe(PATH_RULES.length);
   });
 });
 
-describe('local only files', () => {
-  test('reports the files of this machine, not the folders that regenerate', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'corami-only-'));
-    mkdirSync(join(root, 'android'), { recursive: true });
-    mkdirSync(join(root, 'node_modules'), { recursive: true });
-    writeFileSync(join(root, 'android', 'local.properties'), 'sdk.dir=/opt/android');
-    writeFileSync(join(root, 'android', 'upload.jks'), 'key');
-    writeFileSync(join(root, '.env'), 'SECRET=1');
-    writeFileSync(join(root, 'node_modules', '.env'), 'ignored');
-    writeFileSync(join(root, 'app.ts'), 'ok');
+describe('symlinkPortable', () => {
+  const portable: Array<[string, string]> = [
+    ['link', 'file'],
+    ['link', './file'],
+    ['app/ios/link', '../shared/file'],
+    ['app/ios/link', '../../file'],
+    ['app/ios/link', 'a/../../file'],
+  ];
 
-    const found = findLocalOnlyFiles(root);
-    expect(found.map((entry) => entry.path)).toEqual(['android/local.properties']);
+  for (const [path, target] of portable) {
+    test(`${path} -> ${target} travels`, () => {
+      expect(symlinkPortable(path, target)).toBe(true);
+    });
+  }
+
+  const local: Array<[string, string]> = [
+    ['link', ''],
+    ['link', '/Users/matteo/.pub-cache'],
+    ['link', '../outside'],
+    ['app/link', '../../outside'],
+    ['link', 'a:b'],
+    ['link', 'a\\b'],
+    ['link', 'x'.repeat(248)],
+  ];
+
+  for (const [path, target] of local) {
+    test(`${path} -> ${target} stays here`, () => {
+      expect(symlinkPortable(path, target)).toBe(false);
+    });
+  }
+
+  test('a target of 247 characters still travels', () => {
+    expect(symlinkPortable('link', 'x'.repeat(247))).toBe(true);
   });
 });
 
-describe('the archive of an import', () => {
-  test('the tar exclusions cover every path the walk reports', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'corami-archive-'));
+describe('mutagenPattern', () => {
+  test('a path rule matches at any depth, a name rule as before', () => {
+    const patterns = new Map(PATH_RULES.map((rule) => [rule.pattern, mutagenPattern(rule)]));
+
+    expect(patterns.get('ios/.symlinks')).toBe('**/ios/.symlinks/');
+    expect(patterns.get('android/local.properties')).toBe('**/android/local.properties');
+    expect(patterns.get('node_modules')).toBe('node_modules/');
+    expect(patterns.get('.DS_Store')).toBe('.DS_Store');
+  });
+
+  test('the session ignores carry one of each', () => {
+    expect(DEFAULT_IGNORES).toContain('**/ios/.symlinks/');
+    expect(DEFAULT_IGNORES).not.toContain('.git/');
+  });
+});
+
+describe('the inventory of a copy', () => {
+  async function fixture(): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), 'corami-inventory-'));
+    const outside = join(root, '..', `corami-outside-${Date.now()}`);
+
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'big.bin'), 'x'.repeat(100));
+
     const dirs = [
-      'android',
-      'android/app',
-      'node_modules/left-pad',
-      'app/node_modules/left-pad',
-      'ios/Pods/Headers',
-      'ios/.symlinks/plugins',
-      'ios/Flutter',
       'src',
-    ];
-    const files = [
-      'src/index.ts',
-      'README.md',
-      'app/main.ts',
-      '.env',
-      'android/key.properties',
-      'android/app/upload.jks',
-      'node_modules/left-pad/index.js',
-      'app/node_modules/left-pad/index.js',
-      'ios/Pods/Headers/foo.h',
-      'ios/.symlinks/plugins/camera/index.js',
-      'ios/Flutter/Generated.xcconfig',
-      'signing.p12',
-      'notes.txt',
+      'apps/demo/android',
+      'apps/demo/ios/.symlinks/plugins/camera',
+      'apps/demo/ios/Flutter',
+      'node_modules/left-pad',
+      'empty',
     ];
 
     for (const dir of dirs) {
       mkdirSync(join(root, dir), { recursive: true });
     }
 
-    for (const file of files) {
-      const full = join(root, file);
-      mkdirSync(join(full, '..'), { recursive: true });
-      writeFileSync(full, file);
+    writeFileSync(join(root, 'src', 'index.ts'), 'export {};\n');
+    writeFileSync(join(root, '.env'), 'SECRET=1');
+    writeFileSync(join(root, 'upload.jks'), 'key');
+    writeFileSync(join(root, 'apps', 'demo', 'android', 'local.properties'), 'sdk.dir=/opt');
+    writeFileSync(join(root, 'apps', 'demo', 'ios', 'Flutter', 'Generated.xcconfig'), 'x');
+    writeFileSync(join(root, 'node_modules', 'left-pad', 'index.js'), 'ignored');
+    writeFileSync(
+      join(root, 'apps', 'demo', 'ios', '.symlinks', 'plugins', 'camera', 'Podfile'),
+      'pod',
+    );
+
+    symlinkSync(outside, join(root, 'pub-cache'));
+    symlinkSync(join(outside, 'big.bin'), join(root, 'external.bin'));
+    symlinkSync('src/index.ts', join(root, 'index.ts'));
+
+    return root;
+  }
+
+  test('a link to another folder is one entry, never a walk of that folder', async () => {
+    const root = await fixture();
+    const inventory = copyInventory(root);
+
+    expect(inventory.localOnly.map((entry) => entry.path)).toContain('pub-cache');
+    expect(inventory.synced.map((entry) => entry.path)).not.toContain('pub-cache/big.bin');
+    expect(inventory.synced.some((entry) => entry.path.startsWith('pub-cache/'))).toBe(false);
+    expect(inventory.localOnly.map((entry) => entry.path)).toContain('external.bin');
+    expect(inventory.synced.map((entry) => entry.path)).toContain('index.ts');
+    expect(lstatSync(join(root, 'index.ts')).isSymbolicLink()).toBe(true);
+  });
+
+  test('a folder of this machine is one entry, with the links it holds', async () => {
+    const root = await fixture();
+    const inventory = copyInventory(root);
+
+    const symlinks = inventory.localOnly.find((entry) => entry.path === 'apps/demo/ios/.symlinks');
+
+    expect(symlinks?.kind).toBe('dir');
+    expect(inventory.localOnly.some((entry) => entry.path.includes('.symlinks/plugins'))).toBe(
+      false,
+    );
+    expect(inventory.localOnly.map((entry) => entry.path)).toContain(
+      'apps/demo/android/local.properties',
+    );
+    expect(inventory.localOnly.map((entry) => entry.path)).toContain(
+      'apps/demo/ios/Flutter/Generated.xcconfig',
+    );
+  });
+
+  test('keys, env files and empty folders travel, regenerable folders do not', async () => {
+    const root = await fixture();
+    const inventory = copyInventory(root);
+    const paths = inventory.synced.map((entry) => entry.path);
+
+    expect(paths).toContain('.env');
+    expect(paths).toContain('upload.jks');
+    expect(paths).toContain('empty');
+    expect(paths.some((path) => path.startsWith('node_modules/'))).toBe(false);
+  });
+
+  test('the root history is not content of the project, a submodule gitlink is', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-gitlink-'));
+    mkdirSync(join(root, 'modules', 'lib'), { recursive: true });
+    writeFileSync(join(root, '.git'), 'gitdir: /Users/me/.git/modules/project');
+    writeFileSync(join(root, 'modules', 'lib', '.git'), 'gitdir: ../../.git/modules/lib');
+    writeFileSync(join(root, 'README.md'), 'readme');
+
+    const inventory = copyInventory(root);
+    const paths = inventory.synced.map((entry) => entry.path);
+
+    expect(paths).not.toContain('.git');
+    expect(paths).toContain('modules/lib/.git');
+    expect(archiveList(root, inventory).filter((path) => path === '.git')).toHaveLength(1);
+  });
+
+  test('a FIFO is not content a copy carries', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-fifo-'));
+    const made = Bun.spawnSync(['mkfifo', join(root, 'pipe')], { stderr: 'pipe' });
+
+    if (made.exitCode !== 0) {
+      return;
     }
 
-    const manifest = localManifest(root);
+    expect(copyInventory(root).synced).toEqual([]);
+  });
+});
 
-    // The same files the archive carries: tar writes them, find counts them.
-    const archive = '/tmp/corami-archive-test.tgz';
-    const packed = Bun.spawnSync(['tar', '-czf', archive, ...tarExcludeArgs(), '-C', root, '.'], {
-      stderr: 'pipe',
-    });
+describe('the archive of an import', () => {
+  test('the archive and the manifest hold the same entries, links included', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-archive-'));
+    const outside = await mkdtemp(join(tmpdir(), 'corami-archive-outside-'));
+    const unpacked = await mkdtemp(join(tmpdir(), 'corami-archive-unpacked-'));
+    const archive = join(await mkdtemp(join(tmpdir(), 'corami-archive-tgz-')), 'copy.tgz');
+
+    mkdirSync(join(root, 'src'), { recursive: true });
+    mkdirSync(join(root, 'node_modules', 'left-pad'), { recursive: true });
+    mkdirSync(join(root, 'apps', 'demo', 'ios', '.symlinks'), { recursive: true });
+    writeFileSync(join(root, 'src', 'index.ts'), 'export {};\n');
+    writeFileSync(join(root, '.env'), 'SECRET=1');
+    writeFileSync(join(root, 'notes.txt'), 'notes');
+    writeFileSync(join(outside, 'big.bin'), 'x'.repeat(100));
+    writeFileSync(join(root, 'node_modules', 'left-pad', 'index.js'), 'ignored');
+    writeFileSync(join(root, 'apps', 'demo', 'ios', '.symlinks', 'Podfile'), 'pod');
+    symlinkSync(outside, join(root, 'pub-cache'));
+    symlinkSync('src/index.ts', join(root, 'index.ts'));
+
+    const inventory = copyInventory(root);
+    const manifest = manifestOf(inventory);
+    const list = archiveList(root, inventory);
+
+    const packed = Bun.spawnSync(
+      ['tar', '-czf', archive, '-C', root, '--null', '--no-recursion', '-T', '-'],
+      { stdin: new TextEncoder().encode(`${list.join('\0')}\0`), stderr: 'pipe' },
+    );
     expect(packed.exitCode).toBe(0);
 
-    const listed = Bun.spawnSync(['tar', '-tzf', archive], { stderr: 'pipe' });
-    const packedFiles = listed.stdout
-      .toString()
-      .split('\n')
-      .map((line) => line.replace(/^\.\//, ''))
-      .filter((line) => line !== '' && !line.endsWith('/'))
-      .sort();
+    const extracted = Bun.spawnSync(['tar', '-xzf', archive, '-C', unpacked], { stderr: 'pipe' });
+    expect(extracted.exitCode).toBe(0);
 
-    const remote = await remoteManifest('host', 'user', root, async (script) => {
+    expect(readlinkSync(join(unpacked, 'index.ts'))).toBe('src/index.ts');
+    expect(() => lstatSync(join(unpacked, 'pub-cache'))).toThrow();
+    // The folder of this machine and the folder that regenerates are not in
+    // the archive: the copy of this machine keeps them.
+    expect(() => lstatSync(join(unpacked, 'apps', 'demo', 'ios', '.symlinks'))).toThrow();
+    expect(() => lstatSync(join(unpacked, 'node_modules'))).toThrow();
+
+    const remote = await remoteManifest('host', 'user', unpacked, async (script) => {
       const found = Bun.spawnSync(['bash', '-c', script], { stderr: 'pipe' });
 
       return { ok: found.exitCode === 0, stdout: found.stdout.toString() };
     });
 
     expect(remote).toBeDefined();
-    expect(packedFiles).toEqual([
-      '.env',
-      'README.md',
-      'android/app/upload.jks',
-      'android/key.properties',
-      'app/main.ts',
-      'notes.txt',
-      'signing.p12',
-      'src/index.ts',
-    ]);
-    expect(remote?.files).toBe(manifest.files);
-    expect(remote?.hash).toBe(manifest.hash);
+
+    if (remote !== undefined) {
+      expect(manifestsMatch(manifest, remote)).toBe(true);
+    }
+  });
+
+  test('the fallback of the remote manifest agrees with printfs-less find', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-fallback-'));
+    mkdirSync(join(root, 'dir'), { recursive: true });
+    writeFileSync(join(root, 'dir', 'file.txt'), 'hello');
+    symlinkSync('dir/file.txt', join(root, 'link'));
+
+    const script = remoteManifestCommand(root, false);
+    const found = Bun.spawnSync(['bash', '-c', script], { stderr: 'pipe' });
+    const manifest = parseManifest(found.stdout.toString());
+
+    expect(found.exitCode).toBe(0);
+    expect(manifest.files).toBe(1);
+    expect(manifest.links).toBe(1);
+    expect(manifest.dirs).toBe(1);
+    expect(manifest.entries).toContain('l\tlink\tdir/file.txt');
   });
 
   test('quotes the path of the archive on the server', () => {
@@ -162,34 +313,52 @@ describe('the archive of an import', () => {
   });
 });
 
-describe('manifest exclusions', () => {
-  test('the find patterns mirror the tar patterns', () => {
-    const tar = tarExcludeArgs();
-    const find = findExcludeArgs().join(' ');
+describe('manifests', () => {
+  test('count files, links and folders of the project', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-manifest-'));
+    mkdirSync(join(root, 'empty'), { recursive: true });
+    writeFileSync(join(root, 'notes.txt'), 'x'.repeat(20));
+    writeFileSync(join(root, '.env'), 'SECRET=1');
+    symlinkSync('notes.txt', join(root, 'shortcut'));
 
-    for (const pattern of ['node_modules', 'Pods', '.DS_Store', 'android/local.properties']) {
-      const inTar = tar.some((entry) => entry.includes(pattern));
-      const inFind = find.includes(pattern);
-      expect(inTar).toBe(inFind);
-    }
+    const manifest = localManifest(root);
+    expect(manifest.files).toBe(2);
+    expect(manifest.links).toBe(1);
+    expect(manifest.dirs).toBe(1);
+    expect(manifest.bytes).toBe(28);
   });
 
-  test('nothing about keys or env files is excluded', () => {
-    const tar = tarExcludeArgs();
-    const find = findExcludeArgs().join(' ');
+  test('a link and a file of the same name are not the same entry', async () => {
+    const file = await mkdtemp(join(tmpdir(), 'corami-manifest-'));
+    const link = await mkdtemp(join(tmpdir(), 'corami-manifest-'));
 
-    for (const pattern of [
-      'jks',
-      'keystore',
-      '.p8',
-      '.p12',
-      'service-account',
-      'key.properties',
-      '.env',
-    ]) {
-      expect(tar.some((entry) => entry.includes(pattern))).toBe(false);
-      expect(find.includes(pattern)).toBe(false);
-    }
+    writeFileSync(join(file, 'name'), 'hello');
+    symlinkSync('elsewhere', join(link, 'name'));
+
+    expect(manifestsMatch(localManifest(file), localManifest(link))).toBe(false);
+  });
+
+  test('the difference names the paths, not just the counts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-diff-'));
+    writeFileSync(join(root, 'here.txt'), 'here');
+    writeFileSync(join(root, 'both.txt'), 'both');
+
+    const other = await mkdtemp(join(tmpdir(), 'corami-diff-'));
+    writeFileSync(join(other, 'both.txt'), 'both');
+    writeFileSync(join(other, 'there.txt'), 'there');
+    writeFileSync(join(other, 'extra.txt'), 'extra');
+
+    const diff = manifestDiff(localManifest(root), localManifest(other));
+    expect(diff).toContain('only here: here.txt');
+    expect(diff).toContain('only on the server: extra.txt, there.txt');
+  });
+
+  test('compare manifests on every count', () => {
+    const manifest = { files: 2, links: 0, dirs: 1, bytes: 10, hash: 'abc', entries: [] };
+    expect(manifestsMatch(manifest, { ...manifest })).toBe(true);
+    expect(manifestsMatch(manifest, { ...manifest, files: 3 })).toBe(false);
+    expect(manifestsMatch(manifest, { ...manifest, links: 1 })).toBe(false);
+    expect(manifestsMatch(manifest, { ...manifest, dirs: 2 })).toBe(false);
   });
 });
 
