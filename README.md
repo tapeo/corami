@@ -2,30 +2,21 @@
 
 ![Corami: an always-on Linux server runs the agent, with projects, previews and git, while macOS, iOS, Windows and Linux clients keep a full local copy in two-way sync. Close the lid whenever: no commit needed, every save is already on the server.](docs/assets/corami-header-synced-no-commit.png)
 
-Your coding agents run on an always-on Linux server. Every computer you use keeps a real copy of the code on its own disk, synced with the server in both directions, so you can close the laptop at any time and pick up from another device, phone included.
+Coding agents need a machine that never sleeps. You need the code on the computer in front of you. Corami gives you both: the agent runs on an always-on Linux server, and each of your computers keeps a real copy of the code on its own disk, synced with the server in both directions.
 
-Corami is the host under your agent, not the agent: OpenCode, Claude Code or any other harness runs on the server, installed by you.
+Corami is the host, not the agent: you install OpenCode, Claude Code, Codex or any other harness on the server.
 
 ## A day with Corami
 
-1. At your desk, the project folder on the Mac is synced with the server. You give a task to the agent, Claude Code, Codex or OpenCode, running on the server.
-2. Every file the agent saves on the server shows up in the folder on the Mac: you follow the changes live in your editor.
-3. Time to leave, or you are on a train: close the lid, no commit needed. Every save is already on the server, and the agent keeps working there.
-4. On the phone you open the preview at its HTTPS address and keep talking to the agent.
-5. Back home or at the office, open the lid: what the agent changed while you were away syncs to the Mac by itself. The server and every copy hold the same state.
-6. On another computer, `corami project add --from-server --name myapp --local-path ~/dev/myapp` brings the same files, uncommitted work included.
-
-## Why
-
-- **It feels local because it is local.** The code is on your disk: the editor, the tests and Xcode run at local speed, with no remote filesystem.
-- **The agent never stops.** Its sessions live on the server, not on a laptop that goes to sleep.
-- **Previews with an address, not a tunnel.** `corami serve 3000` gives the dev server a stable HTTPS address on your tailnet: open it from any device and keep it in bookmarks.
-
-Nothing is on the public internet: the server, the agent and the previews are reachable only through your [Tailscale](https://tailscale.com) network.
+1. At your desk, you give the agent a task. Its edits show up in the project folder on your Mac as it saves them. You follow them in your editor, and tests and Xcode run at local speed, with no remote filesystem.
+2. Time to leave: close the lid, no commit needed. Your last saves are already on the server, and the agent keeps working there.
+3. On the train, you open the preview on your phone and keep talking to the agent. `corami serve 3000` gave the dev server a stable HTTPS address, so it can stay in your bookmarks.
+4. Back at your desk, you open the lid: what the agent did while you were away syncs to the Mac by itself.
+5. On another computer, `corami project add --from-server --name myapp --local-path ~/dev/myapp` brings the same files, uncommitted work included.
 
 ## Try it
 
-You need a Linux server (a small VPS is fine), a Tailscale account, free for personal use, and a laptop.
+You need a Linux server (a small VPS is fine), a [Tailscale](https://tailscale.com) account, free for personal use, and a laptop.
 
 ```bash
 # on the server, as root
@@ -43,16 +34,19 @@ The [quick start](docs/quickstart.md) goes through it step by step, then adds yo
 ```
                  ┌──────────────── Linux server (always on) ────────────────────┐
                  │ corami daemon · projects (source of truth) · previews        │
-                 │ your agent, installed by you                                 │
-                 └──────▲──────────────────▲────────────────────▲──────────────┘
-                        │ Tailscale        │ Tailscale SSH       │
-                        │ (HTTPS)          │ (Mutagen)           │
+                 │ your agent                                                   │
+                 └──────▲──────────────────▲────────────────────▲───────────────┘
+                        │ Tailscale        │ Tailscale SSH      │
+                        │ (HTTPS)          │ (Mutagen)          │
    phone ───────────────┘      macOS ──────┘       Linux/Windows┘
    browser: agent UI,           synced copy,         synced copy,
    previews                     builds (Xcode)       builds
 ```
 
-`corami` is one binary: the CLI on every machine and the daemon on the server. Project files travel with [Mutagen](https://mutagen.io) over Tailscale SSH, which keeps every copy always in sync with the server; conflicts that cannot be solved without losing data are held and reported, never overwritten. Dependencies and build outputs (`node_modules`, `build`, `Pods`...) are not synced, each machine regenerates them; everything else is, keys and env files included, so keeping a secret out of the machines is a decision made in the project, not by Corami. Every command takes `--json`, the default without a terminal, so agents can drive it too.
+- **One binary.** `corami` is the CLI on every machine and the daemon on the server.
+- **Sync.** Files travel with [Mutagen](https://mutagen.io) over Tailscale SSH. A conflict that cannot be solved without losing data is held and reported, never overwritten. Dependencies and build outputs (`node_modules`, `build`, `Pods`...) stay out of the sync and each machine regenerates them. Everything else syncs, keys and env files included: keeping a secret off the machines is a decision made in the project, not by Corami.
+- **Private.** Nothing is on the public internet: the server, the agent and the previews are reachable only through your Tailscale network.
+- **Scriptable.** Every command takes `--json`, the default without a terminal, so agents can drive Corami too.
 
 ## Status
 
@@ -68,5 +62,7 @@ Early: it works end to end on a real VPS with a macOS client. Binaries and updat
 - [Architecture](docs/architecture.md): how it is built
 - [Development](docs/development.md)
 - [Ideas for v2](docs/v2/README.md)
+
+## License
 
 Corami is released under the [Functional Source License](https://fsl.software), version 1.1, with Apache 2.0 as the future license (FSL-1.1-ALv2), see [LICENSE](LICENSE). You can use, modify and share it for any purpose except offering a competing commercial product or service. Each version becomes Apache 2.0 two years after its release. Contributions are welcome under the terms in [CONTRIBUTING.md](CONTRIBUTING.md).
