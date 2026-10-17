@@ -4,7 +4,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { isEnvPath } from '@/cli/commands/import.ts';
+import { isEnvPath, remoteExtractCommand } from '@/cli/commands/import.ts';
 import { shellQuote } from '@/core/exec.ts';
 import { MUTAGEN } from '@/core/pinned-tools.ts';
 import { checksumFor } from '@/core/release.ts';
@@ -130,5 +130,27 @@ describe('checksums', () => {
         expect(MUTAGEN.checksums(asset)).toMatch(/^[0-9a-f]{64}$/);
       }
     }
+  });
+});
+
+describe('the command the server runs to unpack the archive', () => {
+  test('unpacks into the folder of the project', () => {
+    const command = remoteExtractCommand('/home/corami/projects/demo', []);
+    expect(command).toContain("mkdir -p '/home/corami/projects/demo'");
+    expect(command).toContain("tar -xzf - --no-same-owner -C '/home/corami/projects/demo'");
+    expect(command.includes('chmod')).toBe(false);
+  });
+
+  test('closes the keys to everyone else', () => {
+    const command = remoteExtractCommand('/home/corami/projects/demo', [
+      '.env',
+      'android/key.properties',
+    ]);
+    expect(command).toContain("chmod 600 -- './.env' './android/key.properties'");
+  });
+
+  test('a path with a quote stays one word', () => {
+    const command = remoteExtractCommand('/home/corami/projects/demo', ["it's a key.p8"]);
+    expect(command).toContain(`chmod 600 -- './it'\\''s a key.p8'`);
   });
 });

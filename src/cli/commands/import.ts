@@ -160,7 +160,13 @@ export async function runImport(
   }
 
   const serverPath = serverProjectPath(home, projectName);
-  const transferred = await transfer(target, user, host, serverPath);
+  const transferred = await transfer(
+    target,
+    user,
+    host,
+    serverPath,
+    [...envFiles, ...keyFiles].map((entry) => entry.path),
+  );
 
   if (!transferred.ok) {
     steps.push({
@@ -286,6 +292,23 @@ export function isEnvPath(path: string): boolean {
 export function isSensitiveBasename(path: string): boolean {
   return isSensitiveName(path.split('/').at(-1) ?? path);
 }
+
+/**
+ * The command the server runs to receive the archive: unpack it, then close
+ * the keys and the env files to everyone else. The archive keeps the mode of
+ * every file, and those are usually readable by all.
+ */
+export function remoteExtractCommand(serverPath: string, protect: string[]): string {
+  const chmod =
+    protect.length === 0
+      ? ''
+      : ` && cd ${shellQuote(serverPath)} && chmod 600 -- ${protect
+          .map((path) => shellQuote(`./${path}`))
+          .join(' ')}`;
+
+  return `mkdir -p ${shellQuote(serverPath)} && tar -xzf - --no-same-owner -C ${shellQuote(serverPath)}${chmod}`;
+}
+
 /**
  * The archive reaches the server through a pipe: `tar` writes it, `ssh` carries
  * it. Both are started with their arguments, never through a shell, and both
@@ -297,8 +320,9 @@ async function transfer(
   user: string,
   host: string,
   serverPath: string,
+  protect: string[],
 ): Promise<{ ok: boolean; detail: string }> {
-  const remote = `mkdir -p ${shellQuote(serverPath)} && tar -xzf - --no-same-owner -C ${shellQuote(serverPath)}`;
+  const remote = remoteExtractCommand(serverPath, protect);
   const reader = Bun.spawn(['tar', '-czf', '-', ...tarExcludeArgs(), '-C', source, '.'], {
     stdout: 'pipe',
     stderr: 'pipe',
