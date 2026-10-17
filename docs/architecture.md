@@ -156,7 +156,6 @@ corami/
       pinned-tools.ts     version and sha256 of Mutagen
       local-copy.ts       single list of regenerable paths, used by sync, import and sync rm
       git.ts, git-align.ts, git-follow.ts
-      next-steps.ts       pure functions: the commands shown at the end of a first run
       paths and helper modules: doctor, errors, exec,
       last-change, release, state, transfer
     integrations/
@@ -494,7 +493,7 @@ previews(project, name, public_port, target_port, created_at)
 ## CLI output contract
 
 - With a TTY stdout: tables and text. Without a TTY or with `--json`: JSON.
-- The text of the commands of a first run (`setup`, `project add`, `project import`, `sync`, `corami` alone) ends with the commands to run next, chosen by the pure functions of `src/core/next-steps.ts` from the role of the machine and the projects of the server. The JSON does not carry them.
+- The text of `setup server` and `setup client` ends with the commands to run next, on the other machine or for the first project. The JSON does not carry them.
 - Envelope:
 
 ```json

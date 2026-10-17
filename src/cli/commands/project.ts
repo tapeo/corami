@@ -5,7 +5,7 @@ import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { runImport } from '@/cli/commands/import.ts';
 import { createLocalCopy } from '@/cli/commands/sync.ts';
 import { resolveLocalPath } from '@/cli/commands/sync-remove.ts';
-import { renderNextSteps, renderOrphanCopies, renderTable } from '@/cli/output.ts';
+import { renderOrphanCopies, renderTable } from '@/cli/output.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
 import {
   addProject,
@@ -16,7 +16,6 @@ import {
 } from '@/cli/server-client.ts';
 import { type Role, readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
-import { afterProjectAdd } from '@/core/next-steps.ts';
 import { type LocalCopyPlan, planProjectAdd, repositoryAt } from '@/core/project-add.ts';
 import { isFolderEmpty, withLocalCopies } from '@/core/projects.ts';
 import { MutagenEngine, type SyncSession } from '@/integrations/mutagen.ts';
@@ -182,18 +181,7 @@ async function add(context: CommandContext): Promise<{ data?: unknown; text?: st
     return { data: { ...project, local_copy: copy.json } };
   }
 
-  const lines = [`Project ${derivedName} added on the server.`, ...copy.text];
-  lines.push(
-    ...renderNextSteps(
-      afterProjectAdd(derivedName, {
-        role,
-        ...(copy.local === undefined ? {} : { local: copy.local }),
-        serverPath,
-      }),
-    ),
-  );
-
-  return { text: lines.join('\n') };
+  return { text: [`Project ${derivedName} added on the server.`, ...copy.text].join('\n') };
 }
 
 interface LocalCopyInput {
@@ -250,8 +238,6 @@ async function sessionFor(
 interface AppliedCopy {
   json: Record<string, unknown> | null;
   text: string[];
-  /** The local copy, when this command created one. */
-  local?: string | undefined;
 }
 
 // The copy is created after the project is on the server: one that fails does
@@ -273,7 +259,6 @@ async function applyLocalCopy(
           `git: ${copy.git.summary}`,
           ...(copy.git.detail === undefined ? [] : [`  ${copy.git.detail}`]),
         ],
-        local: copy.local,
       };
     } catch (error) {
       const summary = error instanceof Error ? error.message : String(error);

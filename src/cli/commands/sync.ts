@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from 'node:path';
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { gitSides } from '@/cli/commands/git.ts';
 import { applyRemoval, planRemoval, resolveLocalPath } from '@/cli/commands/sync-remove.ts';
-import { renderNextSteps, renderOrphanCopies, renderTable } from '@/cli/output.ts';
+import { renderOrphanCopies, renderTable } from '@/cli/output.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
 import {
   listProjects,
@@ -18,7 +18,6 @@ import { CoramiError } from '@/core/errors.ts';
 import { type CopyGitResult, giveCopyGit } from '@/core/git.ts';
 import { describeOrigin } from '@/core/git-follow.ts';
 import { lastChange } from '@/core/last-change.ts';
-import { afterSync } from '@/core/next-steps.ts';
 import { isFolderEmpty, localCopyTarget, withLocalCopies } from '@/core/projects.ts';
 import { conflictCopies, conflictFix, conflictLabel } from '@/core/sync-conflicts.ts';
 import { MutagenEngine, type SyncSession } from '@/integrations/mutagen.ts';
@@ -88,7 +87,6 @@ export async function createSyncFor(options: CreateSyncOptions): Promise<{
   session: SyncSession | undefined;
   local: string;
   created: boolean;
-  serverPath: string;
 }> {
   const { engine, host, user } = await engineAndServer(options.user);
 
@@ -114,7 +112,7 @@ export async function createSyncFor(options: CreateSyncOptions): Promise<{
   });
 
   if (target === 'existing' && existing !== undefined) {
-    return { session: existing, local: existing.beta, created: false, serverPath };
+    return { session: existing, local: existing.beta, created: false };
   }
 
   if (target === 'not-empty') {
@@ -140,7 +138,6 @@ export async function createSyncFor(options: CreateSyncOptions): Promise<{
     session: await engine.status(options.project),
     local: options.localPath,
     created: true,
-    serverPath,
   };
 }
 
@@ -158,7 +155,6 @@ export async function createLocalCopy(options: CreateLocalCopyOptions): Promise<
   session: SyncSession | undefined;
   local: string;
   created: boolean;
-  serverPath: string;
   git: CopyGitResult;
 }> {
   const result = await createSyncFor(options);
@@ -222,10 +218,6 @@ async function start(context: CommandContext): Promise<{ data?: unknown; text?: 
 
   if (gitResult.detail !== undefined) {
     lines.push(`  ${gitResult.detail}`);
-  }
-
-  if (result.created) {
-    lines.push(...renderNextSteps(afterSync(project, result.local, result.serverPath)));
   }
 
   return { text: lines.join('\n') };

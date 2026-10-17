@@ -5,11 +5,9 @@ import { runStepInTerminal, type StepResult } from '@/cli/commands/setup-steps.t
 import { renderNextSteps, renderSteps } from '@/cli/output.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
 import type { Prompter } from '@/cli/prompt.ts';
-import { listProjects } from '@/cli/server-client.ts';
 import { homeDirectory, readGlobalConfig, writeGlobalConfig } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { run } from '@/core/exec.ts';
-import { afterClientSetup } from '@/core/next-steps.ts';
 import { ensureTool, findTool, MUTAGEN } from '@/core/pinned-tools.ts';
 import { serverUser } from '@/core/server-user.ts';
 import { serverCandidates } from '@/core/setup-choices.ts';
@@ -113,7 +111,7 @@ export async function runClientSetup(
     steps.push(tailscale);
 
     if (tailscale.status === 'failed') {
-      return { text: render(steps, [], false) };
+      return { text: render(steps, false, false) };
     }
 
     clientContext.server = await chooseServer(prompter);
@@ -148,17 +146,8 @@ export async function runClientSetup(
 
   const partial = clientContext.dryRun || only !== undefined;
   const failed = steps.some((step) => step.status === 'failed');
-  const next = failed || partial ? [] : afterClientSetup(await projectNames());
 
-  return { text: render(steps, next, prompter === undefined) };
-}
-
-// The projects of the server, through the configuration the setup just saved;
-// undefined when the daemon does not answer.
-async function projectNames(): Promise<string[] | undefined> {
-  return listProjects()
-    .then((projects) => projects.map((project) => project.name))
-    .catch(() => undefined);
+  return { text: render(steps, !failed && !partial, prompter === undefined) };
 }
 
 // The account that owns the projects on the server: `--user`, then the one
@@ -434,15 +423,22 @@ async function fetchHealth(
 }
 
 // `withSteps` is false in a terminal, where every step was printed as it
-// ended: only the next steps are left.
-function render(steps: StepResult[], next: string[], withSteps: boolean): string {
+// ended: only the next step is left. `withNext` is false after a failure, a
+// dry run or a single step.
+function render(steps: StepResult[], withNext: boolean, withSteps: boolean): string {
   const lines: string[] = [];
 
   if (withSteps) {
     lines.push(...renderSteps(steps));
   }
 
-  lines.push(...renderNextSteps(next));
+  if (withNext) {
+    lines.push(
+      ...renderNextSteps([
+        'corami sync add <project>, or corami project import <folder> for a project of this machine',
+      ]),
+    );
+  }
 
   return lines.join('\n');
 }

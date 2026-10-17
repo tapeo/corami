@@ -4,14 +4,13 @@ import { basename, join, resolve } from 'node:path';
 import type { CommandContext } from '@/cli/command.ts';
 import type { StepResult } from '@/cli/commands/setup-steps.ts';
 import { createSyncFor } from '@/cli/commands/sync.ts';
-import { renderNextSteps, renderSteps } from '@/cli/output.ts';
+import { renderSteps } from '@/cli/output.ts';
 import { booleanFlag, stringFlag, stringListFlag } from '@/cli/parser.ts';
 import { addProject, projectDetail, serverUserForSync } from '@/cli/server-client.ts';
 import { homeDirectory, readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { run } from '@/core/exec.ts';
 import { findLocalOnlyFiles, isSensitiveName } from '@/core/local-copy.ts';
-import { afterImport } from '@/core/next-steps.ts';
 import {
   factsMatch,
   localGitFacts,
@@ -252,7 +251,7 @@ export async function runImport(
     });
   }
 
-  return finish(context, steps, projectName, target, dryRun, serverPath);
+  return finish(context, steps, projectName, target, dryRun);
 }
 
 export async function remoteHome(user: string, host: string): Promise<string | undefined> {
@@ -371,19 +370,10 @@ function finish(
   project: string,
   target: string,
   dryRun: boolean,
-  serverPath?: string,
 ): { data?: unknown; text?: string } {
   if (context.output.json) {
     return { data: { project, local: target, dry_run: dryRun, steps } };
   }
 
-  const lines = renderSteps(steps);
-
-  const failed = steps.some((step) => step.status === 'failed');
-
-  if (!failed && !dryRun) {
-    lines.push(...renderNextSteps(afterImport(project, serverPath)));
-  }
-
-  return { text: lines.join('\n') };
+  return { text: renderSteps(steps).join('\n') };
 }

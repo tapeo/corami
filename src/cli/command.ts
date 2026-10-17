@@ -209,12 +209,10 @@ export function overviewData(commands: CommandSpec[], version: string): Overview
   };
 }
 
-/** `start` are the commands that lead on from the state of this machine. */
-export function overview(data: OverviewData, start: string[] = []): string {
+export function overview(data: OverviewData): string {
   return [
     'Remote dev host for agents: projects on an always-on server, a synced copy on every computer.',
     '',
-    ...(start.length === 0 ? [] : ['Start here:', ...start.map((step) => `  ${step}`), '']),
     'Commands:',
     ...columns(data.commands.map((command) => [command.name, command.summary])),
     '',

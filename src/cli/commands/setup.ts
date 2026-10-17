@@ -25,7 +25,6 @@ import { booleanFlag, stringFlag } from '@/cli/parser.ts';
 import { canPrompt, type Prompter, terminalPrompter } from '@/cli/prompt.ts';
 import { readGlobalConfig, writeGlobalConfig } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
-import { afterServerSetup } from '@/core/next-steps.ts';
 import {
   DEFAULT_SERVER_USER,
   isValidServerUser,
@@ -390,10 +389,17 @@ function render(
     lines.push('', `The daemon answers at https://${fqdn}:7420`);
 
     if (!options.partial) {
+      const user = context.serverUser;
+      // Run as root for another account: the next commands go as that account.
+      const switchUser =
+        context.root && user !== 'root' ? [`Work as ${user} from now on: ssh ${user}@${fqdn}`] : [];
+
       lines.push(
-        ...renderNextSteps(
-          afterServerSetup({ fqdn, user: context.serverUser, root: context.root }),
-        ),
+        ...renderNextSteps([
+          ...switchUser,
+          `On your laptop, install Corami and answer client, or run there: corami setup client ${fqdn}`,
+          'Add a project: corami project import <folder> from the laptop, or corami project add <git-url>',
+        ]),
       );
     }
   }
