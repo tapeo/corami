@@ -1,7 +1,7 @@
 import { lstatSync, readdirSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { join, relative } from 'node:path';
 
-import { classifyPath } from '@/core/local-copy.ts';
+import { isRegenerableFolder } from '@/core/local-copy.ts';
 
 export interface LastChange {
   path: string;
@@ -38,9 +38,7 @@ export function lastChange(root: string): LastChange | undefined {
       }
 
       if (stats.isDirectory()) {
-        const path = sep === '/' ? relative(root, full) : relative(root, full).split(sep).join('/');
-
-        if (classifyPath(path) !== 'regenerable') {
+        if (!isRegenerableFolder(entry)) {
           stack.push(full);
         }
 

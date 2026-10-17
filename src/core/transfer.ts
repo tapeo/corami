@@ -3,28 +3,18 @@ import { readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 import { run, shellQuote } from '@/core/exec.ts';
-import {
-  classifyPath,
-  isRegenerableFolder,
-  PATH_RULES,
-  type PathClass,
-  type PathRule,
-} from '@/core/local-copy.ts';
+import { classifyPath, isRegenerableFolder, PATH_RULES, type PathRule } from '@/core/local-copy.ts';
 
 /**
  * The arguments of the import archive, one per excluded path. `findExcludeArgs`
  * and the local manifest walk rebuild the same decision for the other side:
- * the three always agree on what an import carries.
+ * the three always agree on what an import carries. What is left out is what
+ * the sync leaves out: the regenerable folders and the paths of one machine.
  */
 export function tarExcludeArgs(): string[] {
-  return PATH_RULES.filter((rule) => !carriedClass(rule.class)).map(
+  return PATH_RULES.filter((rule) => rule.class !== 'synced').map(
     (rule) => `--exclude=${tarPattern(rule)}`,
   );
-}
-
-/** The classes an import carries: the sync, the keys and the env files. */
-export function carriedClass(pathClass: PathClass): boolean {
-  return pathClass === 'synced' || pathClass === 'key' || pathClass === 'env';
 }
 
 /** The path as tar matches it: a name at any level, a `./` path from the root. */
@@ -50,7 +40,7 @@ export function findExcludeArgs(): string[] {
   };
 
   for (const rule of PATH_RULES) {
-    if (carriedClass(rule.class)) {
+    if (rule.class === 'synced') {
       continue;
     }
 
@@ -77,13 +67,14 @@ export interface Manifest {
 }
 
 /**
- * The manifest of the files the import carries: the paths that sync, the keys
- * and the env files, and the ones the user asked for with `--include`.
+ * The manifest of the files the import carries: everything the sync carries,
+ * keys and env files included, minus the regenerable folders and the paths of
+ * this machine.
  */
-export function localManifest(root: string, extraPatterns: string[] = []): Manifest {
+export function localManifest(root: string): Manifest {
   const entries: string[] = [];
 
-  walkManifest(root, root, extraPatterns, entries);
+  walkManifest(root, root, entries);
 
   let bytes = 0;
 
@@ -98,12 +89,7 @@ export function localManifest(root: string, extraPatterns: string[] = []): Manif
   return { files: entries.length, bytes, hash };
 }
 
-function walkManifest(
-  root: string,
-  current: string,
-  extraPatterns: string[],
-  entries: string[],
-): void {
+function walkManifest(root: string, current: string, entries: string[]): void {
   let names: string[];
 
   try {
@@ -116,7 +102,7 @@ function walkManifest(
     const full = join(current, name);
     const relativePath = toPosix(relative(root, full));
 
-    if (!carried(relativePath, extraPatterns)) {
+    if (classifyPath(relativePath) !== 'synced') {
       continue;
     }
 
@@ -128,23 +114,13 @@ function walkManifest(
           continue;
         }
 
-        walkManifest(root, full, extraPatterns, entries);
+        walkManifest(root, full, entries);
         continue;
       }
 
       entries.push(`${relativePath}\t${stats.size}`);
     } catch {}
   }
-}
-
-/**
- * Whether a path is in the archive: the classes the import carries, plus a
- * path an `--include` pattern asks for even when a rule would leave it out.
- */
-function carried(relativePath: string, extraPatterns: string[]): boolean {
-  const classified = classifyPath(relativePath, extraPatterns);
-
-  return classified === 'synced' || carriedClass(classified);
 }
 
 function toPosix(path: string): string {

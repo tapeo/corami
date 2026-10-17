@@ -6,28 +6,21 @@ import { join } from 'node:path';
 
 import { redactUrl, shellQuote } from '@/core/exec.ts';
 import type { PathClass } from '@/core/local-copy.ts';
-import {
-  classifyPath,
-  findLocalOnlyFiles,
-  isSensitiveName,
-  PATH_RULES,
-  patternsOf,
-} from '@/core/local-copy.ts';
+import { classifyPath, findLocalOnlyFiles, PATH_RULES, patternsOf } from '@/core/local-copy.ts';
 import { findExcludeArgs, localManifest, remoteManifest, tarExcludeArgs } from '@/core/transfer.ts';
 
 describe('classifyPath', () => {
   const cases: Array<[string, PathClass]> = [
     ['src/index.ts', 'synced'],
     ['README.md', 'synced'],
-    ['.env', 'env'],
-    ['.env.local', 'env'],
-    ['apps/web/.env.production', 'env'],
-    ['upload.jks', 'key'],
-    ['android/app/upload.jks', 'key'],
-    ['certs/deep/keystore.keystore', 'key'],
-    ['release/AuthKey_AB12.p8', 'key'],
-    ['signing/certificate.p12', 'key'],
-    ['fastlane/service-account-prod.json', 'key'],
+    // Nothing about a name makes a file special: a key and an env file travel
+    // like any other file.
+    ['.env', 'synced'],
+    ['.env.local', 'synced'],
+    ['upload.jks', 'synced'],
+    ['android/app/upload.jks', 'synced'],
+    ['android/key.properties', 'synced'],
+    ['signing/certificate.p12', 'synced'],
     // A path alone says nothing about being a folder: the callers that walk
     // the tree ask `isRegenerableFolder` for the folders.
     ['node_modules', 'synced'],
@@ -37,7 +30,6 @@ describe('classifyPath', () => {
     ['ios/Pods/Headers/foo.h', 'regenerable'],
     ['.DS_Store', 'regenerable'],
     ['src/._page.tsx', 'regenerable'],
-    ['android/key.properties', 'key'],
     ['android/local.properties', 'local_only'],
     ['ios/Flutter/Generated.xcconfig', 'local_only'],
     ['ios/Flutter/flutter_export_environment.sh', 'local_only'],
@@ -53,59 +45,38 @@ describe('classifyPath', () => {
   }
 
   test('a name rule reaches every level', () => {
-    expect(classifyPath('a/b/c/server.p12')).toBe('key');
+    expect(classifyPath('a/b/c/deep.p12')).toBe('synced');
     expect(classifyPath('x/y/node_modules/z.js')).toBe('regenerable');
   });
 
   test('a path rule stays at the root', () => {
-    expect(classifyPath('android/key.properties')).toBe('key');
-    expect(classifyPath('apps/demo/android/key.properties')).toBe('synced');
+    expect(classifyPath('android/local.properties')).toBe('local_only');
+    expect(classifyPath('apps/demo/android/local.properties')).toBe('synced');
     expect(classifyPath('deep/ios/Flutter/Generated.xcconfig')).toBe('synced');
-  });
-
-  test('a pattern is not a name of the rules', () => {
-    expect(classifyPath('notes.txt', ['notes.txt'])).toBe('key');
-    expect(classifyPath('notes.txt')).toBe('synced');
   });
 });
 
 describe('path rules', () => {
   test('one pattern per rule and no duplicates', () => {
-    const patterns = patternsOf('regenerable', 'key', 'env', 'local_only');
+    const patterns = patternsOf('regenerable', 'local_only');
     expect(new Set(patterns).size).toBe(patterns.length);
     expect(patterns.length).toBe(PATH_RULES.length);
-  });
-
-  test('the sensitive names come from the rules', () => {
-    expect(isSensitiveName('.env')).toBe(true);
-    expect(isSensitiveName('upload.jks')).toBe(true);
-    expect(isSensitiveName('android/key.properties')).toBe(true);
-    expect(isSensitiveName('key.properties')).toBe(false);
-    expect(isSensitiveName('node_modules')).toBe(false);
-    expect(isSensitiveName('local.properties')).toBe(false);
   });
 });
 
 describe('local only files', () => {
-  test('reports keys and local files, not regenerable folders', async () => {
+  test('reports the files of this machine, not the folders that regenerate', async () => {
     const root = await mkdtemp(join(tmpdir(), 'corami-only-'));
-    mkdirSync(join(root, 'android', 'app'), { recursive: true });
+    mkdirSync(join(root, 'android'), { recursive: true });
     mkdirSync(join(root, 'node_modules'), { recursive: true });
-    writeFileSync(join(root, 'android', 'app', 'upload.jks'), 'key');
-    writeFileSync(join(root, 'android', 'key.properties'), 'sdk');
+    writeFileSync(join(root, 'android', 'local.properties'), 'sdk.dir=/opt/android');
+    writeFileSync(join(root, 'android', 'upload.jks'), 'key');
     writeFileSync(join(root, '.env'), 'SECRET=1');
     writeFileSync(join(root, 'node_modules', '.env'), 'ignored');
     writeFileSync(join(root, 'app.ts'), 'ok');
 
     const found = findLocalOnlyFiles(root);
-    expect(found.map((entry) => entry.path).sort()).toEqual([
-      '.env',
-      'android/app/upload.jks',
-      'android/key.properties',
-    ]);
-    expect(found.find((entry) => entry.path.endsWith('upload.jks'))?.class).toBe('key');
-    expect(found.find((entry) => entry.path.endsWith('key.properties'))?.class).toBe('key');
-    expect(found.find((entry) => entry.path === '.env')?.class).toBe('env');
+    expect(found.map((entry) => entry.path)).toEqual(['android/local.properties']);
   });
 });
 
@@ -148,8 +119,7 @@ describe('the archive of an import', () => {
       writeFileSync(full, file);
     }
 
-    const included = ['notes.txt'];
-    const manifest = localManifest(root, included);
+    const manifest = localManifest(root);
 
     // The same files the archive carries: tar writes them, find counts them.
     const archive = '/tmp/corami-archive-test.tgz';
@@ -204,39 +174,22 @@ describe('manifest exclusions', () => {
     }
   });
 
-  test('the keys go with the import and stay out of the exclusions', () => {
+  test('nothing about keys or env files is excluded', () => {
     const tar = tarExcludeArgs();
     const find = findExcludeArgs().join(' ');
 
-    expect(tar.some((entry) => entry.includes('jks'))).toBe(false);
-    expect(find.includes('jks')).toBe(false);
-    expect(tar.some((entry) => entry.includes('key.properties'))).toBe(false);
-  });
-
-  test('a key enters the archive even when an include pattern asks for it', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'corami-include-'));
-    writeFileSync(join(root, 'notes.txt'), 'note');
-    writeFileSync(join(root, 'release.p12'), 'key');
-
-    const manifest = localManifest(root, ['notes.txt', 'release.p12']);
-    const packed = Bun.spawnSync(
-      ['tar', '-czf', '/tmp/corami-include-test.tgz', ...tarExcludeArgs(), '-C', root, '.'],
-      { stderr: 'pipe' },
-    );
-    expect(packed.exitCode).toBe(0);
-
-    const listed = Bun.spawnSync(['tar', '-tzf', '/tmp/corami-include-test.tgz'], {
-      stderr: 'pipe',
-    });
-    const carried = listed.stdout
-      .toString()
-      .split('\n')
-      .map((line) => line.replace(/^\.\//, ''))
-      .filter((line) => line !== '' && !line.endsWith('/'))
-      .sort();
-
-    expect(carried).toEqual(['notes.txt', 'release.p12']);
-    expect(manifest.files).toBe(2);
+    for (const pattern of [
+      'jks',
+      'keystore',
+      '.p8',
+      '.p12',
+      'service-account',
+      'key.properties',
+      '.env',
+    ]) {
+      expect(tar.some((entry) => entry.includes(pattern))).toBe(false);
+      expect(find.includes(pattern)).toBe(false);
+    }
   });
 });
 

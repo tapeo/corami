@@ -320,11 +320,9 @@ export const projectCommand: CommandSpec = {
     {
       name: 'import',
       summary: 'Moves a local project to the server, the folder becomes the synced copy',
-      usage:
-        'corami project import <folder> [--name <name>] [--include <glob>] [--user <user>] [--dry-run]',
+      usage: 'corami project import <folder> [--name <name>] [--user <user>] [--dry-run]',
       flags: [
         NAME_FLAG,
-        { name: 'include', value: 'glob', description: 'Ignored files to copy too, repeatable' },
         {
           name: 'user',
           value: 'user',
@@ -334,7 +332,7 @@ export const projectCommand: CommandSpec = {
       ],
       examples: [
         'corami project import ~/dev/myapp',
-        'corami project import . --name myapp --include data/seed.json --dry-run',
+        'corami project import . --name myapp --dry-run',
       ],
       run: runImport,
     },

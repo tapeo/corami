@@ -179,7 +179,7 @@ describe('valueFlags', () => {
   test('includes the flags of setup git and project import', () => {
     const names = valueFlags();
 
-    for (const name of ['provider', 'identity-name', 'identity-email', 'include', 'user']) {
+    for (const name of ['provider', 'identity-name', 'identity-email', 'user']) {
       expect(names).toContain(name);
     }
   });

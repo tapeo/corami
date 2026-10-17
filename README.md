@@ -50,7 +50,7 @@ The [quick start](docs/quickstart.md) goes through it step by step, then adds yo
    previews                     builds (Xcode)       builds
 ```
 
-`corami` is one binary: the CLI on every machine and the daemon on the server. Project files travel with [Mutagen](https://mutagen.io) over Tailscale SSH, which keeps every copy always in sync with the server; conflicts that cannot be solved without losing data are held and reported, never overwritten. Dependencies and build outputs (`node_modules`, `build`, `Pods`...) are not synced, each machine regenerates them, and files that look like secrets (`.env`, keystores) never enter the sync. Every command takes `--json`, the default without a terminal, so agents can drive it too.
+`corami` is one binary: the CLI on every machine and the daemon on the server. Project files travel with [Mutagen](https://mutagen.io) over Tailscale SSH, which keeps every copy always in sync with the server; conflicts that cannot be solved without losing data are held and reported, never overwritten. Dependencies and build outputs (`node_modules`, `build`, `Pods`...) are not synced, each machine regenerates them; everything else is, keys and env files included, so keeping a secret out of the machines is a decision made in the project, not by Corami. Every command takes `--json`, the default without a terminal, so agents can drive it too.
 
 ## Status
 

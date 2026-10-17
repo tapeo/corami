@@ -1,16 +1,16 @@
-import { existsSync, mkdirSync, renameSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 import type { CommandContext } from '@/cli/command.ts';
 import type { StepResult } from '@/cli/commands/setup-steps.ts';
 import { copyPlace, createSyncFor, givenPath } from '@/cli/commands/sync.ts';
 import { renderSteps } from '@/cli/output.ts';
-import { booleanFlag, stringFlag, stringListFlag } from '@/cli/parser.ts';
+import { booleanFlag, stringFlag } from '@/cli/parser.ts';
 import { addProject, projectDetail, serverUserForSync } from '@/cli/server-client.ts';
 import { readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { run, shellQuote } from '@/core/exec.ts';
-import { classifyEnvPath, findLocalOnlyFiles, isSensitiveName } from '@/core/local-copy.ts';
+import { findLocalOnlyFiles, type LocalOnlyFile } from '@/core/local-copy.ts';
 import { validProjectName } from '@/core/projects.ts';
 import {
   factsMatch,
@@ -51,7 +51,6 @@ export async function runImport(
   const user = stringFlag(context.args, 'user') ?? (await serverUserForSync());
   const projectName = stringFlag(context.args, 'name') ?? basename(target);
   const dryRun = booleanFlag(context.args, 'dry-run');
-  const extraIncludes = stringListFlag(context.args, 'include');
   const steps: StepResult[] = [];
 
   if (!validProjectName(projectName)) {
@@ -107,36 +106,23 @@ export async function runImport(
     summary: `Name ${projectName} is free on the server`,
   });
 
-  const ignored = findLocalOnlyFiles(target, extraIncludes);
-  // A pattern of `--include` is a decision of the user: it is reported on its
-  // own, so the summary of a long import says what was asked for and what was
-  // simply there.
-  const includedFiles = ignored.filter(
-    (entry) => entry.class === 'key' && !isSensitiveBasename(entry.path),
-  );
-  const envFiles = ignored.filter((entry) => entry.class === 'env');
-  const keyFiles = ignored.filter(
-    (entry) => entry.class === 'key' && isSensitiveBasename(entry.path),
-  );
+  // The files the sync never carries are the ones of this machine: they are
+  // not in the archive either, and they are copied back into the new folder
+  // after the import.
+  const localFiles = findLocalOnlyFiles(target);
 
   steps.push({
     step: 'inventory',
     status: 'done',
-    summary: `${ignored.length} files not tracked by git: ${envFiles.length} env, ${keyFiles.length} look like keys, ${includedFiles.length} asked with --include`,
-    detail: [...envFiles, ...keyFiles]
+    summary:
+      localFiles.length === 0
+        ? 'Every file of the folder travels: nothing belongs to this machine alone'
+        : `${localFiles.length} files of this machine stay here: the server never carries them`,
+    detail: localFiles
       .slice(0, 8)
       .map((entry) => entry.path)
       .join(', '),
   });
-
-  if (keyFiles.length > 0) {
-    steps.push({
-      step: 'keys',
-      status: 'done',
-      summary: `${keyFiles.length} files that look like keys: copied to the server, permissions 0600`,
-      detail: keyFiles.map((entry) => entry.path).join(', '),
-    });
-  }
 
   if (dryRun) {
     steps.push({
@@ -160,13 +146,7 @@ export async function runImport(
   }
 
   const serverPath = serverProjectPath(home, projectName);
-  const transferred = await transfer(
-    target,
-    user,
-    host,
-    serverPath,
-    [...envFiles, ...keyFiles].map((entry) => entry.path),
-  );
+  const transferred = await transfer(target, user, host, serverPath);
 
   if (!transferred.ok) {
     steps.push({
@@ -185,10 +165,7 @@ export async function runImport(
     detail: transferred.detail,
   });
 
-  const localManifestResult = localManifest(
-    target,
-    includedFiles.map((entry) => entry.path),
-  );
+  const localManifestResult = localManifest(target);
   const remoteManifestResult = await remoteManifest(host, user, serverPath);
 
   if (
@@ -258,13 +235,13 @@ export async function runImport(
     });
   }
 
-  const restored = await restoreEnvFiles(backup, localCopy, [...envFiles, ...keyFiles]);
+  const restored = restoreLocalFiles(backup, localCopy, localFiles);
 
   if (restored > 0) {
     steps.push({
-      step: 'env',
+      step: 'local',
       status: 'done',
-      summary: `${restored} env and key files copied back into the new copy`,
+      summary: `${restored} files of this machine copied back into the new copy`,
     });
   }
 
@@ -284,29 +261,13 @@ export async function remoteHome(user: string, host: string): Promise<string | u
   return result.ok && home.startsWith('/') ? home : undefined;
 }
 
-export function isEnvPath(path: string): boolean {
-  return classifyEnvPath(path);
-}
-
-/** The name of a path, the part the sensitive patterns are about. */
-export function isSensitiveBasename(path: string): boolean {
-  return isSensitiveName(path.split('/').at(-1) ?? path);
-}
-
 /**
- * The command the server runs to receive the archive: unpack it, then close
- * the keys and the env files to everyone else. The archive keeps the mode of
- * every file, and those are usually readable by all.
+ * The command the server runs to receive the archive: unpack it into the
+ * folder of the project. The sync never carries the paths of one machine, and
+ * the archive leaves them out too, so there is nothing to protect here.
  */
-export function remoteExtractCommand(serverPath: string, protect: string[]): string {
-  const chmod =
-    protect.length === 0
-      ? ''
-      : ` && cd ${shellQuote(serverPath)} && chmod 600 -- ${protect
-          .map((path) => shellQuote(`./${path}`))
-          .join(' ')}`;
-
-  return `mkdir -p ${shellQuote(serverPath)} && tar -xzf - --no-same-owner -C ${shellQuote(serverPath)}${chmod}`;
+export function remoteExtractCommand(serverPath: string): string {
+  return `mkdir -p ${shellQuote(serverPath)} && tar -xzf - --no-same-owner -C ${shellQuote(serverPath)}`;
 }
 
 /**
@@ -320,9 +281,8 @@ async function transfer(
   user: string,
   host: string,
   serverPath: string,
-  protect: string[],
 ): Promise<{ ok: boolean; detail: string }> {
-  const remote = remoteExtractCommand(serverPath, protect);
+  const remote = remoteExtractCommand(serverPath);
   const reader = Bun.spawn(['tar', '-czf', '-', ...tarExcludeArgs(), '-C', source, '.'], {
     stdout: 'pipe',
     stderr: 'pipe',
@@ -391,24 +351,23 @@ async function restoreGitDirectory(backup: string, target: string): Promise<bool
   return copied.ok;
 }
 
-async function restoreEnvFiles(
-  backup: string,
-  target: string,
-  files: Array<{ path: string }>,
-): Promise<number> {
+/**
+ * Puts back into the new copy what the server never carries: the files of this
+ * machine, which are the ones the backup kept and the sync would not bring.
+ */
+function restoreLocalFiles(backup: string, target: string, files: LocalOnlyFile[]): number {
   let restored = 0;
 
   for (const file of files) {
     const from = join(backup, file.path);
     const to = join(target, file.path);
 
-    if (!(await Bun.file(from).exists())) {
+    if (!existsSync(from)) {
       continue;
     }
 
     mkdirSync(join(to, '..'), { recursive: true });
-    await Bun.write(to, Bun.file(from));
-    await run('chmod', ['600', to]);
+    cpSync(from, to, { recursive: true, force: true });
     restored += 1;
   }
 

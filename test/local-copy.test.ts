@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { parseDuration, renderCandidates } from '@/cli/commands/sync.ts';
 import { applyRemoval, planRemoval, type RemovalEngine } from '@/cli/commands/sync-remove.ts';
 import { CoramiError } from '@/core/errors.ts';
-import { directorySize, findLocalOnlyFiles, isSensitiveName, localGit } from '@/core/local-copy.ts';
+import { directorySize, findLocalOnlyFiles, localGit } from '@/core/local-copy.ts';
 import type { SyncSession } from '@/integrations/mutagen.ts';
 import { collectConflicts, parseSessions, sessionName } from '@/integrations/mutagen.ts';
 
@@ -65,35 +65,19 @@ describe('prune candidates', () => {
   });
 });
 
-describe('sensitive names', () => {
-  test('matches env files and keys', () => {
-    expect(isSensitiveName('.env')).toBe(true);
-    expect(isSensitiveName('.env.local')).toBe(true);
-    expect(isSensitiveName('upload.jks')).toBe(true);
-    expect(isSensitiveName('AuthKey_ABC.p8')).toBe(true);
-  });
-
-  test('does not match ordinary files', () => {
-    expect(isSensitiveName('page.tsx')).toBe(false);
-    expect(isSensitiveName('README.md')).toBe(false);
-  });
-
-  test('honours extra patterns', () => {
-    expect(isSensitiveName('notes.txt', ['notes.txt'])).toBe(true);
-  });
-});
-
 describe('local only files', () => {
-  test('finds secrets and skips regenerable folders', async () => {
+  test('finds the files of this machine and skips regenerable folders', async () => {
     const root = await mkdtemp(join(tmpdir(), 'corami-copy-'));
     mkdirSync(join(root, 'node_modules'), { recursive: true });
+    mkdirSync(join(root, 'android'), { recursive: true });
     mkdirSync(join(root, 'app'), { recursive: true });
+    writeFileSync(join(root, 'android', 'local.properties'), 'sdk.dir=/opt/android');
     writeFileSync(join(root, '.env.local'), 'SECRET=1');
     writeFileSync(join(root, 'node_modules', '.env'), 'ignored');
     writeFileSync(join(root, 'app', 'page.tsx'), 'ok');
 
     const found = findLocalOnlyFiles(root);
-    expect(found.map((entry) => entry.path)).toEqual(['.env.local']);
+    expect(found.map((entry) => entry.path)).toEqual(['android/local.properties']);
   });
 
   test('measures the size without counting regenerable folders', async () => {
@@ -247,7 +231,8 @@ describe('removal checks', () => {
 
   test('a file only this machine has blocks the removal', async () => {
     const root = await mkdtemp(join(tmpdir(), 'corami-removal-'));
-    writeFileSync(join(root, '.env.local'), 'SECRET=1');
+    mkdirSync(join(root, 'android'), { recursive: true });
+    writeFileSync(join(root, 'android', 'local.properties'), 'sdk.dir=/opt/android');
 
     const plan = await planRemoval({ project: 'demo', localPath: root }, fakeEngine(watching));
     const blocked = plan.checks.find((check) => check.step === 'local_only');

@@ -9,6 +9,11 @@ import { run } from '@/core/exec.ts';
  * ignores them, the import leaves them out of the archive, and the removal
  * checks count them as local only. Every place that needs one of those lists
  * derives it from here, so they cannot drift apart.
+ *
+ * Everything else travels: a key, an env file or any other file of the project
+ * is a file of the project. Keeping one out of the machines is the user's
+ * decision, made by keeping it out of the folder or by injecting it from an
+ * external store.
  */
 export interface PathRule {
   /** Without `/` the name matches at any level; with `/` it matches from the root. */
@@ -18,7 +23,7 @@ export interface PathRule {
   directories?: boolean | undefined;
 }
 
-export type PathClass = 'regenerable' | 'key' | 'env' | 'local_only' | 'synced';
+export type PathClass = 'regenerable' | 'local_only' | 'synced';
 
 export const PATH_RULES: PathRule[] = [
   // Regenerable: rebuilt by every machine, never carried.
@@ -42,19 +47,8 @@ export const PATH_RULES: PathRule[] = [
   { pattern: '.flutter-plugins', class: 'regenerable' },
   { pattern: '.flutter-plugins-dependencies', class: 'regenerable' },
 
-  // Keys and credentials: they stay out of the sync, and go to the server with
-  // the import, so a build there has them.
-  { pattern: '*.jks', class: 'key' },
-  { pattern: '*.keystore', class: 'key' },
-  { pattern: '*.p8', class: 'key' },
-  { pattern: '*.p12', class: 'key' },
-  { pattern: '*service-account*.json', class: 'key' },
-  { pattern: 'android/key.properties', class: 'key' },
-  // Env files: they go to the server by import, and stay out of the sync.
-  { pattern: '.env', class: 'env' },
-  { pattern: '.env.*', class: 'env' },
-
-  // Local only: nothing regenerates them, every machine keeps its own.
+  // Local only: generated for this machine, with paths that would break the
+  // build of another one.
   { pattern: 'android/local.properties', class: 'local_only' },
   { pattern: 'ios/Flutter/Generated.xcconfig', class: 'local_only' },
   { pattern: 'ios/Flutter/flutter_export_environment.sh', class: 'local_only' },
@@ -94,16 +88,15 @@ export function patternsOf(...classes: PathClass[]): string[] {
 /**
  * The class of one path inside a copy, relative to its root and with `/` as
  * separator. A rule matches the name of a file or the name of any folder above
- * it; the first match wins, exactly as in a gitignore.
+ * it; the first match wins, exactly as in a gitignore. A path no rule matches
+ * is `synced`: it travels.
  */
-export function classifyPath(relativePath: string, extraPatterns: string[] = []): PathClass {
+export function classifyPath(relativePath: string): PathClass {
   const segments = relativePath.split('/').filter((segment) => segment !== '');
 
   if (segments.length === 0) {
     return 'synced';
   }
-
-  const name = segments[segments.length - 1] ?? '';
 
   for (const entry of COMPILED_RULES) {
     // The rules see a path, not a file: a folder rule applies to a folder the
@@ -113,19 +106,7 @@ export function classifyPath(relativePath: string, extraPatterns: string[] = [])
     }
   }
 
-  // The patterns of `--include` are paths of this project, not names.
-  for (const pattern of extraPatterns) {
-    if (globToRegExp(pattern).test(name)) {
-      return 'key';
-    }
-  }
-
   return 'synced';
-}
-
-/** Whether a path is an env file, which the import copies to the server. */
-export function classifyEnvPath(relativePath: string): boolean {
-  return classifyPath(relativePath) === 'env';
 }
 
 function matchesAt(entry: CompiledRule, segments: string[], index: number): boolean {
@@ -150,56 +131,26 @@ export function globToRegExp(pattern: string): RegExp {
   return new RegExp(`^${escaped}$`);
 }
 
-export const SENSITIVE_PATTERNS = patternsOf('key', 'env');
-
-/**
- * Whether a path looks like a key or an env file, for the messages and the
- * checks that name them. A pattern with `/` matches the path from the root,
- * one without matches the name at any level, as everywhere else.
- */
-export function isSensitiveName(path: string, extraPatterns: string[] = []): boolean {
-  const name = path.split('/').at(-1) ?? path;
-  const sensitive = PATH_RULES.some(
-    (rule) =>
-      (rule.class === 'key' || rule.class === 'env') &&
-      (rule.pattern.includes('/')
-        ? globToRegExp(rule.pattern).test(path)
-        : globToRegExp(rule.pattern).test(name)),
-  );
-
-  return sensitive || extraPatterns.some((pattern) => globToRegExp(pattern).test(name));
-}
-
 export interface LocalOnlyFile {
   path: string;
   bytes: number;
-  class: Exclude<PathClass, 'synced' | 'regenerable'>;
 }
 
 /**
  * The files the copy carries and the server never sees: the ones the sync
- * ignores that nothing regenerates. Inside a regenerable folder nothing is
- * reported, the folder is rebuilt from scratch.
+ * ignores that nothing regenerates, and that would break the build of another
+ * machine. Inside a regenerable folder nothing is reported, the folder is
+ * rebuilt from scratch.
  */
-export function findLocalOnlyFiles(
-  root: string,
-  extraPatterns: string[] = [],
-  limit = 200,
-): LocalOnlyFile[] {
+export function findLocalOnlyFiles(root: string, limit = 200): LocalOnlyFile[] {
   const found: LocalOnlyFile[] = [];
 
-  walk(root, root, extraPatterns, found, limit);
+  walk(root, root, found, limit);
 
   return found;
 }
 
-function walk(
-  root: string,
-  current: string,
-  extraPatterns: string[],
-  found: LocalOnlyFile[],
-  limit: number,
-): void {
+function walk(root: string, current: string, found: LocalOnlyFile[], limit: number): void {
   if (found.length >= limit) {
     return;
   }
@@ -232,14 +183,12 @@ function walk(
         continue;
       }
 
-      walk(root, full, extraPatterns, found, limit);
+      walk(root, full, found, limit);
       continue;
     }
 
-    const classified = classifyPath(path, extraPatterns);
-
-    if (classified !== 'synced' && classified !== 'regenerable') {
-      found.push({ path, bytes: stats.size, class: classified });
+    if (classifyPath(path) === 'local_only') {
+      found.push({ path, bytes: stats.size });
     }
   }
 }

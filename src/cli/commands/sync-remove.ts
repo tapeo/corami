@@ -26,8 +26,6 @@ export interface RemovalPlan {
 export interface RemovalOptions {
   project: string;
   localPath: string;
-  extraIgnore?: string[];
-  force?: boolean;
 }
 
 /**
@@ -62,7 +60,7 @@ export async function planRemoval(
     return { project: options.project, localPath: options.localPath, session, checks, bytes: 0 };
   }
 
-  const localOnly = findLocalOnlyFiles(options.localPath, options.extraIgnore ?? []);
+  const localOnly = findLocalOnlyFiles(options.localPath);
 
   if (localOnly.length > 0) {
     checks.push({

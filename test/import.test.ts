@@ -4,7 +4,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { isEnvPath, remoteExtractCommand } from '@/cli/commands/import.ts';
+import { remoteExtractCommand } from '@/cli/commands/import.ts';
 import { shellQuote } from '@/core/exec.ts';
 import { MUTAGEN } from '@/core/pinned-tools.ts';
 import { checksumFor } from '@/core/release.ts';
@@ -17,29 +17,17 @@ import {
 } from '@/core/transfer.ts';
 import { DEFAULT_IGNORES } from '@/integrations/mutagen.ts';
 
-describe('env detection', () => {
-  test('recognises env files at any depth', () => {
-    expect(isEnvPath('.env')).toBe(true);
-    expect(isEnvPath('.env.local')).toBe(true);
-    expect(isEnvPath('apps/web/.env.production')).toBe(true);
-  });
-
-  test('does not confuse other files', () => {
-    expect(isEnvPath('environment.ts')).toBe(false);
-    expect(isEnvPath('service-account.json')).toBe(false);
-  });
-});
-
 describe('sync ignores', () => {
-  test('cover secrets by name', () => {
-    expect(DEFAULT_IGNORES).toContain('*.p12');
-    expect(DEFAULT_IGNORES).toContain('*service-account*.json');
-    expect(DEFAULT_IGNORES).toContain('.env.*');
+  test('cover what the sync rebuilds and what belongs to one machine', () => {
+    expect(DEFAULT_IGNORES).toContain('node_modules/');
+    expect(DEFAULT_IGNORES).toContain('android/local.properties');
+    expect(DEFAULT_IGNORES).toContain('ios/Flutter/Generated.xcconfig');
   });
 
-  test('cover what only one machine may keep', () => {
-    expect(DEFAULT_IGNORES).toContain('android/key.properties');
-    expect(DEFAULT_IGNORES).toContain('node_modules/');
+  test('nothing about keys or env files: they are files of the project', () => {
+    for (const pattern of ['*.jks', '*.p12', '*service-account*.json', '.env', '.env.*']) {
+      expect(DEFAULT_IGNORES).not.toContain(pattern);
+    }
   });
 });
 
@@ -49,13 +37,21 @@ describe('tar arguments', () => {
     expect(args).toContain('--exclude=node_modules');
     expect(args).toContain('--exclude=ephemeral');
     expect(args).toContain('--exclude=./android/local.properties');
-    expect(args.some((arg) => arg.includes('.env'))).toBe(false);
   });
 
-  test('the keys and the env files go with the import', () => {
+  test('carry keys and env files: they are files of the project', () => {
     const args = tarExcludeArgs();
-    expect(args.some((arg) => arg.includes('.jks'))).toBe(false);
-    expect(args.some((arg) => arg.includes('key.properties'))).toBe(false);
+    for (const pattern of [
+      '.jks',
+      'keystore',
+      '.p8',
+      '.p12',
+      'service-account',
+      'key.properties',
+      '.env',
+    ]) {
+      expect(args.some((arg) => arg.includes(pattern))).toBe(false);
+    }
   });
 });
 
@@ -65,8 +61,6 @@ describe('remote manifest arguments', () => {
     expect(args).toContain("-name 'node_modules'");
     expect(args).toContain("-path '*/node_modules/*'");
     expect(args).toContain("-path './android/local.properties'");
-    expect(args.includes('jks')).toBe(false);
-    expect(args.includes('key.properties')).toBe(false);
   });
 });
 
@@ -81,18 +75,18 @@ describe('manifests', () => {
     writeFileSync(join(root, 'app', 'node_modules', 'deep.js'), 'y'.repeat(1000));
     writeFileSync(join(root, 'android.jks'), 'y'.repeat(1000));
 
-    // page.tsx and android.jks: the keys travel with the import.
+    // page.tsx and android.jks: a key is a file of the project like the others.
     const manifest = localManifest(root);
     expect(manifest.files).toBe(2);
     expect(manifest.bytes).toBe(1050);
   });
 
-  test('counts a file the user asked for with the include patterns', async () => {
+  test('counts every file of the project', async () => {
     const root = await mkdtemp(join(tmpdir(), 'corami-manifest-'));
     writeFileSync(join(root, 'notes.txt'), 'x'.repeat(20));
+    writeFileSync(join(root, '.env'), 'SECRET=1');
 
-    expect(localManifest(root).files).toBe(1);
-    expect(localManifest(root, ['notes.txt']).files).toBe(1);
+    expect(localManifest(root).files).toBe(2);
   });
 
   test('compare manifests and git facts', () => {
@@ -135,22 +129,14 @@ describe('checksums', () => {
 
 describe('the command the server runs to unpack the archive', () => {
   test('unpacks into the folder of the project', () => {
-    const command = remoteExtractCommand('/home/corami/projects/demo', []);
+    const command = remoteExtractCommand('/home/corami/projects/demo');
     expect(command).toContain("mkdir -p '/home/corami/projects/demo'");
     expect(command).toContain("tar -xzf - --no-same-owner -C '/home/corami/projects/demo'");
     expect(command.includes('chmod')).toBe(false);
   });
 
-  test('closes the keys to everyone else', () => {
-    const command = remoteExtractCommand('/home/corami/projects/demo', [
-      '.env',
-      'android/key.properties',
-    ]);
-    expect(command).toContain("chmod 600 -- './.env' './android/key.properties'");
-  });
-
   test('a path with a quote stays one word', () => {
-    const command = remoteExtractCommand('/home/corami/projects/demo', ["it's a key.p8"]);
-    expect(command).toContain(`chmod 600 -- './it'\\''s a key.p8'`);
+    const command = remoteExtractCommand("/home/it's/projects/demo");
+    expect(command).toContain("mkdir -p '/home/it'\\''s/projects/demo'");
   });
 });

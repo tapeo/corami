@@ -45,8 +45,9 @@ export interface CreateOptions {
 // `.git` and `._*` are not here: the first is the `--ignore-vcs` of the
 // session, the second is an AppleDouble artifact the import already leaves
 // out. The rest comes from the path rules, so the sync, the import and the
-// removal checks agree on what a copy never carries.
-export const DEFAULT_IGNORES = patternsOf('regenerable', 'key', 'env', 'local_only').filter(
+// removal checks agree on what a copy never carries: what is regenerable, and
+// what belongs to one machine. Everything else travels, keys included.
+export const DEFAULT_IGNORES = patternsOf('regenerable', 'local_only').filter(
   (pattern) => pattern !== '.git/' && pattern !== '._*',
 );
 
