@@ -328,7 +328,7 @@ One table of rules in `local-copy.ts` (`PATH_RULES`) is the only source of the p
 
 A pattern without `/` matches the name at any level, one with `/` from the root, exactly as in a gitignore. The lists are derived from the table: the sync ignores take every rule (`DEFAULT_IGNORES` in `mutagen.ts`, `.git` excluded: `--ignore-vcs` does that), the import archive and the remote manifest of its verification leave the same paths out (`tarExcludeArgs`, `findExcludeArgs`), and `corami project rm --on client` reports the `local_only` files, the only ones no other machine has (`findLocalOnlyFiles`). `test/path-rules.test.ts` packs a fixture with the real `tar` arguments, lists the archive, runs the remote manifest script locally and compares the two lists.
 
-**Everything else travels, a key included.** A file of the project folder is a file of the project: it is in the archive of `--from-local`, and the sync keeps it in step on every machine, keys and env files included. Corami does not know what is secret and does not guess from the name: keeping a key off the machines is the user's decision, made by keeping it out of the folder or by injecting it from an external store (a secret manager, a variable of the machine, a file outside the project synced by other means). `AGENTS.md` says the same to the agents: read what is there, and never print a secret in a log.
+**Everything else travels, a key included.** A file of the project folder is a file of the project: it is in the archive of an import, and the sync keeps it in step on every machine, keys and env files included. Corami does not know what is secret and does not guess from the name: keeping a key off the machines is the user's decision, made by keeping it out of the folder or by injecting it from an external store (a secret manager, a variable of the machine, a file outside the project synced by other means). `AGENTS.md` says the same to the agents: read what is there, and never print a secret in a log.
 
 Files generated with absolute paths of the machine (`Generated.xcconfig`, `local.properties`) stay excluded, otherwise they would break the build on the other machine. Lockfiles (`pubspec.lock`, `Podfile.lock`, JS lockfiles) are synced.
 
@@ -344,7 +344,7 @@ A session already created keeps the ignores it was created with: to take the new
 
 `corami project rm <project> --on client` frees space on a client: it deletes **only** the local copy of that client. Project, git and previews on the server stay untouched. `corami project add --from-server --name <project> --local-path <folder>` recreates it at any time. It acts only on the folder of the session: without one there is no copy to remove, and no `--local-path` to point it somewhere else.
 
-`corami sync stop <project>` is the other way out: the session of this machine goes, the files stay as a plain folder. It is what a copy whose project is gone from the server needs, because `project rm --on client` would be deleting the last copy of the work. Mutagen reports the missing folder on one side as a conflict on the root itself, with an empty path, so `sync status` shows it as the folder of the project and no file inside; `corami project add --from-local --local-path <folder>` puts that folder back on the server when the name is free.
+`corami sync stop <project>` is the other way out: the session of this machine goes, the files stay as a plain folder. It is what a copy whose project is gone from the server needs, because `project rm --on client` would be deleting the last copy of the work. Mutagen reports the missing folder on one side as a conflict on the root itself, with an empty path, so `sync status` shows it as the folder of the project and no file inside; `corami project add --local-path <folder>` puts that folder back on the server when the name is free.
 
 Sequence, in order:
 
@@ -418,7 +418,7 @@ corami git watch [proj] --once   # one cycle only, without staying in listen mod
 
 ## Importing a local project
 
-`corami project add --from-local --local-path <path>` moves to the server a project that today lives on a client, with all the git history and the necessary files that git ignores. At the end the local folder becomes a synced copy, at the same path.
+`corami project add --local-path <path>` moves to the server a project that today lives on a client, with all the git history and the necessary files that git ignores. At the end the local folder becomes a synced copy, at the same path.
 
 ### What is transferred
 

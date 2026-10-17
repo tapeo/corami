@@ -149,7 +149,6 @@ describe('cli', () => {
 
     expect(add.usage).toStartWith('corami project add');
     expect(names(add)).toContain('from-git');
-    expect(names(add)).toContain('from-local');
     expect(names(add)).toContain('from-server');
     expect(names(add)).toContain('local-path');
     expect(names(add)).toContain('server-path');
@@ -165,6 +164,9 @@ describe('cli', () => {
     expect(names(add)).toContain('local-path');
     expect(names(add)).toContain('server-path');
     expect(names(add)).not.toContain('path');
+    // A folder of this machine is the source without a flag: a second name for
+    // it would be one form too many.
+    expect(names(add)).not.toContain('from-local');
     expect(names(rm)).not.toContain('local-path');
 
     const removal = await corami(['project', 'rm', 'myapp', '--local-path', '/tmp/myapp']);
@@ -172,6 +174,13 @@ describe('cli', () => {
     expect(removal.exitCode).toBe(2);
     expect(JSON.parse(removal.stdout).error.message).toBe(
       'Unknown flag for corami project rm: --local-path',
+    );
+
+    const unknown = await corami(['project', 'add', '--from-local', '--local-path', '/tmp/myapp']);
+
+    expect(unknown.exitCode).toBe(2);
+    expect(JSON.parse(unknown.stdout).error.message).toBe(
+      'Unknown flag for corami project add: --from-local',
     );
 
     const missing = await corami(['project', 'add', '--from-git', 'git@example.com:me/app.git']);
@@ -188,18 +197,14 @@ describe('cli', () => {
     expect(parsed.error.message).toContain('Missing project');
   });
 
-  test('asks project add where the project comes from, and where its copy goes', async () => {
+  test('takes a folder of this machine without a source flag, and asks for it', async () => {
     const source = await corami(['project', 'add']);
     const parsedSource = JSON.parse(source.stdout);
 
     expect(source.exitCode).toBe(2);
-    expect(parsedSource.error.message).toBe('Missing --from-git, --from-local or --from-server');
-
-    const folder = await corami(['project', 'add', '--from-local']);
-    const parsedFolder = JSON.parse(folder.stdout);
-
-    expect(folder.exitCode).toBe(2);
-    expect(parsedFolder.error.message).toBe('Missing --local-path');
+    expect(parsedSource.error.message).toBe('Missing --local-path');
+    expect(parsedSource.error.fix).toContain('corami project add --local-path <folder>');
+    expect(parsedSource.error.fix).toContain('this machine');
   });
 
   test('refuses two sources of a project at once', async () => {
@@ -208,14 +213,16 @@ describe('cli', () => {
       'add',
       '--from-git',
       'git@example.com:me/app.git',
-      '--from-local',
+      '--from-server',
+      '--server-path',
+      '~/projects/app',
       '--local-path',
       '/tmp/app',
     ]);
     const parsed = JSON.parse(result.stdout);
 
     expect(result.exitCode).toBe(2);
-    expect(parsed.error.message).toBe('Give one of --from-git, --from-local or --from-server');
+    expect(parsed.error.message).toBe('Give only one of --from-git or --from-server');
   });
 
   test('asks project rm where the project leaves from', async () => {

@@ -9,7 +9,7 @@ import {
 } from '@/cli/commands/sync.ts';
 import { renderOrphanCopies, renderTable } from '@/cli/output.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
-import { canPrompt, type Prompter, terminalPrompter } from '@/cli/prompt.ts';
+import { canPrompt, terminalPrompter } from '@/cli/prompt.ts';
 import {
   addProject,
   listProjects,
@@ -17,7 +17,7 @@ import {
   projectDetail,
   removeProject,
 } from '@/cli/server-client.ts';
-import { readGlobalConfig } from '@/core/config.ts';
+import { homeDirectory, readGlobalConfig } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import {
   type AddFrom,
@@ -131,47 +131,25 @@ function renderDetail(detail: Record<string, unknown>): string {
   return lines.join('\n');
 }
 
-/** The source flag given on the command line, when there is exactly one. */
-function sourceOf(url: string | undefined, local: boolean, server: boolean): AddFrom | undefined {
-  const given: AddFrom[] = [];
-
-  if (url !== undefined) {
-    given.push('git');
+/** The source flag given on the command line, when there is at most one. */
+function sourceOf(url: string | undefined, server: boolean): AddFrom {
+  if (url !== undefined && server) {
+    throw new CoramiError({
+      code: 'usage',
+      message: 'Give only one of --from-git or --from-server',
+      fix: 'They say where the project comes from: a repository, or the server. Without both, it is a folder of this machine',
+    });
   }
 
-  if (local) {
-    given.push('local');
+  if (url !== undefined) {
+    return 'git';
   }
 
   if (server) {
-    given.push('server');
+    return 'server';
   }
 
-  if (given.length > 1) {
-    throw new CoramiError({
-      code: 'usage',
-      message: 'Give one of --from-git, --from-local or --from-server',
-      fix: 'They say where the project comes from: a repository, this machine, or the server',
-    });
-  }
-
-  return given[0];
-}
-
-async function chooseSource(prompter: Prompter | undefined): Promise<AddFrom> {
-  if (prompter === undefined) {
-    throw new CoramiError({
-      code: 'usage',
-      message: 'Missing --from-git, --from-local or --from-server',
-      fix: 'corami project add --from-git <url> --local-path <folder> adds a repository, --from-local --local-path <folder> a folder of this machine, --from-server --local-path <folder> a folder of the server',
-    });
-  }
-
-  return prompter.choose('What are you adding', [
-    { label: 'A git repository, cloned on the server', value: 'git' as AddFrom },
-    { label: 'A folder of this machine, moved to the server', value: 'local' as AddFrom },
-    { label: 'A folder that is already on the server', value: 'server' as AddFrom },
-  ]);
+  return 'local';
 }
 
 function sourceHint(from: AddFrom, url: string | undefined): string {
@@ -179,11 +157,11 @@ function sourceHint(from: AddFrom, url: string | undefined): string {
     return `--from-git ${url ?? '<url>'}`;
   }
 
-  if (from === 'local') {
-    return '--from-local';
+  if (from === 'server') {
+    return '--from-server';
   }
 
-  return '--from-server';
+  return '--local-path <folder>';
 }
 
 async function add(context: CommandContext): Promise<CommandResult> {
@@ -198,12 +176,9 @@ async function add(context: CommandContext): Promise<CommandResult> {
   const serverFlag = stringFlag(context.args, 'server-path');
   const nameFlag = stringFlag(context.args, 'name');
 
-  const from =
-    sourceOf(
-      urlFlag,
-      booleanFlag(context.args, 'from-local'),
-      booleanFlag(context.args, 'from-server'),
-    ) ?? (await chooseSource(prompter));
+  // A folder of this machine is the default: it is the only source the flags
+  // do not carry, so a command with no source at all reads as this folder.
+  const from = sourceOf(urlFlag, booleanFlag(context.args, 'from-server'));
 
   let url = urlFlag;
 
@@ -223,8 +198,8 @@ async function add(context: CommandContext): Promise<CommandResult> {
     }
   }
 
-  // The root of the clone this command runs in: the folder of `--from-local`
-  // by default, and the clone the check compares with the url.
+  // The root of the clone this command runs in: the folder of the import by
+  // default, and the clone the check compares with the url.
   const gitRoot = from === 'local' ? (await repositoryAt(cwd))?.root : undefined;
   let cwdRepository: CwdRepository | undefined;
 
@@ -232,13 +207,28 @@ async function add(context: CommandContext): Promise<CommandResult> {
     cwdRepository = await repositoryAt(cwd);
   }
 
+  if (from === 'local' && url === undefined && localFlag === undefined && prompter === undefined) {
+    throw new CoramiError({
+      code: 'usage',
+      message: 'Missing --local-path',
+      fix: 'corami project add --local-path <folder> moves that folder of this machine to the server',
+    });
+  }
+
   let name = nameFlag;
+  let localArg = localFlag;
+
+  // Without a source flag the folder is the source, like the url of
+  // `--from-git`: it is asked first, and the name comes from it.
+  if (from === 'local' && localArg === undefined && prompter !== undefined) {
+    localArg = await prompter.ask('Folder that moves to the server (this machine)', gitRoot ?? cwd);
+  }
 
   if (name === undefined) {
     const suggested = suggestedProjectName({
       url,
       serverPath: serverFlag,
-      localPath: localFlag ?? gitRoot,
+      localPath: localArg ?? gitRoot,
     });
 
     if (prompter === undefined) {
@@ -264,10 +254,13 @@ async function add(context: CommandContext): Promise<CommandResult> {
     });
   }
 
-  // The folder of this machine: the one of the project itself with
-  // `--from-local`, a folder of the working directory otherwise.
+  // The folder of this machine: the one of the project itself with the
+  // import, a folder of the working directory otherwise.
+  const localLabel =
+    from === 'local'
+      ? 'Folder that moves to the server (this machine)'
+      : 'Local path (this machine)';
   const localDefault = from === 'local' ? (gitRoot ?? cwd) : defaultLocalPath(cwd, name);
-  let localArg = localFlag;
 
   if (localArg === undefined) {
     if (prompter === undefined) {
@@ -278,7 +271,7 @@ async function add(context: CommandContext): Promise<CommandResult> {
       });
     }
 
-    localArg = await prompter.ask('Local path (this machine)', localDefault);
+    localArg = await prompter.ask(localLabel, localDefault);
   }
 
   const localPath = givenPath(localArg);
@@ -316,6 +309,8 @@ async function add(context: CommandContext): Promise<CommandResult> {
     from,
     project: name,
     url,
+    localPath,
+    home: homeDirectory(),
     explicitName: nameFlag,
     serverPath: serverFlag,
     registeredPath,
@@ -323,7 +318,7 @@ async function add(context: CommandContext): Promise<CommandResult> {
     cwdRepository,
   });
 
-  // The folder of the copy: with `--from-local` it is the folder that moves,
+  // The folder of the copy: with the import it is the folder that moves,
   // anywhere else it is created. An empty folder is fine, the session takes it.
   const place = await copyPlace(engine, name, localPath, from === 'local');
   // The project is where the server says it is: a registered one knows its
@@ -346,7 +341,7 @@ async function add(context: CommandContext): Promise<CommandResult> {
     if (noGit) {
       throw new CoramiError({
         code: 'usage',
-        message: '--no-git does not apply to --from-local',
+        message: '--no-git does not apply to the import',
         fix: 'The .git of the folder moves with it, and the copy keeps its own',
       });
     }
@@ -643,16 +638,12 @@ export const projectCommand: CommandSpec = {
       name: 'add',
       summary: 'Adds a project: it goes on the server, and its copy on this machine',
       usage:
-        'corami project add --from-git <url> | --from-local | --from-server [--server-path <folder>] --local-path <folder> [--name <name>] [--user <user>] [--no-git] [--dry-run]',
+        'corami project add [--from-git <url> | --from-server] --local-path <folder> [--server-path <folder>] [--name <name>] [--user <user>] [--no-git] [--dry-run]',
       flags: [
         {
           name: 'from-git',
           value: 'url',
           description: 'Repository cloned on the server, then the copy here',
-        },
-        {
-          name: 'from-local',
-          description: 'Folder of this machine that moves to the server and becomes the copy',
         },
         {
           name: 'from-server',
@@ -661,7 +652,8 @@ export const projectCommand: CommandSpec = {
         {
           name: 'local-path',
           value: 'folder',
-          description: 'Folder of the copy on this machine, prompted with a default',
+          description:
+            'Folder on this machine: the copy of another source, or the folder that moves to the server without a source flag',
         },
         {
           name: 'server-path',
@@ -679,7 +671,7 @@ export const projectCommand: CommandSpec = {
       ],
       examples: [
         'corami project add --from-git git@github.com:me/myapp.git --local-path ~/dev/myapp',
-        'corami project add --from-local --local-path ~/dev/myapp',
+        'corami project add --local-path ~/dev/myapp',
         'corami project add --from-server --name myapp --local-path ~/dev/myapp',
       ],
       run: add,

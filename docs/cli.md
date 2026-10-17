@@ -64,15 +64,15 @@ Every project lives on the server **and** on the machines that work on it, with 
 
 | Command | Description |
 |---|---|
+| `corami project add --local-path <folder> [--server-path <folder>] [--name <name>] [--dry-run]` | moves a folder of this machine to the server, git history included; the folder becomes the copy here, with a backup next to it. This is what `project add` does with no source flag |
 | `corami project add --from-git <url> --local-path <folder> [--server-path <folder>] [--name <name>] [--dry-run]` | clones the repository on the server, then creates the copy here |
-| `corami project add --from-local --local-path <folder> [--server-path <folder>] [--name <name>] [--dry-run]` | moves a folder of this machine to the server, git history included; the folder becomes the copy here, with a backup next to it |
 | `corami project add --from-server --local-path <folder> (--server-path <folder> \| --name <name>) [--dry-run]` | the folder is already on the server: it is registered if it was not, then the copy is created here. This is also how a second client takes its copy |
 | `corami project ls` | list with the previews of each project |
 | `corami project show <name>` | project detail: path, git, previews |
 | `corami project rm <name> --on client --yes [--force] [--dry-run]` | removes only the copy of this machine, folder of its session, after the checks. The project on the server stays |
 | `corami project rm <name> --on server --yes` | removes the project from the server, previews included; the folder only if Corami made it. The copies of the clients stay, their sessions stop |
 
-Exactly one `--from-*` is required, and everything runs from a client: the server has no copies. A missing `--name`, `--local-path` or `--server-path` is asked in a terminal with a value already written (`--local-path` has no default without one, where nobody can confirm it), and the defaults are:
+At most one `--from-*`: without one the project comes from this machine, the only source that carries no value of its own. Everything runs from a client: the server has no copies. A missing `--name`, `--local-path` or `--server-path` is asked in a terminal with a value already written (`--local-path` has no default without one, where nobody can confirm it), and the defaults are:
 
 | Flag | Default |
 |---|---|
@@ -80,7 +80,7 @@ Exactly one `--from-*` is required, and everything runs from a client: the serve
 | `--local-path` | from a project of this machine: its root git folder; otherwise `<working directory>/<name>` |
 | `--server-path` | `~/projects/<name>` of the account that owns the projects |
 
-`--from-git` stops when the command runs inside a clone of the same repository: `--from-local --local-path <root>` moves that folder instead of cloning a second one. `--from-server --name <name>` takes a registered project, wherever its folder is, and refuses a `--server-path` that says otherwise. A step that fails after the server was given the project takes the project away again: a project with no copy on any machine is what this command never leaves behind. `--dry-run` shows both steps, server and client, without touching anything.
+`--from-git` stops when the command runs inside a clone of the same repository: `--local-path <root>` moves that folder instead of cloning a second one. `--from-server --name <name>` takes a registered project, wherever its folder is, and refuses a `--server-path` that says otherwise. A folder of this machine that is the home itself, or contains it, is not a project: the command refuses it rather than moving keys and personal files to the server. A step that fails after the server was given the project takes the project away again: a project with no copy on any machine is what this command never leaves behind. `--dry-run` shows both steps, server and client, without touching anything.
 
 A name is taken by the `project add` that registers it: a second one is refused, and nothing of the project already there is touched. Two projects whose folders contain each other are refused too: they would sync the same files.
 

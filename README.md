@@ -31,7 +31,7 @@ curl -fsSL https://github.com/tapeo/corami/releases/latest/download/install.sh |
 
 # on the laptop, signed in to the same Tailscale account
 curl -fsSL https://github.com/tapeo/corami/releases/latest/download/install.sh | sh
-corami project add --from-local --local-path ~/dev/myapp   # the project moves to the server, the folder stays synced
+corami project add --local-path ~/dev/myapp   # the project moves to the server, the folder stays synced
 ```
 
 The [quick start](docs/quickstart.md) goes through it step by step, then adds your agent and a preview you open from the phone.

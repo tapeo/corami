@@ -145,8 +145,8 @@ function realPath(path: string): string {
 /**
  * The folder of the local copy of a project: the one of its session, or the
  * one asked with `--local-path`. Nothing guesses it. `importing` is the folder
- * of `--from-local`, moved away before the copy takes its place: it does not
- * count as full, and a session already there is one the import cannot reuse.
+ * of an import, moved away before the copy takes its place: it does not count
+ * as full, and a session already there is one the import cannot reuse.
  */
 export async function copyPlace(
   engine: MutagenEngine,
@@ -578,7 +578,7 @@ async function stop(context: CommandContext): Promise<{ data?: unknown; text?: s
   const onServer = await projectOnServer(project);
   const again =
     onServer === false
-      ? `corami project add --from-local --local-path ${session.beta}`
+      ? `corami project add --local-path ${session.beta}`
       : `corami project add --from-server --name ${project} --local-path ${session.beta}`;
 
   return {

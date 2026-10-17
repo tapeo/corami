@@ -35,6 +35,10 @@ export interface ProjectAddState {
   /** The name of the project: given, prompted, or derived from the origin. */
   project: string;
   url?: string | undefined;
+  /** The folder of this machine that moves with the import: it goes to the server. */
+  localPath?: string | undefined;
+  /** The home folder of this machine: the one folder the import never moves. */
+  home?: string | undefined;
   /** The name given with `--name`: the checks give it back in their fix. */
   explicitName?: string | undefined;
   /** The path asked with `--server-path`, when the flag was given. */
@@ -100,9 +104,13 @@ export function planProjectAdd(state: ProjectAddState): void {
       throw new CoramiError({
         code: 'usage',
         message: `This machine already has a clone of ${state.url}: ${root}`,
-        fix: `corami project add --from-local --local-path ${root}${name} instead: it moves that folder to the server and turns it into the synced copy`,
+        fix: `corami project add --local-path ${root}${name} instead: it moves that folder to the server and turns it into the synced copy`,
       });
     }
+  }
+
+  if (state.from === 'local' && state.localPath !== undefined && state.home !== undefined) {
+    movableLocalFolder(state.localPath, state.home);
   }
 
   // A session for the name, while the project is not on the server: the copy
@@ -151,6 +159,21 @@ function within(folder: string, path: string): boolean {
   return (
     between === '' || (between !== '..' && !between.startsWith('../') && !posix.isAbsolute(between))
   );
+}
+
+/**
+ * Whether this machine can give the folder up: the folder moves to the server
+ * with its files, the keys included, and the home of this machine is not a
+ * project. A folder inside the home is one.
+ */
+export function movableLocalFolder(path: string, home: string): void {
+  if (within(posix.normalize(path), posix.normalize(home))) {
+    throw new CoramiError({
+      code: 'usage',
+      message: `The home folder of this machine is not a project: ${path}`,
+      fix: 'Name the folder of the project: corami project add --local-path <folder>',
+    });
+  }
 }
 
 /** The folder the copy goes to without `--local-path`: a folder of this machine. */

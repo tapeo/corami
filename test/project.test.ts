@@ -20,6 +20,7 @@ import {
 import {
   defaultLocalPath,
   defaultServerPath,
+  movableLocalFolder,
   planProjectAdd,
   repositoryAt,
   sameRepository,
@@ -433,7 +434,7 @@ describe('planProjectAdd', () => {
     } catch (error) {
       const fix = (error as CoramiError).fix ?? '';
 
-      expect(fix).toContain('corami project add --from-local --local-path /Users/me/dev/myapp');
+      expect(fix).toContain('corami project add --local-path /Users/me/dev/myapp');
       expect(fix).toContain('--name shop');
     }
   });
@@ -469,6 +470,15 @@ describe('planProjectAdd', () => {
 
     expect(() => planProjectAdd({ ...git, cwdRepository })).not.toThrow();
   });
+
+  test('never moves the home folder of this machine to the server', () => {
+    const local = { ...git, from: 'local' as const, url: undefined, home: '/Users/me' };
+
+    expect(() => planProjectAdd({ ...local, localPath: '/Users/me' })).toThrow(CoramiError);
+    expect(() => planProjectAdd({ ...local, localPath: '/Users/me/Downloads' })).not.toThrow();
+    expect(() => planProjectAdd({ ...local, localPath: undefined })).not.toThrow();
+    expect(() => planProjectAdd({ ...git, home: '/Users/me' })).not.toThrow();
+  });
 });
 
 describe('the paths of an added project', () => {
@@ -499,6 +509,15 @@ describe('the paths of an added project', () => {
   test('the copy of a project goes to a folder of the working directory', () => {
     expect(defaultLocalPath('/Users/me/dev', 'myapp')).toBe('/Users/me/dev/myapp');
     expect(defaultServerPath('myapp')).toBe('~/projects/myapp');
+  });
+
+  test('the home of this machine is not a project', () => {
+    expect(() => movableLocalFolder('/', '/Users/me')).toThrow(CoramiError);
+    expect(() => movableLocalFolder('/Users/me', '/Users/me')).toThrow(CoramiError);
+    expect(() => movableLocalFolder('/Users/me/', '/Users/me')).toThrow(CoramiError);
+    expect(() => movableLocalFolder('/home', '/home/corami')).toThrow(CoramiError);
+    expect(() => movableLocalFolder('/Users/me/dev/myapp', '/Users/me')).not.toThrow();
+    expect(() => movableLocalFolder('/Users/metoo', '/Users/me')).not.toThrow();
   });
 
   test('the name to suggest comes from what the command already knows', () => {
