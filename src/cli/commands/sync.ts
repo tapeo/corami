@@ -145,7 +145,7 @@ function realPath(path: string): string {
 
 /**
  * The folder of the local copy of a project: the one of its session, or the
- * one asked with `--local-path`. Nothing guesses it. `importing` is the folder
+ * folder given as the argument. Nothing guesses it. `importing` is the folder
  * of an import, moved away before the copy takes its place: it does not count
  * as full, and a session already there is one the import cannot reuse.
  */
@@ -188,7 +188,7 @@ export async function copyPlace(
     throw new CoramiError({
       code: 'usage',
       message: `The local copy of ${project} is already at ${existing?.beta ?? ''}`,
-      fix: `To move it: corami project rm ${project} --on client, then corami project add --from-server --name ${project} --local-path ${localPath ?? '<folder>'}`,
+      fix: `To move it: corami project rm ${project} --on client, then corami project add ${localPath ?? '<folder>'} --from-server --name ${project}`,
     });
   }
 
@@ -211,20 +211,20 @@ export async function copyPlace(
     throw new CoramiError({
       code: 'usage',
       message: `The folder ${localPath ?? ''} exists and is not empty`,
-      fix: `Move that folder away, or create the copy elsewhere: corami project add --from-server --name ${project} --local-path <folder>`,
+      fix: `Move that folder away, or create the copy elsewhere: corami project add <folder> --from-server --name ${project}`,
     });
   }
 
   throw new CoramiError({
     code: 'usage',
-    message: `Missing --local-path: ${project} has no local copy on this machine`,
-    fix: `corami project add --from-server --name ${project} --local-path <folder>`,
+    message: `Missing folder: ${project} has no local copy on this machine`,
+    fix: `corami project add <folder> --from-server --name ${project}`,
   });
 }
 
 export interface CreateSyncOptions {
   project: string;
-  /** The folder of the copy, `--local-path`: required unless a session already has one. */
+  /** The folder of the copy, the argument of the command: required unless a session already has one. */
   localPath?: string | undefined;
   serverPath?: string | undefined;
   /** The account on the server, `--user`: default the one of the configuration. */
@@ -561,7 +561,7 @@ export async function removeLocalCopy(
     text: [
       `Local copy of ${project} removed (${formatBytes(result.freedBytes)}).`,
       'The project on the server, with its git repository, is untouched.',
-      `To get it back: corami project add --from-server --name ${project} --local-path ${localPath}`,
+      `To get it back: corami project add ${localPath} --from-server --name ${project}`,
     ].join('\n'),
   };
 }
@@ -596,8 +596,8 @@ async function stop(context: CommandContext): Promise<{ data?: unknown; text?: s
   const onServer = await projectOnServer(project);
   const again =
     onServer === false
-      ? `corami project add --local-path ${session.beta}`
-      : `corami project add --from-server --name ${project} --local-path ${session.beta}`;
+      ? `corami project add ${session.beta}`
+      : `corami project add ${session.beta} --from-server --name ${project}`;
 
   return {
     text: [
@@ -799,6 +799,7 @@ export const syncCommand: CommandSpec = {
       name: 'status',
       summary: 'State, conflicts, last change and git state of the two sides',
       usage: 'corami sync status [<project>]',
+      arguments: 1,
       examples: ['corami sync status', 'corami sync status myapp'],
       run: status,
     },
@@ -806,6 +807,7 @@ export const syncCommand: CommandSpec = {
       name: 'flush',
       summary: 'Flushes the queue of the session',
       usage: 'corami sync flush [<project>]',
+      arguments: 1,
       examples: ['corami sync flush myapp'],
       run: control,
     },
@@ -813,6 +815,7 @@ export const syncCommand: CommandSpec = {
       name: 'stop',
       summary: 'Stops the sync of this copy and keeps the files',
       usage: 'corami sync stop [<project>]',
+      arguments: 1,
       examples: ['corami sync stop myapp'],
       run: stop,
     },

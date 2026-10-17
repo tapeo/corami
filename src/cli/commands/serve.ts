@@ -135,12 +135,14 @@ export const serveCommand: CommandSpec = {
   summary: 'Gives a project port a stable HTTPS address on the tailnet',
   usage: 'corami serve <port> [--name <name>] [--project <project>]',
   flags: [{ name: 'name', value: 'name', description: 'Preview name, default web' }, PROJECT_FLAG],
+  arguments: 1,
   examples: ['corami serve 3000', 'corami serve 4100 --name api'],
   actions: [
     {
       name: 'ls',
       summary: 'Lists the registered addresses and whether they respond',
       usage: 'corami serve ls [<project>]',
+      arguments: 1,
       examples: ['corami serve ls', 'corami serve ls myapp'],
       run: ls,
     },
@@ -149,6 +151,7 @@ export const serveCommand: CommandSpec = {
       summary: 'Removes an address and its record',
       usage: 'corami serve rm <name> [--project <project>]',
       flags: [PROJECT_FLAG],
+      arguments: 1,
       examples: ['corami serve rm web', 'corami serve rm api --project myapp'],
       run: rm,
     },

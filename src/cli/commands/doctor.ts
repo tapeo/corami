@@ -299,6 +299,7 @@ export const doctorCommand: CommandSpec = {
   name: 'doctor',
   summary: 'Checks network, HTTPS, tools and services',
   usage: `corami doctor [${DOCTOR_AREAS.join('|')}]`,
+  arguments: 1,
   examples: ['corami doctor', 'corami doctor net'],
   run,
 };

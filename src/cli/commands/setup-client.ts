@@ -435,7 +435,7 @@ function render(steps: StepResult[], withNext: boolean, withSteps: boolean): str
   if (withNext) {
     lines.push(
       ...renderNextSteps([
-        'corami project add --from-server --name <project> --local-path <folder> takes the copy of a project of the server',
+        'corami project add <folder> --from-server --name <project> takes the copy of a project of the server',
       ]),
     );
   }

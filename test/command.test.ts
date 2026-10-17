@@ -4,6 +4,7 @@ import {
   type ActionSpec,
   allSpecs,
   type CommandSpec,
+  checkArguments,
   checkFlags,
   helpData,
   missingAction,
@@ -33,6 +34,7 @@ const status: ActionSpec = {
   name: 'status',
   summary: 'Shows the state of the sync',
   usage: 'corami sync status [<project>]',
+  arguments: 1,
   run: () => ({}),
 };
 
@@ -117,6 +119,35 @@ describe('checkFlags', () => {
       'Unknown flag for corami sync prune: --path',
     );
     expect(usageMessage(['--unused', '30d'])).toBe('Unknown flag for corami sync: --unused');
+  });
+});
+
+describe('checkArguments', () => {
+  test('accepts the arguments of the action and refuses the rest', () => {
+    expect(() => checkArguments(status, [], 'sync status')).not.toThrow();
+    expect(() => checkArguments(status, ['myapp'], 'sync status')).not.toThrow();
+
+    try {
+      checkArguments(status, ['myapp', 'extra'], 'sync status');
+      expect.unreachable();
+    } catch (error) {
+      expect((error as CoramiError).code).toBe('usage');
+      expect((error as CoramiError).message).toBe(
+        'Too many arguments for corami sync status: extra',
+      );
+      expect((error as CoramiError).fix).toBe('Usage: corami sync status [<project>]');
+    }
+  });
+
+  test('takes no argument when the spec declares none', () => {
+    expect(() => checkArguments(prune, [], 'sync prune')).not.toThrow();
+    expect(() => checkArguments(prune, ['30d'], 'sync prune')).toThrow(CoramiError);
+  });
+
+  test('names every extra argument', () => {
+    expect(() => checkArguments(prune, ['a', 'b'], 'sync prune')).toThrow(
+      'Too many arguments for corami sync prune: a b',
+    );
   });
 });
 
@@ -213,8 +244,8 @@ describe('the remedy of a command run as root', () => {
   });
 
   test('quotes an argument with a space as one word', () => {
-    const fix = switchUserFix('corami', ['project', 'add', '--local-path', '/home/it/my app']);
+    const fix = switchUserFix('corami', ['project', 'add', '/home/it/my app', '--from-server']);
 
-    expect(fix).toContain("'corami project add --local-path /home/it/my app'");
+    expect(fix).toContain("'corami project add /home/it/my app --from-server'");
   });
 });

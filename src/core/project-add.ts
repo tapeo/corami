@@ -1,4 +1,4 @@
-import { basename, join, posix, win32 } from 'node:path';
+import { basename, posix, win32 } from 'node:path';
 import type { Role } from '@/core/config.ts';
 import { serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
@@ -60,6 +60,7 @@ export interface ProjectAddState {
  */
 export function planProjectAdd(state: ProjectAddState): void {
   const name = state.explicitName === undefined ? '' : ` --name ${state.explicitName}`;
+  const folder = state.localPath ?? '<folder>';
 
   if (state.role !== 'client') {
     throw new CoramiError({
@@ -81,7 +82,7 @@ export function planProjectAdd(state: ProjectAddState): void {
     throw new CoramiError({
       code: 'usage',
       message: `${state.project} is registered on the server at ${state.registeredPath}`,
-      fix: `corami project add --from-server --server-path ${state.registeredPath} --local-path <folder>`,
+      fix: `corami project add ${folder} --from-server takes the copy of the registered project`,
     });
   }
 
@@ -90,7 +91,7 @@ export function planProjectAdd(state: ProjectAddState): void {
     throw new CoramiError({
       code: 'usage',
       message: `A project named ${state.project} is already on the server: ${state.registeredPath}`,
-      fix: `To take its copy: corami project add --from-server --name ${state.project} --local-path <folder>`,
+      fix: `To take its copy: corami project add ${folder} --from-server --name ${state.project}`,
     });
   }
 
@@ -105,7 +106,7 @@ export function planProjectAdd(state: ProjectAddState): void {
       throw new CoramiError({
         code: 'usage',
         message: `This machine already has a clone of ${state.url}: ${root}`,
-        fix: `corami project add --local-path ${root}${name} instead: it moves that folder to the server and turns it into the synced copy`,
+        fix: `corami project add ${root}${name} instead: it copies that folder to the server and turns it into the synced copy`,
       });
     }
   }
@@ -177,9 +178,9 @@ function within(folder: string, path: string): boolean {
 }
 
 /**
- * Whether this machine can give the folder up: the folder moves to the server
- * with its files, the keys included, and the home of this machine is not a
- * project. A folder inside the home is one.
+ * Whether this machine can give the folder up: the folder is copied to the
+ * server with its files, the keys included, and the home of this machine is
+ * not a project. A folder inside the home is one.
  */
 export function movableLocalFolder(
   path: string,
@@ -194,14 +195,35 @@ export function movableLocalFolder(
     throw new CoramiError({
       code: 'usage',
       message: `The home folder of this machine is not a project: ${path}`,
-      fix: 'Name the folder of the project: corami project add --local-path <folder>',
+      fix: 'Name the folder of the project: corami project add <folder>',
     });
   }
 }
 
-/** The folder the copy goes to without `--local-path`: a folder of this machine. */
-export function defaultLocalPath(cwd: string, name: string): string {
-  return join(cwd, name);
+/**
+ * A folder to import that is not on this machine: there is nothing to copy, so
+ * the command stops and the fix names the source that does not need it. A
+ * registered project is taken from the server, or the folder comes from a
+ * repository; neither is guessed.
+ */
+export function missingImportFolder(state: {
+  given: string;
+  project?: string | undefined;
+  registeredPath?: string | undefined;
+}): CoramiError {
+  if (state.project !== undefined && state.registeredPath !== undefined) {
+    return new CoramiError({
+      code: 'usage',
+      message: `There is no folder ${state.given} on this machine, and ${state.project} is already on the server`,
+      fix: `corami project add ${state.given} --from-server --name ${state.project} takes its copy`,
+    });
+  }
+
+  return new CoramiError({
+    code: 'usage',
+    message: `There is no folder ${state.given} on this machine: there is nothing to import`,
+    fix: `corami project add ${state.given} --from-git <url> clones a repository on the server, or corami project add ${state.given} --from-server takes a folder that is already there`,
+  });
 }
 
 /** The folder of the project on the server without `--server-path`. */

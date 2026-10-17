@@ -98,7 +98,7 @@ async function watch(context: CommandContext): Promise<{ data?: unknown; text?: 
       throw new CoramiError({
         code: 'usage',
         message: 'No repository to align',
-        fix: 'corami project add --from-server --name <project> --local-path <folder> takes its copy',
+        fix: 'corami project add <folder> --from-server --name <project> takes its copy',
       });
     }
 
@@ -228,6 +228,7 @@ export const gitCommand: CommandSpec = {
       summary: 'Runs the alignment cycle in the foreground, as the service does',
       usage: 'corami git watch [<project>] [--once]',
       flags: [{ name: 'once', description: 'One cycle only, without staying in listen mode' }],
+      arguments: 1,
       examples: ['corami git watch', 'corami git watch myapp --once'],
       run: watch,
     },

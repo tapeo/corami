@@ -94,16 +94,16 @@ export type LocalCopyTarget = 'existing' | 'create' | 'move' | 'missing' | 'nest
 
 /**
  * What to do with the folder of a local copy. The folder is never guessed: it
- * is the one of the session of the project, or the one asked with
- * `--local-path`. A session wins, and a different folder asked for it is a
- * move the caller refuses. Without a session, a folder inside the copy of
+ * is the one of the session of the project, or the one given as the argument.
+ * A session wins, and a different folder asked for it is a move the caller
+ * refuses. Without a session, a folder inside the copy of
  * another project, or around it, would sync into that project; a folder with
  * something else in it is not touched, the sync would mix the two trees. Paths
  * come in absolute and in the same form, the caller turns every state but
  * 'existing' and 'create' into the usage error that says what to do.
  */
 export function localCopyTarget(state: {
-  /** `--local-path`, undefined without the flag. */
+  /** The folder given as the argument, undefined without one. */
   requested?: string | undefined;
   /** The folder of the session of the project, when there is one. */
   session?: string | undefined;

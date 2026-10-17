@@ -27,6 +27,8 @@ export interface ActionSpec {
   summary: string;
   usage: string;
   flags?: FlagSpec[];
+  /** The arguments it takes at most: none when left out. */
+  arguments?: number;
   examples?: string[];
   run: RunCommand;
 }
@@ -41,6 +43,8 @@ export interface CommandSpec {
   summary: string;
   usage: string;
   flags?: FlagSpec[];
+  /** The arguments it takes at most: none when left out. */
+  arguments?: number;
   examples?: string[];
   actions?: ActionSpec[];
   /** Left out of the list of commands: an entry point of a service. */
@@ -139,6 +143,30 @@ export function checkFlags(
       });
     }
   }
+}
+
+/**
+ * Refuses the arguments the command or the action does not read: it takes
+ * `arguments` of them at most, none when it declares none. An argument that is
+ * dropped in silence is a typo or a lost word, like a flag the command does
+ * not know.
+ */
+export function checkArguments(
+  spec: CommandSpec | ActionSpec,
+  positionals: string[],
+  path: string,
+): void {
+  const extra = positionals.slice(spec.arguments ?? 0);
+
+  if (extra.length === 0) {
+    return;
+  }
+
+  throw new CoramiError({
+    code: 'usage',
+    message: `Too many arguments for corami ${path}: ${extra.join(' ')}`,
+    fix: `Usage: ${spec.usage}`,
+  });
 }
 
 export interface HelpData {

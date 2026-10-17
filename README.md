@@ -12,7 +12,7 @@ Corami is the host, not the agent: you install OpenCode, Claude Code, Codex or a
 2. Time to leave: close the lid, no commit needed. Your last saves are already on the server, and the agent keeps working there.
 3. On the train, you open the preview on your phone and keep talking to the agent: the Next.js dev server runs on the server, and `corami serve 3000` gave it a stable HTTPS address, so it can stay in your bookmarks.
 4. Back at your desk, you open the lid: what the agent did while you were away syncs to the Mac by itself.
-5. On another computer, `corami project add --from-server --name myapp --local-path ~/dev/myapp` brings the same files, uncommitted work included.
+5. On another computer, `corami project add ~/dev/myapp --from-server --name myapp` brings the same files, uncommitted work included.
 
 ## Try it
 
@@ -27,7 +27,7 @@ curl -fsSL https://github.com/tapeo/corami/releases/latest/download/install.sh |
 
 # copies the project to the server, which becomes the source of truth:
 # the folder stays here, in sync with the copies on your other machines
-corami project add --local-path ~/dev/myapp
+corami project add ~/dev/myapp
 ```
 
 The [quick start](docs/quickstart.md) goes through it step by step, then adds your agent and a preview you open from the phone.

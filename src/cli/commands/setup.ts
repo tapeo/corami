@@ -401,7 +401,7 @@ function render(
         ...renderNextSteps([
           ...switchUser,
           `On your laptop, install Corami and answer client, or run there: corami setup client ${fqdn}`,
-          'Add a project from the laptop: corami project add --from-git <url> --local-path <folder>',
+          'Add a project from the laptop: corami project add <folder> --from-git <url>',
         ]),
       );
     }
@@ -416,6 +416,7 @@ export const setupCommand: CommandSpec = {
   name: 'setup',
   summary: 'Installs Corami and its services on the server or on a client',
   usage: 'corami setup [<role>] [options]',
+  arguments: 1,
   examples: ['corami setup'],
   actions: [
     {
@@ -455,6 +456,7 @@ export const setupCommand: CommandSpec = {
       name: 'client',
       summary: 'Connects this machine to the server: SSH, Mutagen and its services',
       usage: 'corami setup client [<server>] [--user <user>] [--step <step>] [--no-mutagen]',
+      arguments: 1,
       flags: [
         {
           name: 'user',

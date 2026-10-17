@@ -1,6 +1,6 @@
 # CLI reference
 
-Commands of v1. A command that does several things has actions, as in `corami sync prune`, and each action has its own flags. Every command accepts the global flags `--json`, `--help` and `--version`. Without a TTY the output is JSON by default, the help included. A flag the command or the action does not know, or a flag without its value, is a `usage` error. Envelope and exit codes are in `architecture.md`.
+Commands of v1. A command that does several things has actions, as in `corami sync prune`, and each action has its own flags. Every command accepts the global flags `--json`, `--help` and `--version`. Without a TTY the output is JSON by default, the help included. A flag the command or the action does not know, a flag without its value, or an argument beyond the ones it takes, is a `usage` error. Envelope and exit codes are in `architecture.md`.
 
 `corami help [command [action]]` is the same as `--help` on the command or the action: `corami help sync prune` shows the flags of `sync prune` only.
 
@@ -60,29 +60,30 @@ A role and flags after `--` go to the setup. Without a terminal it installs the 
 
 ## Projects
 
-Every project lives on the server **and** on the machines that work on it, with a sync session between the two: `corami project add` creates both, whatever the source. On a client, the project goes on the server and the copy of this machine follows; the folder of the copy is always yours to say, with `--local-path`. The [quick start](quickstart.md#3-your-first-project) shows the three sources.
+Every project lives on the server **and** on the machines that work on it, with a sync session between the two: `corami project add` creates both, whatever the source. On a client, the project goes on the server and the copy of this machine follows; the folder of the copy is always the argument you give. The [quick start](quickstart.md#3-your-first-project) shows the three sources.
 
 | Command | Description |
 |---|---|
-| `corami project add --local-path <folder> [--server-path <folder>] [--name <name>] [--dry-run]` | moves a folder of this machine to the server, git history included; the folder becomes the copy here, with a backup next to it. This is what `project add` does with no source flag |
-| `corami project add --from-git <url> --local-path <folder> [--server-path <folder>] [--name <name>] [--dry-run]` | clones the repository on the server, then creates the copy here |
-| `corami project add --from-server --local-path <folder> (--server-path <folder> \| --name <name>) [--dry-run]` | the folder is already on the server: it is registered if it was not, then the copy is created here. This is also how a second client takes its copy |
+| `corami project add <folder> [--server-path <folder>] [--name <name>] [--dry-run]` | copies a folder of this machine to the server, git history included, which becomes the source of truth; the folder stays here as the copy, with a backup next to it. This is what `project add` does with no source flag |
+| `corami project add <folder> --from-git <url> [--server-path <folder>] [--name <name>] [--dry-run]` | clones the repository on the server, then creates the copy here |
+| `corami project add <folder> --from-server (--server-path <folder> \| --name <name>) [--dry-run]` | the folder is already on the server: it is registered if it was not, then the copy is created here. This is also how a second client takes its copy |
 | `corami project ls` | list with the previews of each project |
 | `corami project show <name>` | project detail: path, git, previews |
 | `corami project rm <name> --on client --yes [--force] [--dry-run]` | removes only the copy of this machine, folder of its session, after the checks. The project on the server stays |
 | `corami project rm <name> --on server --yes` | removes the project from the server, previews included; the folder only if Corami made it. The copies of the clients stay, their sessions stop |
 
-At most one `--from-*`: without one the project comes from this machine, the only source that carries no value of its own. Everything runs from a client: the server has no copies. A missing `--name`, `--local-path` or `--server-path` is asked in a terminal with a value already written (`--local-path` has no default without one, where nobody can confirm it), and the defaults are:
+At most one `--from-*`: without one the project comes from this machine, the only source that carries no value of its own. The folder is always the argument, in every source: it is where the copy lives, so it is neither asked nor defaulted. Everything runs from a client: the server has no copies. A missing `--name` or `--server-path` is asked in a terminal with a value already written, and the defaults are:
 
 | Flag | Default |
 |---|---|
 | `--name` | from the url, the server folder or the local folder |
-| `--local-path` | from a project of this machine: its root git folder; otherwise `<working directory>/<name>` |
 | `--server-path` | `~/projects/<name>` of the account that owns the projects |
 
 With `--from-server --name` of a registered project the server path is the one the project already has: it is not asked, and `--server-path` with another folder is refused.
 
-`--from-git` stops when the command runs inside a clone of the same repository: `--local-path <root>` moves that folder instead of cloning a second one. `--from-server --name <name>` takes a registered project, wherever its folder is, and refuses a `--server-path` that says otherwise. A folder of this machine that is the home itself, or contains it, is not a project: the command refuses it rather than moving keys and personal files to the server. A step that fails after the server was given the project takes the project away again: a project with no copy on any machine is what this command never leaves behind. `--dry-run` shows both steps, server and client, without touching anything.
+Without a source flag the folder must exist: a path that is not here is a `usage` error, because there is nothing to copy. The fix names `--from-server` when the server already has a project with that name, and `--from-git <url>` otherwise.
+
+`--from-git` stops when the command runs inside a clone of the same repository: give that folder as the argument and it is copied instead of cloning a second one. `--from-server --name <name>` takes a registered project, wherever its folder is, and refuses a `--server-path` that says otherwise. A folder of this machine that is the home itself, or contains it, is not a project: the command refuses it rather than copying keys and personal files to the server. A step that fails after the server was given the project takes the project away again: a project with no copy on any machine is what this command never leaves behind. `--dry-run` shows both steps, server and client, without touching anything.
 
 A name is taken by the `project add` that registers it: a second one is refused, and nothing of the project already there is touched. Two projects whose folders contain each other are refused too: they would sync the same files.
 
@@ -119,7 +120,7 @@ On a client the folder is not the one of the server: `corami serve rm <name>` th
 
 Inside a synced copy the project name is not needed, except for `project rm --on client`: the commands find it from the sync sessions. A Mutagen that does not answer stops every command that picks a copy, `project add` and `project rm --on client` included: without its sessions no command can tell which folder belongs to which project.
 
-The folder of a copy is never guessed. `project add` needs `--local-path`, and a session already there keeps its folder: another `--local-path` is a `usage` error, the copy moves with `project rm --on client` then `project add` again. The folder cannot be inside the copy of another project, or contain it. A path that still starts with `~` is refused, because only a shell expands it: give it in full or relative to the current folder. The removal deletes only the folder of a session: a folder whose sync was stopped is not a copy any more, and Corami leaves it to you.
+The folder of a copy is never guessed. `project add` needs it as the argument, and a session already there keeps its folder: another folder is a `usage` error, the copy moves with `project rm --on client` then `project add` again. The folder cannot be inside the copy of another project, or contain it. A path that still starts with `~` is refused, because only a shell expands it: give it in full or relative to the current folder. The removal deletes only the folder of a session: a folder whose sync was stopped is not a copy any more, and Corami leaves it to you.
 
 `project rm --on client` flushes first and then reads the session: when Mutagen does not answer, the flush fails, or the session is not `watching`, it stops with `sync_pending` and deletes nothing. That is the safe answer when a laptop was offline or the server did not answer: run the removal again when the session is back, or `corami sync status` to see what it is waiting for.
 

@@ -33,7 +33,7 @@ import { MutagenEngine } from '@/integrations/mutagen.ts';
 
 export interface ImportOptions {
   project: string;
-  /** The folder of this machine: it moves to the server and becomes the copy. */
+  /** The folder of this machine: it is copied to the server and stays here as the copy. */
   localPath: string;
   /** The folder on the server: absolute, or starting with `~/`. */
   serverPath?: string | undefined;
@@ -166,7 +166,7 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   // The folder of the import is one Corami makes: a folder that is already
   // there is never written into, and never removed. The check runs before the
   // transfer, so a refusal leaves the server as it was.
-  await checkServerFolder(host, user, serverPath, projectName);
+  await checkServerFolder(host, user, serverPath);
 
   const transferred = await transfer(target, user, host, serverPath);
 
@@ -338,12 +338,7 @@ function asMessage(error: unknown): string {
  * there with something in it, one that overlaps another project, and one the
  * check cannot read. The command writes only into a folder it creates.
  */
-async function checkServerFolder(
-  host: string,
-  user: string,
-  serverPath: string,
-  project: string,
-): Promise<void> {
+async function checkServerFolder(host: string, user: string, serverPath: string): Promise<void> {
   const projects = await listProjects().catch((error: unknown) => {
     throw new CoramiError({
       code: 'server_unreachable',
@@ -362,7 +357,7 @@ async function checkServerFolder(
         other === undefined
           ? `The folder ${serverPath} overlaps another project of the server`
           : `The folder ${serverPath} is inside the project at ${other}, or around it`,
-      fix: `Name a free folder of the server: corami project add --local-path ${project} --server-path <folder>`,
+      fix: 'Name a free folder of the server: corami project add <folder> --server-path <folder>',
     });
   }
 

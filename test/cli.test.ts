@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -142,28 +142,27 @@ describe('cli', () => {
     expect(namedParsed.error.fix).toContain('corami sync status');
   });
 
-  test('gives project add its flags, and sync stop none', async () => {
+  test('gives project add its folder, and sync stop no flags', async () => {
     const add = JSON.parse((await corami(['project', 'add', '--help'])).stdout).data;
     const stop = JSON.parse((await corami(['sync', 'stop', '--help'])).stdout).data;
     const names = (spec: { flags: Array<{ name: string }> }) => spec.flags.map((flag) => flag.name);
 
-    expect(add.usage).toStartWith('corami project add');
+    expect(add.usage).toStartWith('corami project add <folder>');
     expect(names(add)).toContain('from-git');
     expect(names(add)).toContain('from-server');
-    expect(names(add)).toContain('local-path');
     expect(names(add)).toContain('server-path');
     expect(stop.usage).toBe('corami sync stop [<project>]');
     expect(stop.flags).toEqual([]);
   });
 
-  test('takes the two folders apart, and no plain --path', async () => {
+  test('takes the folder as the argument, and no second form for it', async () => {
     const add = JSON.parse((await corami(['project', 'add', '--help'])).stdout).data;
     const rm = JSON.parse((await corami(['project', 'rm', '--help'])).stdout).data;
     const names = (spec: { flags: Array<{ name: string }> }) => spec.flags.map((flag) => flag.name);
 
-    expect(names(add)).toContain('local-path');
     expect(names(add)).toContain('server-path');
     expect(names(add)).not.toContain('path');
+    expect(names(add)).not.toContain('local-path');
     // A folder of this machine is the source without a flag: a second name for
     // it would be one form too many.
     expect(names(add)).not.toContain('from-local');
@@ -176,17 +175,39 @@ describe('cli', () => {
       'Unknown flag for corami project rm: --local-path',
     );
 
-    const unknown = await corami(['project', 'add', '--from-local', '--local-path', '/tmp/myapp']);
+    const unknown = await corami(['project', 'add', '--from-local', '/tmp/myapp']);
 
     expect(unknown.exitCode).toBe(2);
     expect(JSON.parse(unknown.stdout).error.message).toBe(
       'Unknown flag for corami project add: --from-local',
     );
 
+    const old = await corami(['project', 'add', '--local-path', '/tmp/myapp']);
+
+    expect(old.exitCode).toBe(2);
+    expect(JSON.parse(old.stdout).error.message).toBe(
+      'Unknown flag for corami project add: --local-path',
+    );
+
     const missing = await corami(['project', 'add', '--from-git', 'git@example.com:me/app.git']);
 
     expect(missing.exitCode).toBe(2);
-    expect(JSON.parse(missing.stdout).error.message).toBe('Missing --local-path');
+    expect(JSON.parse(missing.stdout).error.message).toBe('Missing folder');
+  });
+
+  test('refuses the arguments a command does not read', async () => {
+    const extra = await corami(['project', 'add', 'myapp', 'flutter-agent-kit']);
+    const status = await corami(['sync', 'status', 'myapp', 'extra']);
+
+    expect(extra.exitCode).toBe(2);
+    expect(JSON.parse(extra.stdout).error.message).toBe(
+      'Too many arguments for corami project add: flutter-agent-kit',
+    );
+    expect(JSON.parse(extra.stdout).error.fix).toContain('Usage: corami project add <folder>');
+    expect(status.exitCode).toBe(2);
+    expect(JSON.parse(status.stdout).error.message).toBe(
+      'Too many arguments for corami sync status: extra',
+    );
   });
 
   test('never takes the copy to remove from the current folder', async () => {
@@ -197,27 +218,27 @@ describe('cli', () => {
     expect(parsed.error.message).toContain('Missing project');
   });
 
-  test('takes a folder of this machine without a source flag, and asks for it', async () => {
+  test('needs the folder of this machine, always and without asking', async () => {
     const source = await corami(['project', 'add']);
     const parsedSource = JSON.parse(source.stdout);
 
     expect(source.exitCode).toBe(2);
-    expect(parsedSource.error.message).toBe('Missing --local-path');
-    expect(parsedSource.error.fix).toContain('corami project add --local-path <folder>');
-    expect(parsedSource.error.fix).toContain('this machine');
+    expect(parsedSource.error.message).toBe('Missing folder');
+    expect(parsedSource.error.fix).toContain('corami project add <folder>');
+    expect(parsedSource.error.fix).toContain('--from-git <url>');
+    expect(parsedSource.error.fix).toContain('--from-server');
   });
 
   test('refuses two sources of a project at once', async () => {
     const result = await corami([
       'project',
       'add',
+      '/tmp/app',
       '--from-git',
       'git@example.com:me/app.git',
       '--from-server',
       '--server-path',
       '~/projects/app',
-      '--local-path',
-      '/tmp/app',
     ]);
     const parsed = JSON.parse(result.stdout);
 
@@ -227,7 +248,7 @@ describe('cli', () => {
 
   test('refuses a name the sync engine cannot take, even before the server', async () => {
     const folder = await mkdtemp(join(tmpdir(), 'corami-import-'));
-    const result = await corami(['project', 'add', '--local-path', folder, '--name', 'my_app']);
+    const result = await corami(['project', 'add', folder, '--name', 'my_app']);
     const parsed = JSON.parse(result.stdout);
 
     expect(result.exitCode).toBe(2);
@@ -283,14 +304,7 @@ describe('cli', () => {
 
   test('refuses --no-git for the import before a dry run says what it would do', async () => {
     const folder = await mkdtemp(join(tmpdir(), 'corami-import-'));
-    const result = await corami([
-      'project',
-      'add',
-      '--local-path',
-      folder,
-      '--no-git',
-      '--dry-run',
-    ]);
+    const result = await corami(['project', 'add', folder, '--no-git', '--dry-run']);
     const parsed = JSON.parse(result.stdout);
 
     expect(result.exitCode).toBe(2);

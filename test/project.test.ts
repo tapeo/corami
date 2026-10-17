@@ -18,8 +18,8 @@ import {
   validateTargetPort,
 } from '@/core/previews.ts';
 import {
-  defaultLocalPath,
   defaultServerPath,
+  missingImportFolder,
   movableLocalFolder,
   planProjectAdd,
   repositoryAt,
@@ -479,7 +479,7 @@ describe('planProjectAdd', () => {
     } catch (error) {
       const fix = (error as CoramiError).fix ?? '';
 
-      expect(fix).toContain('corami project add --local-path /Users/me/dev/myapp');
+      expect(fix).toContain('corami project add /Users/me/dev/myapp');
       expect(fix).toContain('--name shop');
     }
   });
@@ -551,9 +551,30 @@ describe('the paths of an added project', () => {
     expect(serverFolderOverlaps('/home/corami/projects/other', others)).toBe(false);
   });
 
-  test('the copy of a project goes to a folder of the working directory', () => {
-    expect(defaultLocalPath('/Users/me/dev', 'myapp')).toBe('/Users/me/dev/myapp');
+  test('the project of the server goes to the projects folder of its home', () => {
     expect(defaultServerPath('myapp')).toBe('~/projects/myapp');
+  });
+
+  test('a folder to import that is not here says what takes it', () => {
+    const missing = missingImportFolder({ given: 'myapp', project: 'myapp' });
+
+    expect(missing.code).toBe('usage');
+    expect(missing.message).toBe(
+      'There is no folder myapp on this machine: there is nothing to import',
+    );
+    expect(missing.fix).toContain('corami project add myapp --from-git <url>');
+    expect(missing.fix).toContain('corami project add myapp --from-server');
+
+    const registered = missingImportFolder({
+      given: 'myapp',
+      project: 'myapp',
+      registeredPath: '~/projects/myapp',
+    });
+
+    expect(registered.message).toContain('myapp is already on the server');
+    expect(registered.fix).toBe(
+      'corami project add myapp --from-server --name myapp takes its copy',
+    );
   });
 
   test('the home of this machine is not a project', () => {

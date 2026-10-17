@@ -1,6 +1,7 @@
 import {
   type ActionSpec,
   type CommandSpec,
+  checkArguments,
   checkFlags,
   heading,
   helpData,
@@ -85,6 +86,11 @@ export async function runRouter(options: RouterOptions): Promise<number> {
     throw missingAction(command, rest[0]);
   }
 
+  // The command and the action that were named leave the arguments.
+  const given = action === undefined ? rest : rest.slice(1);
+
+  checkArguments(spec, given, path);
+
   const owner = await accountToLeaveTo(command.name);
 
   if (owner !== undefined) {
@@ -95,9 +101,8 @@ export async function runRouter(options: RouterOptions): Promise<number> {
     });
   }
 
-  // The command and the action that were named leave the arguments.
   const result = await spec.run({
-    args: { ...args, positionals: action === undefined ? rest : rest.slice(1) },
+    args: { ...args, positionals: given },
     output: options.output,
   });
 

@@ -176,7 +176,7 @@ corami/
 | State | `~/.corami/state.db` | |
 | Daemon token | `~/.corami/daemon-token` (0600) | |
 | Service logs | `~/.corami/logs/` (git watch) | `~/.corami/logs/` |
-| Projects | `~/projects/<project>`, or the folder chosen with `--server-path` | the folder chosen with `--local-path` and kept by the session. Never guessed |
+| Projects | `~/projects/<project>`, or the folder chosen with `--server-path` | the folder given as the argument of `project add` and kept by the session. Never guessed |
 
 Every service listens on `127.0.0.1:<port>`. `tailscale serve` exposes the same port number over HTTPS on the tailnet (see "Network and security").
 
@@ -332,7 +332,7 @@ A pattern without `/` matches the name at any level, one with `/` from the root,
 
 Files generated with absolute paths of the machine (`Generated.xcconfig`, `local.properties`) stay excluded, otherwise they would break the build on the other machine. Lockfiles (`pubspec.lock`, `Podfile.lock`, JS lockfiles) are synced.
 
-A session already created keeps the ignores it was created with: to take the new list, the copy is removed with `corami project rm <project> --on client` and created again with `corami project add --from-server --name <project> --local-path <folder>`.
+A session already created keeps the ignores it was created with: to take the new list, the copy is removed with `corami project rm <project> --on client` and created again with `corami project add <folder> --from-server --name <project>`.
 
 ### State and conflicts
 
@@ -342,9 +342,9 @@ A session already created keeps the ignores it was created with: to take the new
 
 ### Removing the local copy
 
-`corami project rm <project> --on client` frees space on a client: it deletes **only** the local copy of that client. Project, git and previews on the server stay untouched. `corami project add --from-server --name <project> --local-path <folder>` recreates it at any time. It acts only on the folder of the session: without one there is no copy to remove, and no `--local-path` to point it somewhere else.
+`corami project rm <project> --on client` frees space on a client: it deletes **only** the local copy of that client. Project, git and previews on the server stay untouched. `corami project add <folder> --from-server --name <project>` recreates it at any time. It acts only on the folder of the session: without one there is no copy to remove, and no other folder to point it somewhere else.
 
-`corami sync stop <project>` is the other way out: the session of this machine goes, the files stay as a plain folder. It is what a copy whose project is gone from the server needs, because `project rm --on client` would be deleting the last copy of the work. Mutagen reports the missing folder on one side as a conflict on the root itself, with an empty path, so `sync status` shows it as the folder of the project and no file inside; `corami project add --local-path <folder>` puts that folder back on the server when the name is free.
+`corami sync stop <project>` is the other way out: the session of this machine goes, the files stay as a plain folder. It is what a copy whose project is gone from the server needs, because `project rm --on client` would be deleting the last copy of the work. Mutagen reports the missing folder on one side as a conflict on the root itself, with an empty path, so `sync status` shows it as the folder of the project and no file inside; `corami project add <folder>` puts that folder back on the server when the name is free.
 
 Sequence, in order:
 
@@ -418,7 +418,7 @@ corami git watch [proj] --once   # one cycle only, without staying in listen mod
 
 ## Importing a local project
 
-`corami project add --local-path <path>` moves to the server a project that today lives on a client, with all the git history and the necessary files that git ignores. At the end the local folder becomes a synced copy, at the same path.
+`corami project add <path>` copies to the server a project that today lives on a client, with all the git history and the necessary files that git ignores. The server becomes the source of truth, and the local folder stays at the same path as its synced copy.
 
 ### What is transferred
 
@@ -437,7 +437,7 @@ corami git watch [proj] --once   # one cycle only, without staying in listen mod
 5. **Verification:** `corami` computes a sha256 manifest of the transferred files on both sides and compares the output of `git for-each-ref` and `git stash list`. When something does not match, it stops with an error and the local folder stays intact.
 6. **Git cleanup on the server:** `git worktree prune` (local worktrees are not imported and are listed in the summary). A warning when `.git/config` contains absolute paths or a credential helper of the local machine.
 7. **Registration:** the project is added to the registry, like `corami project add`.
-8. **Converting the local folder:** renamed to `<dir>.corami-backup-<date>`, then the synced copy is created at the same path, as `corami project add --from-server --name <project> --local-path <dir>` would, so IDE and habits do not change. After the sync, the `.git` of the renamed folder (which is never moved: it stays complete) is copied into the new local copy, so the local side and the server side each have their own repository, and the files of this machine (which the sync never brings) are copied back from the backup. Right after, the local copy runs `git fetch` on `origin` and aligns with a mixed reset, when needed.
+8. **Converting the local folder:** renamed to `<dir>.corami-backup-<date>`, then the synced copy is created at the same path, as `corami project add <dir> --from-server --name <project>` would, so IDE and habits do not change. After the sync, the `.git` of the renamed folder (which is never moved: it stays complete) is copied into the new local copy, so the local side and the server side each have their own repository, and the files of this machine (which the sync never brings) are copied back from the backup. Right after, the local copy runs `git fetch` on `origin` and aligns with a mixed reset, when needed.
 9. **Summary:** files moved, the files of this machine left here and put back into the copy, worktrees not imported, path of the renamed folder. It is never deleted automatically.
 
 ### Git on the server
