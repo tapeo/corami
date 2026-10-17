@@ -158,7 +158,7 @@ export async function remoteManifest(
 
   const script = [
     `cd ${shellQuote(path)} || exit 1`,
-    `find . -type f ${skip} -printf '%P\\t%s\\n' 2>/dev/null || find . -type f ${skip} -exec sh -c 'for f do printf "%s\\t%s\\n" "\${f#./}" "$(wc -c < "$f")"; done' sh {} +`,
+    `find . -type f ${skip} -printf '%P\\t%s\\n' 2>/dev/null || find . -type f ${skip} -exec sh -c 'for f do printf "%s\\t%s\\n" "\${f#./}" "$(wc -c < "$f" | tr -d " ")"; done' sh {} +`,
   ].join('; ');
 
   const result = await runner(script);
