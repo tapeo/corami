@@ -154,7 +154,7 @@ corami/
       previews.ts         pure functions: ports, names, serve plans, project from a path
       ports.ts            the Corami port range, TCP probes
       pinned-tools.ts     version and sha256 of Mutagen
-      local-copy.ts       single list of regenerable paths, used by sync, import and sync rm
+      local-copy.ts       path rules: what the sync, the import and sync rm never carry
       git.ts, git-align.ts, git-follow.ts
       paths and helper modules: doctor, errors, exec,
       last-change, release, state, transfer
@@ -314,19 +314,20 @@ mutagen sync create \
 
 ### Default exclusions
 
-```
-.git/                       never synced: every side has its own
-node_modules/  .next/  .turbo/  dist/  build/  coverage/
-.dart_tool/  .flutter-plugins  .flutter-plugins-dependencies  .fvm/
-ios/Pods/  ios/.symlinks/  ios/Flutter/Generated.xcconfig
-ios/Flutter/flutter_export_environment.sh
-android/.gradle/  android/local.properties  android/key.properties
-macos/Flutter/ephemeral/  linux/flutter/ephemeral/  windows/flutter/ephemeral/
-*.jks  *.keystore  *.p8  *.p12  *service-account*.json
-.env  .env.*
-```
+One table of rules in `local-copy.ts` (`PATH_RULES`) is the only source of the paths a copy never carries. Every rule is a pattern and one of four classes:
 
-Files generated with absolute paths of the machine (`Generated.xcconfig`, `local.properties`) stay excluded, otherwise they would break the build on the other machine. Lockfiles (`pubspec.lock`, `Podfile.lock`, JS lockfiles) are synced. The list lives in `local-copy.ts`, with the secret and env entries.
+| Class | Meaning | Example |
+|---|---|---|
+| `regenerable` | rebuilt by every machine, never carried | `node_modules/`, `dist/`, `._*`, `.DS_Store` |
+| `key` | keys and credentials, they stay on the machine that has them | `*.jks`, `*.keystore`, `*.p8`, `*.p12`, `*service-account*.json` |
+| `env` | env files: they go to the server with `project import`, and stay out of the sync | `.env`, `.env.*` |
+| `local_only` | nothing regenerates them, every machine keeps its own | `android/key.properties`, `android/local.properties`, `ios/Flutter/Generated.xcconfig`, `ios/.symlinks/`, `.flutter-plugins` |
+
+A pattern without `/` matches the name at any level, one with `/` from the root, exactly as in a gitignore. The lists are derived from the table: the sync ignores take every class (`DEFAULT_IGNORES` in `mutagen.ts`, `.git` excluded: `--ignore-vcs` does that), the import archive takes them all except `env` (`tarExcludeArgs`), the remote manifest of the import filters with the same rules (`findExcludeArgs`), and `sync rm` reports the keys, the env files and the local-only ones (`findLocalOnlyFiles`), which is one thing to keep in step with the sync. `test/path-rules.test.ts` checks one against the other.
+
+Files generated with absolute paths of the machine (`Generated.xcconfig`, `local.properties`) stay excluded, otherwise they would break the build on the other machine. Lockfiles (`pubspec.lock`, `Podfile.lock`, JS lockfiles) are synced.
+
+A session already created keeps the ignores it was created with: to take the new list, the copy is removed with `sync rm` and recreated with `sync add`.
 
 ### State and conflicts
 
@@ -345,7 +346,7 @@ Sequence, in order:
 1. **Flush:** `mutagen sync flush`, so every local change reaches the server.
 2. **Conflicts:** when the session has open conflicts, it stops with `sync_conflict`. The local side of a conflict would be lost.
 3. **Sync problems:** when Mutagen reports unreadable or untransferred files, it stops with the list of files.
-4. **Local-only files:** it looks for files excluded from the sync that are not in `local-copy.ts`. For example `.env.local`, `*.jks`, `*.p8`. When there are any, it stops with `local_only_files` and the list; `--force` deletes them anyway.
+4. **Local-only files:** it looks for the files the sync ignores and nothing regenerates, from the same rules the sync uses (`PATH_RULES` in `local-copy.ts`). For example `.env.local`, `*.jks`, `*.p8`, `android/key.properties`. When there are any, it stops with `local_only_files` and the list; `--force` deletes them anyway.
 5. **Local git:** when the `.git` of the copy has commits or stashes that exist in no remote (typically work done on the copy without a push), it stops with `local_only_files`. Commits already elsewhere do not block.
 6. **Closing the sync:** `mutagen sync terminate`. It must be done **before** deleting: with the session active, Mutagen would propagate the deletions to the server.
 7. **Deletion** of the local folder.

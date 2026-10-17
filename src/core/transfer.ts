@@ -1,28 +1,69 @@
 import { createHash } from 'node:crypto';
 import { readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 import { run } from '@/core/exec.ts';
+import {
+  classifyPath,
+  findLocalOnlyFiles,
+  isRegenerableFolder,
+  isSensitiveName,
+  PATH_RULES,
+  type PathRule,
+} from '@/core/local-copy.ts';
 
-export const TAR_EXCLUDES = [
-  './node_modules',
-  './.next',
-  './.turbo',
-  './.expo',
-  './dist',
-  './build',
-  './coverage',
-  './.dart_tool',
-  './.fvm',
-  './ios/Pods',
-  './android/.gradle',
-  './.venv',
-  './__pycache__',
-  './.DS_Store',
-];
+/**
+ * The arguments of the import archive, one per excluded path. `findExcludeArgs`
+ * and the local manifest walk rebuild the same decision for the other side:
+ * the three always agree on what an import carries.
+ */
+export function tarExcludeArgs(): string[] {
+  return PATH_RULES.filter((rule) => rule.class !== 'synced' && rule.class !== 'env').map(
+    (rule) => `--exclude=${tarPattern(rule)}`,
+  );
+}
 
-export function tarExcludeArgs(excludes = TAR_EXCLUDES): string[] {
-  return excludes.flatMap((path) => [`--exclude=${path}`]);
+/** The path as tar matches it: a name at any level, a `./` path from the root. */
+export function tarPattern(rule: PathRule): string {
+  return rule.pattern.includes('/') ? `./${rule.pattern}` : rule.pattern;
+}
+
+/** The `find` arguments of the remote manifest, matching every ignored path. */
+export function findExcludeArgs(): string[] {
+  const args: string[] = [];
+  const seen = new Set<string>();
+
+  const add = (flag: string, pattern: string): void => {
+    const key = `${flag}${pattern}`;
+
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    // Quoted: the remote shell must not expand the pattern it passes to find.
+    args.push('-not', flag, shellQuote(pattern));
+  };
+
+  for (const rule of PATH_RULES) {
+    if (rule.class === 'synced' || rule.class === 'env') {
+      continue;
+    }
+
+    if (rule.pattern.includes('/')) {
+      add('-path', `./${rule.pattern}${rule.directories === true ? '/*' : ''}`);
+      continue;
+    }
+
+    // A name without a slash reaches every level, as it does for the sync.
+    add('-name', rule.pattern);
+
+    if (rule.directories === true) {
+      add('-path', `*/${rule.pattern}/*`);
+    }
+  }
+
+  return args;
 }
 
 export interface Manifest {
@@ -31,28 +72,43 @@ export interface Manifest {
   hash: string;
 }
 
-export function localManifest(root: string, excludes = TAR_EXCLUDES): Manifest {
+/**
+ * The manifest of the files the sync and the import actually carry: the paths
+ * neither regenerable nor ignored, plus the ones the user asked for with
+ * `--include`.
+ */
+export function localManifest(root: string, extraPatterns: string[] = []): Manifest {
+  const included = new Set(
+    findLocalOnlyFiles(root, extraPatterns)
+      .filter(
+        (entry) =>
+          entry.class === 'key' && !isSensitiveName(entry.path.split('/').at(-1) ?? entry.path),
+      )
+      .map((entry) => entry.path),
+  );
   const entries: string[] = [];
-  let bytes = 0;
-  const skip = excludes.map((path) => path.replace(/^\.\//, ''));
 
-  walkManifest(root, root, skip, entries);
+  walkManifest(root, root, included, entries);
+
+  let bytes = 0;
 
   for (const entry of entries) {
-    const size = entry.split('\t')[1];
-    bytes += Number(size ?? '0');
+    bytes += Number(entry.split('\t')[1] ?? '0');
   }
 
-  const hash = createHash('sha256').update(entries.sort().join('\n')).digest('hex');
+  const hash = createHash('sha256')
+    .update([...entries].sort().join('\n'))
+    .digest('hex');
 
   return { files: entries.length, bytes, hash };
 }
 
-function isAppleDouble(name: string): boolean {
-  return name.startsWith('._');
-}
-
-function walkManifest(root: string, current: string, skip: string[], entries: string[]): void {
+function walkManifest(
+  root: string,
+  current: string,
+  included: ReadonlySet<string>,
+  entries: string[],
+): void {
   let names: string[];
 
   try {
@@ -63,9 +119,9 @@ function walkManifest(root: string, current: string, skip: string[], entries: st
 
   for (const name of names) {
     const full = join(current, name);
-    const relativePath = relative(root, full);
+    const relativePath = toPosix(relative(root, full));
 
-    if (relativePath === '.git' || skip.includes(relativePath) || isAppleDouble(name)) {
+    if (!carried(relativePath, included)) {
       continue;
     }
 
@@ -73,7 +129,11 @@ function walkManifest(root: string, current: string, skip: string[], entries: st
       const stats = statSync(full);
 
       if (stats.isDirectory()) {
-        walkManifest(root, full, skip, entries);
+        if (isRegenerableFolder(name)) {
+          continue;
+        }
+
+        walkManifest(root, full, included, entries);
         continue;
       }
 
@@ -82,29 +142,60 @@ function walkManifest(root: string, current: string, skip: string[], entries: st
   }
 }
 
+/**
+ * Whether a path is in the archive. Of the paths the walk reports only the
+ * ones an `--include` pattern asked for enter it, so a name of the rules wins
+ * over a broader pattern.
+ */
+function carried(relativePath: string, included: ReadonlySet<string>): boolean {
+  if (included.has(relativePath)) {
+    return true;
+  }
+
+  const classified = classifyPath(relativePath);
+
+  return classified === 'synced' || classified === 'env';
+}
+
+function toPosix(path: string): string {
+  return sep === '/' ? path : path.split(sep).join('/');
+}
+
+/** How a remote manifest is read: over ssh, or locally in a test. */
+export type ManifestRunner = (script: string) => Promise<{ ok: boolean; stdout: string }>;
+
+export function sshManifestRunner(host: string, user: string): ManifestRunner {
+  return async (script) => {
+    const result = await run(
+      'ssh',
+      ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', `${user}@${host}`, script],
+      {
+        timeoutMs: 120_000,
+      },
+    );
+
+    return { ok: result.ok, stdout: result.stdout };
+  };
+}
+
 export async function remoteManifest(
   host: string,
   user: string,
   path: string,
-  excludes = TAR_EXCLUDES,
+  runner: ManifestRunner = sshManifestRunner(host, user),
 ): Promise<Manifest | undefined> {
-  const skipArgs = excludes
-    .map((entry) => entry.replace(/^\.\//, ''))
-    .map((entry) => `-not -path './${entry}/*'`)
-    .join(' ');
+  if (path.includes('\n') || path.includes('"')) {
+    return undefined;
+  }
+
+  const skip = findExcludeArgs().join(' ');
 
   const script = [
     `cd ${shellQuote(path)} || exit 1`,
-    `find . -type f -not -path './.git/*' -not -name '._*' ${skipArgs} -printf '%P\\t%s\\n' 2>/dev/null || find . -type f -not -path './.git/*' -not -name '._*' ${skipArgs} -exec stat -f '%N\\t%z' {} +`,
+    `find . -type f ${skip} -printf '%P\\t%s\\n' 2>/dev/null || find . -type f ${skip} -exec stat -f '%N\\t%z' {} +`,
   ].join('; ');
 
-  const result = await run(
-    'ssh',
-    ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', `${user}@${host}`, script],
-    {
-      timeoutMs: 120_000,
-    },
-  );
+  const result = await runner(script);
 
   if (!result.ok && result.stdout.trim() === '') {
     return undefined;

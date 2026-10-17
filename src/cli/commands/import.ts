@@ -10,7 +10,7 @@ import { addProject, projectDetail, serverUserForSync } from '@/cli/server-clien
 import { readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { run } from '@/core/exec.ts';
-import { findLocalOnlyFiles, isSensitiveName } from '@/core/local-copy.ts';
+import { classifyEnvPath, findLocalOnlyFiles, isSensitiveName } from '@/core/local-copy.ts';
 import {
   factsMatch,
   localGitFacts,
@@ -19,7 +19,7 @@ import {
   remoteGitFacts,
   remoteManifest,
   shellQuote,
-  TAR_EXCLUDES,
+  tarExcludeArgs,
 } from '@/core/transfer.ts';
 import { MutagenEngine } from '@/integrations/mutagen.ts';
 
@@ -99,19 +99,21 @@ export async function runImport(
     summary: `Name ${projectName} is free on the server`,
   });
 
-  const ignored = findLocalOnlyFiles(
-    target,
-    extraIncludes.filter((entry) => !isSensitiveName(entry)),
+  const ignored = findLocalOnlyFiles(target, extraIncludes);
+  // A pattern of `--include` is a decision of the user, a sensitive name is
+  // not: files that answer both stay on this machine.
+  const includedFiles = ignored.filter(
+    (entry) => entry.class === 'key' && !isSensitiveBasename(entry.path),
   );
-  const envFiles = ignored.filter((entry) => isEnvPath(entry.path));
+  const envFiles = ignored.filter((entry) => entry.class === 'env');
   const secretFiles = ignored.filter(
-    (entry) => !isEnvPath(entry.path) && isSensitiveName(entry.path),
+    (entry) => entry.class === 'key' && isSensitiveBasename(entry.path),
   );
 
   steps.push({
     step: 'inventory',
     status: 'done',
-    summary: `${ignored.length} files not tracked by git: ${envFiles.length} env, ${secretFiles.length} look like secrets`,
+    summary: `${ignored.length} files not tracked by git: ${envFiles.length} env, ${includedFiles.length} asked with --include, ${secretFiles.length} look like secrets`,
     detail: [...envFiles, ...secretFiles]
       .slice(0, 8)
       .map((entry) => entry.path)
@@ -149,13 +151,7 @@ export async function runImport(
   }
 
   const serverPath = serverProjectPath(home, projectName);
-  const transferred = await transfer(
-    target,
-    user,
-    host,
-    serverPath,
-    secretFiles.map((entry) => entry.path),
-  );
+  const transferred = await transfer(target, user, host, serverPath);
 
   if (!transferred.ok) {
     steps.push({
@@ -174,10 +170,10 @@ export async function runImport(
     detail: transferred.detail,
   });
 
-  const localManifestResult = localManifest(target, [
-    ...TAR_EXCLUDES,
-    ...secretFiles.map((entry) => `./${entry.path}`),
-  ]);
+  const localManifestResult = localManifest(
+    target,
+    includedFiles.map((entry) => entry.path),
+  );
   const remoteManifestResult = await remoteManifest(host, user, serverPath);
 
   if (
@@ -282,57 +278,80 @@ export async function remoteHome(user: string, host: string): Promise<string | u
 }
 
 export function isEnvPath(path: string): boolean {
-  const name = path.split('/').at(-1) ?? path;
-  return name === '.env' || name.startsWith('.env.');
+  return classifyEnvPath(path);
 }
 
+/** The name of a path, the part the sensitive patterns are about. */
+export function isSensitiveBasename(path: string): boolean {
+  return isSensitiveName(path.split('/').at(-1) ?? path);
+}
+/**
+ * The archive reaches the server through a pipe: `tar` writes it, `ssh` carries
+ * it. Both are started with their arguments, never through a shell, and both
+ * exit codes are checked: a failure of `tar` would otherwise show as the exit
+ * code of `ssh` alone.
+ */
 async function transfer(
   source: string,
   user: string,
   host: string,
   serverPath: string,
-  excludeFiles: string[],
 ): Promise<{ ok: boolean; detail: string }> {
-  const extra = excludeFiles.map((path) => `./${path}`);
-  const excludes = [...TAR_EXCLUDES, '._*', ...extra].flatMap((path) => [`--exclude=${path}`]);
   const remote = `mkdir -p ${shellQuote(serverPath)} && tar -xzf - --no-same-owner -C ${shellQuote(serverPath)}`;
-  const command = [
-    'tar',
-    '-czf',
-    '-',
-    ...excludes,
-    '-C',
-    shellQuote(source),
-    '.',
-    '|',
-    'ssh',
-    '-o',
-    'BatchMode=yes',
-    '-o',
-    'ConnectTimeout=15',
-    shellQuote(`${user}@${host}`),
-    shellQuote(remote),
-  ].join(' ');
-
-  const result = await run('sh', ['-c', command], {
-    timeoutMs: 1_800_000,
-    env: { COPYFILE_DISABLE: '1' },
+  const reader = Bun.spawn(['tar', '-czf', '-', ...tarExcludeArgs(), '-C', source, '.'], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { ...process.env, COPYFILE_DISABLE: '1' },
   });
+  const writer = Bun.spawn(
+    ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', `${user}@${host}`, remote],
+    {
+      stdin: reader.stdout,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+  );
 
-  if (!result.ok) {
-    return { ok: false, detail: result.stderr.trim().split('\n').slice(-2).join(' ') };
+  const timeout = setTimeout(() => {
+    reader.kill();
+    writer.kill();
+  }, 1_800_000);
+
+  try {
+    const [read, written] = await Promise.all([
+      reader.exited.then(async (code) => ({
+        code,
+        noise: await new Response(reader.stderr).text(),
+      })),
+      writer.exited.then(async (code) => ({
+        code,
+        error: await new Response(writer.stderr).text(),
+      })),
+    ]);
+
+    if (read.code !== 0 || written.code !== 0) {
+      const detail = cleanTarNoise(written.code !== 0 ? written.error : read.noise);
+
+      return {
+        ok: false,
+        detail: detail === '' ? `tar exited with ${read.code}, ssh with ${written.code}` : detail,
+      };
+    }
+
+    return { ok: true, detail: cleanTarNoise(written.error) };
+  } finally {
+    clearTimeout(timeout);
   }
+}
 
+function cleanTarNoise(raw: string): string {
   const noise = /^tar: (Ignoring unknown extended header keyword|Removing leading)/;
 
-  return {
-    ok: true,
-    detail: result.stderr
-      .split('\n')
-      .filter((line) => line.trim() !== '' && !noise.test(line.trim()))
-      .slice(0, 3)
-      .join(' '),
-  };
+  return raw
+    .split('\n')
+    .filter((line) => line.trim() !== '' && !noise.test(line.trim()))
+    .slice(0, 3)
+    .join(' ');
 }
 
 async function restoreGitDirectory(backup: string, target: string): Promise<boolean> {

@@ -7,10 +7,10 @@ import { join } from 'node:path';
 import { isEnvPath } from '@/cli/commands/import.ts';
 import {
   factsMatch,
+  findExcludeArgs,
   localManifest,
   manifestsMatch,
   shellQuote,
-  TAR_EXCLUDES,
   tarExcludeArgs,
 } from '@/core/transfer.ts';
 import { DEFAULT_IGNORES } from '@/integrations/mutagen.ts';
@@ -34,14 +34,31 @@ describe('sync ignores', () => {
     expect(DEFAULT_IGNORES).toContain('*service-account*.json');
     expect(DEFAULT_IGNORES).toContain('.env.*');
   });
+
+  test('cover what only one machine may keep', () => {
+    expect(DEFAULT_IGNORES).toContain('android/key.properties');
+    expect(DEFAULT_IGNORES).toContain('node_modules/');
+  });
 });
 
 describe('tar arguments', () => {
-  test('exclude regenerable folders', () => {
+  test('exclude regenerable folders at any depth and by name', () => {
     const args = tarExcludeArgs();
-    expect(args).toContain('--exclude=./node_modules');
-    expect(args).toContain('--exclude=./.next');
-    expect(args.length).toBe(TAR_EXCLUDES.length);
+    expect(args).toContain('--exclude=node_modules');
+    expect(args).toContain('--exclude=ephemeral');
+    expect(args).toContain('--exclude=*.jks');
+    expect(args).toContain('--exclude=./android/key.properties');
+    expect(args.some((arg) => arg.includes('.env'))).toBe(false);
+  });
+});
+
+describe('remote manifest arguments', () => {
+  test('match the tar exclusions', () => {
+    const args = findExcludeArgs().join(' ');
+    expect(args).toContain("-name 'node_modules'");
+    expect(args).toContain("-path '*/node_modules/*'");
+    expect(args).toContain("-name '*.jks'");
+    expect(args).toContain("-path './android/key.properties'");
   });
 });
 
@@ -50,12 +67,23 @@ describe('manifests', () => {
     const root = await mkdtemp(join(tmpdir(), 'corami-manifest-'));
     mkdirSync(join(root, 'app'), { recursive: true });
     mkdirSync(join(root, 'node_modules'), { recursive: true });
+    mkdirSync(join(root, 'app', 'node_modules'), { recursive: true });
     writeFileSync(join(root, 'app', 'page.tsx'), 'x'.repeat(50));
     writeFileSync(join(root, 'node_modules', 'ignored.js'), 'y'.repeat(1000));
+    writeFileSync(join(root, 'app', 'node_modules', 'deep.js'), 'y'.repeat(1000));
+    writeFileSync(join(root, 'android.jks'), 'y'.repeat(1000));
 
     const manifest = localManifest(root);
     expect(manifest.files).toBe(1);
     expect(manifest.bytes).toBe(50);
+  });
+
+  test('counts a file the user asked for with the include patterns', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-manifest-'));
+    writeFileSync(join(root, 'notes.txt'), 'x'.repeat(20));
+
+    expect(localManifest(root).files).toBe(1);
+    expect(localManifest(root, ['notes.txt']).files).toBe(1);
   });
 
   test('compare manifests and git facts', () => {

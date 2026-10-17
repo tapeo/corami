@@ -18,7 +18,7 @@ Corami does not back anything up: it is yours to choose. The server is the sourc
 | Harness sessions | e.g. `~/.local/share/opencode` | the history of the agents, if you want it |
 | Container data | the Docker volumes | databases and services of the projects, if the data matters |
 
-What not to save, because every machine rebuilds it: `node_modules`, `.next`, `.turbo`, `dist`, `build`, `coverage`, `.dart_tool`, `.fvm`, `Pods`, `.gradle`, `ephemeral`, `.venv`, `__pycache__` and the other folders of `REGENERABLE_DIRS` in `src/core/local-copy.ts`. `~/.corami/state.db` holds the project registry and the preview addresses: both are recreated by `corami project add` and `corami serve`, so saving it is optional.
+What not to save, because every machine rebuilds it: `node_modules`, `.next`, `.turbo`, `dist`, `build`, `coverage`, `.dart_tool`, `.fvm`, `Pods`, `.gradle`, `ephemeral`, `.venv`, `__pycache__` and the other folders of the `regenerable` class in `src/core/local-copy.ts`. `~/.corami/state.db` holds the project registry and the preview addresses: both are recreated by `corami project add` and `corami serve`, so saving it is optional.
 
 Files that look like secrets (`.env`, `*.jks`, `*.keystore`, `*.p8`, `service-account*.json`) are not synced, so they are found only on the machine that has them: on the server, back them up too if they live there.
 

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { CoramiError } from '@/core/errors.ts';
 import { run } from '@/core/exec.ts';
+import { patternsOf } from '@/core/local-copy.ts';
 import { ensureTool, findTool, MUTAGEN } from '@/core/pinned-tools.ts';
 import {
   installService,
@@ -41,37 +42,13 @@ export interface CreateOptions {
   ignore: string[];
 }
 
-export const DEFAULT_IGNORES = [
-  '.git/',
-  'node_modules/',
-  '.next/',
-  '.turbo/',
-  '.expo/',
-  'dist/',
-  'build/',
-  'coverage/',
-  '.dart_tool/',
-  '.flutter-plugins',
-  '.flutter-plugins-dependencies',
-  '.fvm/',
-  'ios/Pods/',
-  'ios/.symlinks/',
-  'ios/Flutter/Generated.xcconfig',
-  'ios/Flutter/flutter_export_environment.sh',
-  'android/.gradle/',
-  'android/local.properties',
-  'android/key.properties',
-  'macos/Flutter/ephemeral/',
-  'linux/flutter/ephemeral/',
-  'windows/Flutter/ephemeral/',
-  '*.jks',
-  '*.keystore',
-  '*.p8',
-  '*.p12',
-  '*service-account*.json',
-  '.env',
-  '.env.*',
-];
+// `.git` and `._*` are not here: the first is the `--ignore-vcs` of the
+// session, the second is an AppleDouble artifact the import already leaves
+// out. The rest comes from the path rules, so the sync, the import and the
+// removal checks agree on what a copy never carries.
+export const DEFAULT_IGNORES = patternsOf('regenerable', 'key', 'env', 'local_only').filter(
+  (pattern) => pattern !== '.git/' && pattern !== '._*',
+);
 
 export function sessionName(project: string): string {
   return `corami-${project}`;
