@@ -81,24 +81,36 @@ describe('previewUrl', () => {
 });
 
 describe('planServeRules', () => {
-  test('creates the missing rules and removes the stale ones', () => {
-    const plan = planServeRules([4100, 4102], [4100, 4101]);
+  const rule = (port: number, targetPort = port): { port: number; target: string } => ({
+    port,
+    target: `http://127.0.0.1:${targetPort}`,
+  });
 
-    expect(plan.add).toEqual([4102]);
+  test('applies the missing rules and removes the stale ones', () => {
+    const plan = planServeRules([rule(4100), rule(4102)], [rule(4100), rule(4101)]);
+
+    expect(plan.apply).toEqual([rule(4102)]);
     expect(plan.remove).toEqual([4101]);
   });
 
-  test('never touches rules outside the range', () => {
-    const plan = planServeRules([4100], [4096, 7420, 4100]);
+  test('applies a rule again when its target changed', () => {
+    const plan = planServeRules([rule(4100, 3001)], [rule(4100, 3000)]);
 
-    expect(plan.add).toEqual([]);
+    expect(plan.apply).toEqual([rule(4100, 3001)]);
+    expect(plan.remove).toEqual([]);
+  });
+
+  test('never touches rules outside the range', () => {
+    const plan = planServeRules([rule(4100)], [rule(4096), rule(7420), rule(4100)]);
+
+    expect(plan.apply).toEqual([]);
     expect(plan.remove).toEqual([]);
   });
 
   test('is empty when the rules already match', () => {
-    const plan = planServeRules([4100, 4101], [4101, 4100]);
+    const plan = planServeRules([rule(4100), rule(4101)], [rule(4101), rule(4100)]);
 
-    expect(plan).toEqual({ add: [], remove: [] });
+    expect(plan).toEqual({ apply: [], remove: [] });
   });
 });
 

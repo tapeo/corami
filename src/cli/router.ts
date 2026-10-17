@@ -103,6 +103,14 @@ export async function runRouter(options: RouterOptions): Promise<number> {
   }
 
   if (result.text !== undefined) {
+    if (options.output.json) {
+      // Without a terminal every command answers in the envelope: a command
+      // that only has text to show wraps it, and no plain text is ever the
+      // output of a run in JSON.
+      emit(success({ text: result.text }), options.output);
+      return 0;
+    }
+
     process.stdout.write(`${result.text}\n`);
   }
 

@@ -5,7 +5,7 @@ import {
   checkRequestShape,
   isJsonContentType,
 } from '@/core/daemon-auth.ts';
-import { toCoramiError } from '@/core/errors.ts';
+import { type ErrorCode, toCoramiError } from '@/core/errors.ts';
 import { handleApi } from '@/daemon/api.ts';
 import { type PreviewOptions, reconcileServeRules } from '@/daemon/previews.ts';
 import { status as tailscaleStatus } from '@/integrations/tailscale.ts';
@@ -113,7 +113,7 @@ export async function startDaemon(options: DaemonOptions): Promise<DaemonHandle>
             ok: false,
             error: { code: coramiError.code, message: coramiError.message, fix: coramiError.fix },
           },
-          400,
+          statusForError(coramiError.code),
         );
       }
 
@@ -171,6 +171,32 @@ function hasBody(request: Request): boolean {
   }
 
   return request.headers.get('transfer-encoding') !== null;
+}
+
+/**
+ * The status of an answer, from the error code: what was asked for is not
+ * there (404), it clashes with what is there (409), the daemon could not reach
+ * something else (502), the request was wrong (400), anything else is a
+ * failure of the daemon (500).
+ */
+function statusForError(code: ErrorCode): number {
+  if (code === 'usage') {
+    return 400;
+  }
+
+  if (code === 'config_invalid') {
+    return 404;
+  }
+
+  if (code === 'project_exists') {
+    return 409;
+  }
+
+  if (code === 'server_unreachable') {
+    return 502;
+  }
+
+  return 500;
 }
 
 async function healthData(options: DaemonOptions, startedAt: number) {

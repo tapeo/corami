@@ -52,37 +52,94 @@ export function parseVersion(value: string): string {
   return value.replace(/^v/, '');
 }
 
+export interface Semver {
+  numbers: [number, number, number];
+  prerelease: string | undefined;
+}
+
+/**
+ * A version as a release names it: `0.7.1`, `v0.7.1`, `1.0.0-rc1`. A part that
+ * is not a number, `dev` from a build of the source tree for example, counts
+ * as zero: it is older than any release.
+ */
+export function parseSemver(value: string): Semver {
+  const [core = '', ...rest] = parseVersion(value).trim().split('-');
+  const parts = core.split('.');
+  const numberAt = (index: number): number => {
+    const parsed = Number(parts[index] ?? '0');
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const prerelease = rest.length === 0 ? undefined : rest.join('-');
+
+  return { numbers: [numberAt(0), numberAt(1), numberAt(2)], prerelease };
+}
+
+/**
+ * Whether `candidate` comes after `current`. A release comes after its own
+ * prereleases, `1.0.0` after `1.0.0-rc1`; two prereleases compare as text.
+ */
 export function isNewer(candidate: string, current: string): boolean {
-  const left = parseVersion(candidate)
-    .split('.')
-    .map((part) => Number(part));
-  const right = parseVersion(current)
-    .split('.')
-    .map((part) => Number(part));
+  const left = parseSemver(candidate);
+  const right = parseSemver(current);
 
   for (let index = 0; index < 3; index += 1) {
-    const a = left[index] ?? 0;
-    const b = right[index] ?? 0;
+    const leftNumber = left.numbers[index] ?? 0;
+    const rightNumber = right.numbers[index] ?? 0;
 
-    if (a > b) {
+    if (leftNumber > rightNumber) {
       return true;
     }
 
-    if (a < b) {
+    if (leftNumber < rightNumber) {
       return false;
     }
+  }
+
+  if (right.prerelease !== undefined && left.prerelease === undefined) {
+    return true;
+  }
+
+  if (left.prerelease !== undefined && right.prerelease !== undefined) {
+    return left.prerelease > right.prerelease;
   }
 
   return false;
 }
 
-export async function latestRelease(
-  repo = REPO,
-): Promise<{ release?: ReleaseInfo | undefined; reason?: 'no_releases' | 'unreachable' }> {
-  const response = await fetch(`${releasesApi(repo)}/latest`, {
+function releaseFromBody(body: {
+  tag_name?: string;
+  assets?: Array<{ name?: string; browser_download_url?: string; url?: string }>;
+}): ReleaseInfo | undefined {
+  if (typeof body.tag_name !== 'string') {
+    return undefined;
+  }
+
+  return {
+    tag: body.tag_name,
+    version: parseVersion(body.tag_name),
+    assets: (body.assets ?? [])
+      .filter(
+        (asset) => typeof asset.name === 'string' && typeof asset.browser_download_url === 'string',
+      )
+      .map((asset) => ({
+        name: String(asset.name),
+        url: String(asset.browser_download_url),
+        api_url: typeof asset.url === 'string' ? asset.url : undefined,
+      })),
+  };
+}
+
+async function releasesFetch(url: string): Promise<Response | undefined> {
+  return fetch(url, {
     headers: { accept: 'application/vnd.github+json', ...authHeaders() },
     signal: AbortSignal.timeout(20_000),
   }).catch(() => undefined);
+}
+
+export async function latestRelease(
+  repo = REPO,
+): Promise<{ release?: ReleaseInfo | undefined; reason?: 'no_releases' | 'unreachable' }> {
+  const response = await releasesFetch(`${releasesApi(repo)}/latest`);
 
   if (response === undefined) {
     return { reason: 'unreachable' };
@@ -96,31 +153,46 @@ export async function latestRelease(
     return { reason: 'unreachable' };
   }
 
-  const body = (await response.json()) as {
-    tag_name?: string;
-    assets?: Array<{ name?: string; browser_download_url?: string; url?: string }>;
-  };
+  const release = releaseFromBody(
+    (await response.json()) as {
+      tag_name?: string;
+      assets?: Array<{ name?: string; browser_download_url?: string; url?: string }>;
+    },
+  );
 
-  if (typeof body.tag_name !== 'string') {
-    return { reason: 'no_releases' };
+  return release === undefined ? { reason: 'no_releases' } : { release };
+}
+
+/**
+ * The release of one tag, for `corami update --version`: the command installs
+ * the version that was asked for, not the latest.
+ */
+export async function releaseByTag(
+  tag: string,
+  repo = REPO,
+): Promise<{ release?: ReleaseInfo | undefined; reason?: 'not_found' | 'unreachable' }> {
+  const response = await releasesFetch(`${releasesApi(repo)}/tags/${encodeURIComponent(tag)}`);
+
+  if (response === undefined) {
+    return { reason: 'unreachable' };
   }
 
-  return {
-    release: {
-      tag: body.tag_name,
-      version: parseVersion(body.tag_name),
-      assets: (body.assets ?? [])
-        .filter(
-          (asset) =>
-            typeof asset.name === 'string' && typeof asset.browser_download_url === 'string',
-        )
-        .map((asset) => ({
-          name: String(asset.name),
-          url: String(asset.browser_download_url),
-          api_url: typeof asset.url === 'string' ? asset.url : undefined,
-        })),
+  if (response.status === 404) {
+    return { reason: 'not_found' };
+  }
+
+  if (!response.ok) {
+    return { reason: 'unreachable' };
+  }
+
+  const release = releaseFromBody(
+    (await response.json()) as {
+      tag_name?: string;
+      assets?: Array<{ name?: string; browser_download_url?: string; url?: string }>;
     },
-  };
+  );
+
+  return release === undefined ? { reason: 'not_found' } : { release };
 }
 
 export async function fetchChecksums(release: ReleaseInfo): Promise<Map<string, string>> {
@@ -263,16 +335,32 @@ export async function downloadReleaseBinary(options: {
 
 export function replaceBinary(currentBinary: string, downloaded: string): void {
   const backup = `${currentBinary}.old`;
+  let moved = false;
 
   try {
+    rmSync(backup, { force: true });
     renameSync(currentBinary, backup);
+    moved = true;
   } catch {
-    // the current binary may be running from a path we cannot rename; try the direct replace below
+    // The binary may be running from a path that cannot be renamed (on Windows
+    // a running executable is locked): the direct replace below reports why.
   }
 
   try {
     renameSync(downloaded, currentBinary);
   } catch (error) {
+    if (moved) {
+      try {
+        renameSync(backup, currentBinary);
+      } catch {
+        throw new CoramiError({
+          code: 'generic',
+          message: `Cannot replace ${currentBinary}, and the previous binary is at ${backup}`,
+          fix: 'Put it back by hand, then run corami update again',
+        });
+      }
+    }
+
     throw new CoramiError({
       code: 'generic',
       message: `Cannot replace ${currentBinary}`,
@@ -280,5 +368,8 @@ export function replaceBinary(currentBinary: string, downloaded: string): void {
     });
   }
 
-  rmSync(backup, { force: true });
+  // A leftover backup is not a failure: the new binary is already in place.
+  try {
+    rmSync(backup, { force: true });
+  } catch {}
 }

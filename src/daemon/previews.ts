@@ -8,16 +8,60 @@ import {
   previewUrl,
 } from '@/core/previews.ts';
 import { deletePreview, getPreview, listPreviews, upsertPreview } from '@/core/state.ts';
-import { servedPorts, serveHttps, serveOff, serveStatus } from '@/integrations/tailscale.ts';
+import { servedTargets, serveHttps, serveOff, serveStatus } from '@/integrations/tailscale.ts';
 
 export interface PreviewOptions {
   fqdn?: string | undefined;
   tailscaleAvailable: boolean;
 }
 
-// Registers a preview: a stable public port pointing at the port the dev
-// server listens on. Called from the daemon, so the tailscale rule is applied
-// on the server.
+// `tailscale serve` holds the whole serve configuration: two runs at the same
+// time fail one of them with "another client is changing the serve config".
+// Every change of a rule goes through this queue, and the transient failure is
+// tried once more.
+let serveChain: Promise<unknown> = Promise.resolve();
+
+const SERVE_BUSY = /another client is changing the serve config|etag mismatch/i;
+
+function queueServe<T>(task: () => Promise<T>): Promise<T> {
+  const next = serveChain.then(task, task);
+  serveChain = next.catch(() => undefined);
+
+  return next;
+}
+
+async function applyRule(port: number, target: string): Promise<{ ok: boolean; detail: string }> {
+  return queueServe(async () => {
+    const first = await serveHttps(port, target);
+
+    if (first.ok || !SERVE_BUSY.test(first.detail)) {
+      return first;
+    }
+
+    await Bun.sleep(300);
+    return serveHttps(port, target);
+  });
+}
+
+async function dropRule(port: number): Promise<void> {
+  await queueServe(async () => {
+    const first = await serveOff(port);
+
+    if (first.ok || !SERVE_BUSY.test(first.detail)) {
+      return;
+    }
+
+    await Bun.sleep(300);
+    await serveOff(port);
+  });
+}
+
+/**
+ * Registers a preview: a stable public port pointing at the port the dev
+ * server listens on. The record is written before the serve rule is created,
+ * so two registrations arriving together cannot pick the same port; a rule
+ * that cannot be created leaves no record behind.
+ */
 export async function applyPreview(
   project: string,
   name: string,
@@ -26,24 +70,8 @@ export async function applyPreview(
 ): Promise<PreviewView> {
   const existing = getPreview(project, name);
   const publicPort =
-    existing?.public_port ??
-    allocatePublicPort(
-      listPreviews()
-        .filter((row) => !(row.project === project && row.name === name))
-        .map((row) => row.public_port),
-    );
-
-  const result = await serveHttps(publicPort, `http://127.0.0.1:${targetPort}`);
-
-  if (!result.ok) {
-    throw new CoramiError({
-      code: 'generic',
-      message: `tailscale serve failed for port ${publicPort}: ${result.detail}`,
-      fix: options.tailscaleAvailable
-        ? 'Check that Tailscale is up and HTTPS certificates are enabled for the tailnet'
-        : 'Install and start Tailscale on the server',
-    });
-  }
+    existing?.public_port ?? allocatePublicPort(listPreviews().map((row) => row.public_port));
+  const target = localTarget(targetPort);
 
   const row: PreviewRow = {
     project,
@@ -55,7 +83,30 @@ export async function applyPreview(
 
   upsertPreview(row);
 
+  const result = await applyRule(publicPort, target);
+
+  if (!result.ok) {
+    if (existing === undefined) {
+      deletePreview(project, name);
+    } else {
+      upsertPreview(existing);
+    }
+
+    throw new CoramiError({
+      code: 'generic',
+      message: `tailscale serve failed for port ${publicPort}: ${result.detail}`,
+      fix: options.tailscaleAvailable
+        ? 'Check that Tailscale is up and HTTPS certificates are enabled for the tailnet'
+        : 'Install and start Tailscale on the server',
+    });
+  }
+
   return toView(row, options.fqdn, await isPortResponding(targetPort));
+}
+
+/** The address of a dev server on the server itself, as `tailscale serve` takes it. */
+export function localTarget(targetPort: number): string {
+  return `http://127.0.0.1:${targetPort}`;
 }
 
 export async function removePreview(project: string, name: string): Promise<boolean> {
@@ -65,7 +116,7 @@ export async function removePreview(project: string, name: string): Promise<bool
     return false;
   }
 
-  await serveOff(row.public_port);
+  await dropRule(row.public_port);
   deletePreview(project, name);
 
   return true;
@@ -73,7 +124,7 @@ export async function removePreview(project: string, name: string): Promise<bool
 
 export async function removeProjectPreviews(project: string): Promise<void> {
   for (const row of listPreviews().filter((entry) => entry.project === project)) {
-    await serveOff(row.public_port).catch(() => undefined);
+    await dropRule(row.public_port).catch(() => undefined);
   }
 
   for (const row of listPreviews().filter((entry) => entry.project === project)) {
@@ -88,35 +139,34 @@ export async function listPreviewViews(options: PreviewOptions): Promise<Preview
   return rows.map((row, index) => toView(row, options.fqdn, responding[index] === true));
 }
 
-// At startup the daemon aligns the serve rules of the preview range with the
-// registry: rules without a record are removed (they may come from an older
-// version), missing rules are created. Rules outside the range are the user's
-// and are never touched.
-export async function reconcileServeRules(): Promise<{ add: number[]; remove: number[] }> {
+/**
+ * At startup the daemon aligns the serve rules of the preview range with the
+ * registry: a rule missing or pointing at another port is applied again, a
+ * rule without a record is removed (it may come from an older version). Rules
+ * outside the range are the user's and are never touched.
+ */
+export async function reconcileServeRules(): Promise<{ apply: number[]; remove: number[] }> {
   const status = await serveStatus().catch(() => undefined);
 
   if (status === undefined) {
-    return { add: [], remove: [] };
+    return { apply: [], remove: [] };
   }
 
-  const desired = listPreviews().map((row) => row.public_port);
-  const plan = planServeRules(desired, servedPorts(status));
+  const desired = listPreviews().map((row) => ({
+    port: row.public_port,
+    target: localTarget(row.target_port),
+  }));
+  const plan = planServeRules(desired, servedTargets(status));
 
   for (const port of plan.remove) {
-    await serveOff(port).catch(() => undefined);
+    await dropRule(port).catch(() => undefined);
   }
 
-  const rows = listPreviews();
-
-  for (const port of plan.add) {
-    const row = rows.find((entry) => entry.public_port === port);
-
-    if (row !== undefined) {
-      await serveHttps(port, `http://127.0.0.1:${row.target_port}`).catch(() => undefined);
-    }
+  for (const rule of plan.apply) {
+    await applyRule(rule.port, rule.target).catch(() => undefined);
   }
 
-  return plan;
+  return { apply: plan.apply.map((rule) => rule.port), remove: plan.remove };
 }
 
 function toView(row: PreviewRow, fqdn: string | undefined, responding: boolean): PreviewView {

@@ -145,8 +145,13 @@ export async function serveHttps(
   };
 }
 
-export async function serveOff(port: number): Promise<void> {
-  await run('tailscale', ['serve', `--https=${port}`, 'off']);
+export async function serveOff(port: number): Promise<{ ok: boolean; detail: string }> {
+  const result = await run('tailscale', ['serve', `--https=${port}`, 'off']);
+
+  return {
+    ok: result.ok,
+    detail: `${result.stderr}${result.stdout}`.trim(),
+  };
 }
 
 export async function serveStatus(): Promise<Record<string, unknown> | undefined> {
@@ -159,55 +164,46 @@ export async function serveStatus(): Promise<Record<string, unknown> | undefined
   return parseJson(result.stdout);
 }
 
-// The ports reachable over HTTPS on this machine, from `tailscale serve
-// status --json`.
-export function servedPorts(status: Record<string, unknown> | undefined): number[] {
+export interface ServeTarget {
+  port: number;
+  target: string;
+}
+
+/**
+ * The HTTPS rules of this machine, from `tailscale serve status --json`: the
+ * public port and the local address it forwards to.
+ */
+export function servedTargets(status: Record<string, unknown> | undefined): ServeTarget[] {
   if (status === undefined) {
     return [];
   }
 
-  const ports = new Set<number>();
+  const web = isRecord(status.Web) ? status.Web : {};
+  const targets: ServeTarget[] = [];
 
-  collectPorts(status, ports);
+  for (const [hostname, entry] of Object.entries(web)) {
+    const port = publicPortOf(hostname);
 
-  return [...ports].sort((left, right) => left - right);
-}
-
-function collectPorts(value: unknown, ports: Set<number>, depth = 0): void {
-  if (depth > 6 || typeof value !== 'object' || value === null) {
-    return;
-  }
-
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      collectPorts(entry, ports, depth + 1);
-    }
-
-    return;
-  }
-
-  for (const [key, entry] of Object.entries(value)) {
-    if (key === 'HTTPS' || key === 'HTTP' || key === 'TCP') {
-      if (typeof entry === 'number') {
-        ports.add(entry);
-        continue;
-      }
-
-      for (const port of Object.keys(isRecord(entry) ? entry : {})) {
-        if (/^\d+$/.test(port)) {
-          ports.add(Number(port));
-        }
-      }
-
+    if (port === undefined || !isRecord(entry)) {
       continue;
     }
 
-    if (/^\d+$/.test(key)) {
-      ports.add(Number(key));
+    const handlers = isRecord(entry.Handlers) ? entry.Handlers : {};
+    const root = handlers['/'];
+
+    if (!isRecord(root) || typeof root.Proxy !== 'string') {
+      continue;
     }
 
-    collectPorts(entry, ports, depth + 1);
+    targets.push({ port, target: root.Proxy });
   }
+
+  return targets.sort((left, right) => left.port - right.port);
+}
+
+function publicPortOf(hostname: string): number | undefined {
+  const port = hostname.slice(hostname.lastIndexOf(':') + 1);
+  return /^\d+$/.test(port) ? Number(port) : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,4 +1,4 @@
-import { realpathSync } from 'node:fs';
+import { chmodSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { userInfo } from 'node:os';
 
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
@@ -10,8 +10,9 @@ import {
   downloadReleaseBinary,
   isNewer,
   latestRelease,
-  parseVersion,
   REPO,
+  type ReleaseInfo,
+  releaseByTag,
   replaceBinary,
 } from '@/core/release.ts';
 import { ownerBinary, ownerOfServer } from '@/core/server-user.ts';
@@ -32,26 +33,8 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
     });
   }
 
-  const outcome = await latestRelease();
-
-  if (outcome.release === undefined) {
-    throw new CoramiError({
-      code: 'generic',
-      message:
-        outcome.reason === 'no_releases'
-          ? `${REPO} has no published release yet`
-          : `Cannot reach ${REPO}`,
-      fix:
-        outcome.reason === 'no_releases'
-          ? 'Until the first release, install the binary by hand or from a release branch'
-          : 'Check the connection, or the repository name in CORAMI_REPO',
-    });
-  }
-
-  const release = outcome.release;
-
-  const target = requested === undefined ? release.version : parseVersion(requested);
-  const newer = isNewer(target, VERSION);
+  const release = await wantedRelease(requested);
+  const newer = isNewer(release.version, VERSION);
 
   if (check) {
     if (context.output.json) {
@@ -65,7 +48,9 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
     };
   }
 
-  if (!newer && !booleanFlag(context.args, 'force')) {
+  // A version asked for is installed as it is, an older one included: it was
+  // named on purpose.
+  if (requested === undefined && !newer && !booleanFlag(context.args, 'force')) {
     if (context.output.json) {
       return { data: { current: VERSION, latest: release.version, updated: false } };
     }
@@ -112,6 +97,51 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
   };
 }
 
+/**
+ * The release to install: the one of `--version` when it is given, the latest
+ * otherwise.
+ */
+async function wantedRelease(requested: string | undefined): Promise<ReleaseInfo> {
+  if (requested !== undefined) {
+    const tag = requested.startsWith('v') ? requested : `v${requested}`;
+    const outcome = await releaseByTag(tag);
+
+    if (outcome.release === undefined) {
+      throw new CoramiError({
+        code: 'generic',
+        message:
+          outcome.reason === 'not_found'
+            ? `${REPO} has no release tagged ${tag}`
+            : `Cannot reach ${REPO}`,
+        fix:
+          outcome.reason === 'not_found'
+            ? 'corami update --check reports the latest version'
+            : 'Check the connection, or the repository name in CORAMI_REPO',
+      });
+    }
+
+    return outcome.release;
+  }
+
+  const outcome = await latestRelease();
+
+  if (outcome.release === undefined) {
+    throw new CoramiError({
+      code: 'generic',
+      message:
+        outcome.reason === 'no_releases'
+          ? `${REPO} has no published release yet`
+          : `Cannot reach ${REPO}`,
+      fix:
+        outcome.reason === 'no_releases'
+          ? 'Until the first release, install the binary by hand or from a release branch'
+          : 'Check the connection, or the repository name in CORAMI_REPO',
+    });
+  }
+
+  return outcome.release;
+}
+
 export function resolveBinary(): string {
   try {
     return realpathSync(process.execPath);
@@ -149,7 +179,31 @@ async function copyToOwner(): Promise<boolean> {
     return false;
   }
 
-  return (await run('cp', ['-f', resolveBinary(), target])).ok;
+  // A plain `cp` over the file of the account leaves it owned by root, and the
+  // account could not run it. The copy is written next to it, given back to the
+  // account, and only then put in place.
+  const temporary = `${target}.new`;
+  rmSync(temporary, { force: true });
+
+  if (!(await run('cp', ['-f', resolveBinary(), temporary])).ok) {
+    return false;
+  }
+
+  if (!(await run('chown', [`${user}:${user}`, temporary])).ok) {
+    rmSync(temporary, { force: true });
+    return false;
+  }
+
+  chmodSync(temporary, 0o755);
+
+  try {
+    renameSync(temporary, target);
+  } catch {
+    rmSync(temporary, { force: true });
+    return false;
+  }
+
+  return true;
 }
 
 /** The account that owns the projects on this server, when one is configured. */
@@ -209,12 +263,15 @@ async function restartDaemon(): Promise<boolean> {
   const env = { XDG_RUNTIME_DIR: `/run/user/${process.getuid?.() ?? 0}` };
   const active = await run('systemctl', ['--user', 'is-active', 'corami-daemon'], { env });
 
-  if (active.stdout.trim() !== 'active') {
-    return false;
+  if (active.stdout.trim() === 'active') {
+    return (await run('systemctl', ['--user', 'restart', 'corami-daemon'], { env })).ok;
   }
 
-  const restarted = await run('systemctl', ['--user', 'restart', 'corami-daemon'], { env });
-  return restarted.ok;
+  // The setup falls back to a system unit when the account has no user
+  // services, and the daemon runs there: as root this restart works, as the
+  // account it does not, and the summary says so instead of claiming a restart
+  // that did not happen.
+  return (await run('systemctl', ['restart', 'corami-daemon'])).ok;
 }
 
 // The git service runs on both roles, so the role is not checked: when the

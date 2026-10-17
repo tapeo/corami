@@ -25,7 +25,7 @@ Commands of v1. A command that does several things has actions, as in `corami sy
 | `corami setup client <server> --step <step>` | client | runs a single step: `tailscale`, `daemon`, `ssh`, `mutagen`, `mutagen-daemon`, `config`, `git-watch` |
 | `corami setup git [--provider github\|gitlab\|bitbucket] [--identity-name <name>] [--identity-email <email>]` | server, as the account | SSH key of the server, check and rewriting of HTTPS remotes; with `--identity-email` it also sets the git identity of the account, `Corami` as the name by default |
 | `corami doctor [area]` | all | checks with remedies. Areas: `net`, `tools`, `git`, `server` |
-| `corami update [--check] [--version vX.Y.Z] [--force]` | all | updates the binary from the GitHub release, with a sum check, or installs one exact version; `--force` installs the same version again; on the server it restarts the daemon, and as root it also replaces the binary of the account |
+| `corami update [--check] [--version vX.Y.Z] [--force]` | all | updates the binary from the GitHub release, with a sum check, or installs the version named with `--version` (an older one included); `--force` installs the same version again; on the server it restarts the daemon, and as root it also replaces the binary of the account |
 
 In a terminal the setups ask what the flags do not say, and only that:
 

@@ -251,8 +251,9 @@ Corami starts no project process. The dev server is started by the user or the a
 ### Registration and reconciliation
 
 - `corami serve <port>` on the server calls `PUT /v1/projects/<p>/previews/<name>`: the daemon validates the port (1-65535, not 7420 and not in the preview range), allocates the public port and runs `tailscale serve --bg --https=<public> http://127.0.0.1:<target>`.
-- Changing the target needs `off` first, which `applyPreview` does.
-- At startup the daemon reconciles (`reconcileServeRules`): `planServeRules(desired, current)` is a pure function (`src/core/previews.ts`, covered by tests) that says which rules to create and which to remove, considering only the Corami range. Rules without a record are removed, so leftovers of an older version disappear by themselves. Rules outside the range are the user's.
+- The record is written before the rule is created: two registrations arriving together cannot pick the same public port, and a rule that cannot be created leaves no record behind. Changing the target is another `tailscale serve` on the same port, which moves the proxy: no `off` first.
+- `tailscale serve` holds the whole serve configuration, so two runs at the same time fail one of them ("another client is changing the serve config"). The daemon serializes every change of a rule and tries the transient failure once more.
+- At startup the daemon reconciles (`reconcileServeRules`): `planServeRules(desired, current)` is a pure function (`src/core/previews.ts`, covered by tests) that says which rules to apply and which to remove, comparing port and target, and considering only the Corami range. Rules without a record are removed, so leftovers of an older version disappear by themselves; a rule pointing at the wrong port is applied again. Rules outside the range are the user's.
 - `corami serve rm <name>` turns the rule off and deletes the record. Removing a project does the same for all its previews.
 
 ### Dev servers that check the Host header
@@ -472,7 +473,7 @@ Two notes for the code:
 
 ## Daemon API (v1)
 
-All routes are under `/v1`, authenticated with the Tailscale identity headers and answered in the standard envelope.
+All routes are under `/v1`, authenticated with the Tailscale identity headers and answered in the standard envelope. The HTTP status follows the error: 400 for a wrong request, 404 for what is not there, 409 for a name already taken, 502 when the daemon could not reach something else, 500 for everything else. The clients read the envelope, not the status.
 
 | Method | Route | Use |
 |---|---|---|
@@ -604,7 +605,7 @@ Without a terminal the setup takes its options as flags. A non-interactive mode 
 
 ### Updates
 
-`corami update` downloads the new release from GitHub and verifies the sha256 before replacing the binary. On the server it restarts the daemon: as the account when the update runs as the account, through `runuser` when it runs as root, which also replaces the binary of the account. From source the command exits with an error: the binary to replace would be bun. `corami update --check` stays available.
+`corami update` downloads the new release from GitHub and verifies the sha256 before replacing the binary. The replacement renames the old binary aside and puts the previous one back when the move fails, so a machine never stays without a binary. `--version vX.Y.Z` fetches that tag's release, not the latest: an older version named on purpose is installed. On the server it restarts the daemon: as the account when the update runs as the account, through `runuser` when it runs as root, which also replaces the binary of the account keeping its ownership (copy, `chown`, rename). The restart covers the user unit and the system one, the fallback of a server without user services. From source the command exits with an error: the binary to replace would be bun. `corami update --check` stays available.
 
 The binaries of the release declare the tag (`--define` in the workflow); every other execution declares `dev`, or the value of `CORAMI_VERSION` when it is in the execution environment.
 

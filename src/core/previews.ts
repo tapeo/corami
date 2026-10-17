@@ -71,19 +71,40 @@ function isInPreviewRange(port: number): boolean {
   return port >= PORT_RANGE_START && port <= PORT_RANGE_END;
 }
 
-// The serve rules of the preview range that must be created and removed to
-// match the registry. Rules outside the range belong to the user and are
-// never touched.
+export interface ServeRule {
+  port: number;
+  target: string;
+}
+
+/**
+ * The serve rules of the preview range that must be applied and removed to
+ * match the registry. A rule with the right port but another target is applied
+ * again: `tailscale serve` moves the proxy of a port. Rules outside the range
+ * belong to the user and are never touched.
+ */
 export function planServeRules(
-  desired: number[],
-  current: number[],
-): { add: number[]; remove: number[] } {
-  const wanted = new Set(desired.filter(isInPreviewRange));
-  const present = new Set(current.filter(isInPreviewRange));
+  desired: ServeRule[],
+  current: ServeRule[],
+): { apply: ServeRule[]; remove: number[] } {
+  const wanted = new Map(
+    desired.filter((rule) => isInPreviewRange(rule.port)).map((rule) => [rule.port, rule.target]),
+  );
+  const present = new Map(
+    current.filter((rule) => isInPreviewRange(rule.port)).map((rule) => [rule.port, rule.target]),
+  );
+  const apply: ServeRule[] = [];
+
+  for (const [port, target] of wanted) {
+    if (present.get(port) !== target) {
+      apply.push({ port, target });
+    }
+  }
 
   return {
-    add: [...wanted].filter((port) => !present.has(port)).sort((left, right) => left - right),
-    remove: [...present].filter((port) => !wanted.has(port)).sort((left, right) => left - right),
+    apply: apply.sort((left, right) => left.port - right.port),
+    remove: [...present.keys()]
+      .filter((port) => !wanted.has(port))
+      .sort((left, right) => left - right),
   };
 }
 
