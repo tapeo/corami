@@ -8,10 +8,12 @@ Corami is the host under your agent, not the agent: OpenCode, Claude Code or any
 
 ## A day with Corami
 
-1. From the laptop you give the agent a task. The agent runs on the server.
-2. You close the lid whenever, no commit needed: the files are always in sync, so every save is already on the server. The agent keeps working.
-3. On the phone you open the preview at its HTTPS address and keep talking to the agent.
-4. On another computer, `corami project add --from-server --name myapp --local-path ~/dev/myapp` brings the same files, uncommitted work included.
+1. At your desk, the project folder on the Mac is synced with the server. You give a task to the agent, Claude Code, Codex or OpenCode, running on the server.
+2. Every file the agent saves on the server shows up in the folder on the Mac: you follow the changes live in your editor.
+3. Time to leave, or you are on a train: close the lid, no commit needed. Every save is already on the server, and the agent keeps working there.
+4. On the phone you open the preview at its HTTPS address and keep talking to the agent.
+5. Back home or at the office, open the lid: what the agent changed while you were away syncs to the Mac by itself. The server and every copy hold the same state.
+6. On another computer, `corami project add --from-server --name myapp --local-path ~/dev/myapp` brings the same files, uncommitted work included.
 
 ## Why
 
