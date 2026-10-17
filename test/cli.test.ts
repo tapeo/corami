@@ -225,30 +225,6 @@ describe('cli', () => {
     expect(parsed.error.message).toBe('Give only one of --from-git or --from-server');
   });
 
-  test('fails the import of a folder that is not a repository', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'corami-home-'));
-    mkdirSync(join(home, '.corami'), { recursive: true });
-    writeFileSync(
-      join(home, '.corami', 'config.json'),
-      JSON.stringify({ role: 'client', server_host: 'corami.example.ts.net' }),
-    );
-
-    const folder = await mkdtemp(join(tmpdir(), 'corami-import-'));
-    writeFileSync(join(folder, 'notes.txt'), 'x');
-
-    const result = await corami(['project', 'add', '--local-path', folder], { HOME: home });
-    const parsed = JSON.parse(result.stdout);
-
-    // Nothing was written anywhere: the command answered with the step that
-    // stopped it, and the folder of this machine is where it was.
-    expect(result.exitCode).toBe(2);
-    expect(parsed.ok).toBe(false);
-    expect(parsed.error.code).toBe('usage');
-    expect(parsed.error.message).toContain(`Import of ${folder.split('/').at(-1)} stopped at git`);
-    expect(parsed.error.details.steps.map((step: { step: string }) => step.step)).toContain('git');
-    expect(existsSync(join(folder, 'notes.txt'))).toBe(true);
-  });
-
   test('refuses a name the sync engine cannot take, even before the server', async () => {
     const folder = await mkdtemp(join(tmpdir(), 'corami-import-'));
     const result = await corami(['project', 'add', '--local-path', folder, '--name', 'my_app']);

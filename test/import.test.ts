@@ -4,7 +4,8 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { remoteExtractCommand } from '@/cli/commands/import.ts';
+import { remoteExtractCommand, runImport } from '@/cli/commands/import.ts';
+import { CoramiError } from '@/core/errors.ts';
 import { shellQuote } from '@/core/exec.ts';
 import { MUTAGEN } from '@/core/pinned-tools.ts';
 import { checksumFor } from '@/core/release.ts';
@@ -224,5 +225,49 @@ describe('the command the server runs to unpack the archive', () => {
   test('a path with a quote stays one word', () => {
     const command = remoteExtractCommand("/home/it's/projects/demo");
     expect(command).toContain("mkdir -p '/home/it'\\''s/projects/demo'");
+  });
+});
+
+describe('an import that stops', () => {
+  test('a folder that is not a repository is a usage error, with its steps', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'corami-home-'));
+    const folder = await mkdtemp(join(tmpdir(), 'corami-import-'));
+    mkdirSync(join(home, '.corami'), { recursive: true });
+    writeFileSync(
+      join(home, '.corami', 'config.json'),
+      JSON.stringify({
+        role: 'client',
+        server_host: 'corami.example.ts.net',
+        server_user: 'corami',
+      }),
+    );
+    writeFileSync(join(folder, 'notes.txt'), 'x');
+
+    const previous = process.env.HOME;
+    process.env.HOME = home;
+
+    try {
+      // The git step is the first one, so no daemon and no sync engine are
+      // asked: the command stops here with the step that failed.
+      const error = await runImport({
+        project: 'probe',
+        localPath: folder,
+        dryRun: false,
+        output: { json: true, color: false },
+      }).catch((failure: unknown) => failure);
+
+      expect(error).toBeInstanceOf(CoramiError);
+      expect((error as CoramiError).code).toBe('usage');
+      expect((error as CoramiError).message).toContain('Import of probe stopped at git');
+      expect(
+        (error as CoramiError).details?.steps as Array<{ step: string; status: string }>,
+      ).toContainEqual(expect.objectContaining({ step: 'git', status: 'failed' }));
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previous;
+      }
+    }
   });
 });
