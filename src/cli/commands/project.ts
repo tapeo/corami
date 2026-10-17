@@ -79,7 +79,7 @@ async function ls(context: CommandContext): Promise<CommandResult> {
 
   const lines = [
     projects.length === 0
-      ? 'No projects. Add one with corami project add --from-git <url>.'
+      ? 'No projects. Add one with corami project add --local-path <folder>.'
       : renderTable(rows, columns),
   ];
 
