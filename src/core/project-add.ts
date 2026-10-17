@@ -26,28 +26,29 @@ export async function repositoryAt(cwd: string): Promise<CwdRepository | undefin
 
 export interface ProjectAddState {
   role: Role | undefined;
+  /** The name of the project, given or derived from the url. */
+  project: string;
   url?: string | undefined;
   /** The folder registered with `--path`: the server only. */
   path?: string | undefined;
   /** The name given with `--name`: the fix of the import check gives it back. */
   explicitName?: string | undefined;
-  noSync: boolean;
   cwdRepository?: CwdRepository | undefined;
-  /** A session of the sync engine already carries this name. */
-  session: boolean;
-  /** The folder the local copy would live in. */
-  target: { exists: boolean; empty: boolean };
+  /** The folder of a session of the sync engine that already carries the name. */
+  session?: string | undefined;
+  /** Whether the server already has a project with the name. */
+  onServer: boolean;
 }
 
 /**
- * What `project add` would do about the local copy of this machine: create it,
- * leave the one that is already there alone, or nothing at all on a server and
- * with `--no-sync`. Nothing here touches the disk or the network: the command
- * gathers the state and asks.
+ * Whether `project add` may go on. It only adds the project on the server:
+ * the copy of a client comes from `sync add`, with the folder it is given.
+ * Nothing here touches the disk or the network: the command gathers the state
+ * and asks, and every stop is a usage error that says what to do.
  */
-export type LocalCopyPlan = 'create' | 'orphan-session' | 'target-not-empty' | 'skipped';
+export function planProjectAdd(state: ProjectAddState): void {
+  const name = state.explicitName === undefined ? '' : ` --name ${state.explicitName}`;
 
-export function planProjectAdd(state: ProjectAddState): LocalCopyPlan {
   // A folder of the server cannot be registered from a client: the path would
   // be resolved on the wrong machine.
   if (state.path !== undefined && state.role === 'client') {
@@ -58,39 +59,35 @@ export function planProjectAdd(state: ProjectAddState): LocalCopyPlan {
     });
   }
 
+  if (state.role !== 'client' || state.url === undefined) {
+    return;
+  }
+
   // The project of this folder is already here: the import converts it instead
-  // of leaving it aside and creating a second copy.
-  if (state.role === 'client' && state.url !== undefined) {
-    const origin = state.cwdRepository?.origin;
+  // of leaving it aside, and a copy made later would be a second one.
+  const origin = state.cwdRepository?.origin;
 
-    if (origin !== undefined && sameRepository(origin, state.url)) {
-      const root = state.cwdRepository?.root ?? '.';
-      const named = state.explicitName === undefined ? '' : ` --name ${state.explicitName}`;
+  if (origin !== undefined && sameRepository(origin, state.url)) {
+    const root = state.cwdRepository?.root ?? '.';
 
-      throw new CoramiError({
-        code: 'usage',
-        message: `This machine already has a clone of ${state.url}: ${root}`,
-        fix: `corami project import ${root}${named} instead: it moves that folder to the server and turns it into the synced copy`,
-      });
-    }
+    throw new CoramiError({
+      code: 'usage',
+      message: `This machine already has a clone of ${state.url}: ${root}`,
+      fix: `corami project import ${root}${name} instead: it moves that folder to the server and turns it into the synced copy`,
+    });
   }
 
-  if (state.role !== 'client' || state.noSync || state.url === undefined) {
-    return 'skipped';
-  }
-
-  // A session for the name, while the project was not on the server: the copy
+  // A session for the name, while the project is not on the server: the copy
   // of a project that was removed. It points at the folder the new clone goes
-  // to, and resuming it would reconcile an older copy with a fresh clone.
-  if (state.session) {
-    return 'orphan-session';
+  // to, and would reconcile an older copy with a fresh clone as soon as it is
+  // there. A project that is on the server is refused by the server itself.
+  if (state.session !== undefined && !state.onServer) {
+    throw new CoramiError({
+      code: 'usage',
+      message: `A sync session for ${state.project} already exists at ${state.session}, from a project removed from the server`,
+      fix: `corami sync stop ${state.project} closes it and keeps its files, then add the project again`,
+    });
   }
-
-  if (state.target.exists && !state.target.empty) {
-    return 'target-not-empty';
-  }
-
-  return 'create';
 }
 
 /**

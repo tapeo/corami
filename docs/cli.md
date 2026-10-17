@@ -32,6 +32,7 @@ In a terminal the setups ask what the flags do not say, and only that:
 - `corami setup` without a role asks for it. Outside Linux the machine can only be a client.
 - `corami setup server` waits for the approval of the Tailscale login link instead of stopping, proposes the Tailscale login of the server as the owner when `--owner` is missing and none is saved, and offers to close public SSH when Tailscale SSH is on and the firewall is not in place yet.
 - `corami setup client` without a server proposes the one already configured, then the machines of the tailnet where a Corami daemon answers, then asks for the name. The account of the server is the one the daemon announces, `--user` an override.
+- A client that moves to a server with another name stops its sessions first: the steps are in [backup.md](backup.md#moving-the-clients-to-another-server).
 - A failed step shows the reason and offers to run it again.
 
 The server setup runs as root and creates the account that owns the projects, `corami` by default: the projects, the daemon, the git alignment service, the agents and their previews belong to it. Root keeps for the machine: a command that would write under the home of root on such a server (`project add`, `serve`, `setup git`) stops and says to run it as that account.
@@ -59,18 +60,18 @@ A role and flags after `--` go to the setup. Without a terminal it installs the 
 
 ## Projects
 
-`project` acts on the server, `sync` on the copy of this machine. A project is added to the server once, with `project add` or `project import`, and every client then takes its copy with `corami sync add`. `project rm` removes it from the server, previews included, and on a client it closes the copy of that machine first: the files stay where they are, the session does not. `sync rm` is the other way round: it frees the disk of this machine and leaves the server alone. The [quick start](quickstart.md#3-your-first-project) shows which command fits where the project is today.
+`project` acts on the server, `sync` on the copy of this machine. A project is added to the server once, with `project add` or `project import`, and every client then takes its copy with `corami sync add`, in the folder it gives with `--path`. `project rm` removes it from the server, previews included, and on a client it closes the copy of that machine first: the files stay where they are, the session does not. `sync rm` is the other way round: it frees the disk of this machine and leaves the server alone. The [quick start](quickstart.md#3-your-first-project) shows which command fits where the project is today.
 
 | Command | Description |
 |---|---|
-| `corami project add <git-url> [--name <name>] [--no-sync] [--dry-run]` | clones on the server; on a client it creates the copy of this machine in the same command, unless `--no-sync` |
+| `corami project add <git-url> [--name <name>] [--dry-run]` | clones on the server. The copy of a client comes after, from `sync add` |
 | `corami project add --path <folder> [--dry-run]` | on the server: registers a folder already there, without moving it. A client refuses it: `project import` moves a folder of this machine instead |
-| `corami project import [folder] [--name <name>] [--include <glob>] [--user <user>] [--dry-run]` | on a client: moves a local project to the server, with git history and env files; the folder becomes the synced copy. Files that look like keys stay on the client, in the backup folder. `--include` copies more files not tracked by git, repeatable |
+| `corami project import <folder> [--name <name>] [--include <glob>] [--user <user>] [--dry-run]` | on a client: moves a local project to the server, with git history and env files; the folder becomes the synced copy. The folder is required, `.` for the current one. Files that look like keys stay on the client, in the backup folder. `--include` copies more files not tracked by git, repeatable |
 | `corami project ls` | list with the previews of each project |
 | `corami project show <name>` | project detail: path, git, previews |
 | `corami project rm <name> --yes` | removes the project from the server, previews included. Deletes the folder only if Corami created it: one registered with `--path` stays on disk |
 
-`project add <git-url>` on a client creates the copy at `~/corami/<name>` and starts its session. Before registering the project it stops when the folder it runs in is already a clone of the url (`project import` is the command then), when a session of that name is left behind by a project removed elsewhere (`sync stop` closes it and keeps the files), and when `~/corami/<name>` exists with something else in it (choose another folder with `--path`). A copy that fails, for a missing Mutagen or SSH, does not take the project away: the output says why and `corami sync add <name>` retries it. `--dry-run` shows the plan without touching anything, the server included.
+`project add <git-url>` on a client adds the project on the server and creates no copy: `corami sync add <name> --path <folder>` does, in the folder chosen. Before registering the project it stops when the folder it runs in is already a clone of the url (`project import` is the command then), and when a session of that name is left behind by a project removed elsewhere (`sync stop` closes it and keeps the files). `--dry-run` shows the plan without touching anything, the server included.
 
 On a client, `project ls` also reads the sessions of the sync engine and adds a `Local` column, in JSON `local_copy` for every project and `orphan_copies` for the sessions without a project on the server, the copies `sync stop` closes. A Mutagen that does not answer leaves the column empty and the text says it, without failing the command.
 
@@ -94,16 +95,18 @@ The public port is stable per preview and comes from the daemon, in the range 41
 
 | Command | Where | Description |
 |---|---|---|
-| `corami sync add [<project>] [--path <folder>] [--server-path <folder>] [--user <user>] [--no-git] [--dry-run]` | client | creates the local copy, starts the session and gives the copy its own `.git`, cloned from `origin` on the branch of the server; run again, it retries a clone that failed. On a client, the first project runs it from `project add` |
+| `corami sync add [<project>] [--path <folder>] [--server-path <folder>] [--user <user>] [--no-git] [--dry-run]` | client | creates the local copy in the folder of `--path`, starts the session and gives the copy its own `.git`, cloned from `origin` on the branch of the server. Run again without `--path`, it resumes the copy of the session and retries a clone that failed |
 | `corami sync ls` | client | the copies of this machine, from the sessions of the engine: no daemon and no git. With the daemon reachable it marks the copies whose project is not on the server |
 | `corami sync status [project]` | client | state, conflicts with their local and server paths, last error, last change and git state of the two sides towards `origin` |
 | `corami sync flush [project]` | client | flushes the session queue |
-| `corami sync rm <project> [--force] [--dry-run]` | client | removes only the local copy, after the checks |
+| `corami sync rm <project> [--force] [--dry-run]` | client | removes only the local copy, the folder of its session, after the checks. The project is always named, never taken from the current folder |
 | `corami sync stop [<project>]` | client | stops the sync of this copy and keeps the files. The way out of a copy whose project is gone from the server, where `sync rm` would be deleting the last copy of the work |
 | `corami sync prune --unused <duration> [--dry-run] [--yes]` | client | lists and removes the unused copies of this client; without `--yes` it touches nothing |
 | `corami git watch [project] [--once]` | all | the alignment cycle in the foreground: it runs as a service on the server and on every client |
 
-Inside a synced copy the project name is not needed: the commands find it from the sync sessions.
+Inside a synced copy the project name is not needed, except for `sync rm`: the commands find it from the sync sessions. A Mutagen that does not answer stops every command that picks a copy, `project add` and `project rm` on a client included: without its sessions no command can tell which folder belongs to which project.
+
+The folder of a copy is never guessed. `sync add` without a session needs `--path`, and a session already there keeps its folder: another `--path` is a `usage` error, the copy moves with `sync rm` then `sync add --path`. The folder cannot be inside the copy of another project, or contain it. A path that still starts with `~` is refused, because only a shell expands it: give it in full or relative to the current folder. `sync rm` deletes only the folder of a session: a folder whose sync was stopped is not a copy any more, and Corami leaves it to you.
 
 The account of the server for the sync and the import is `server_user` of the configuration, saved by `corami setup client`, then `user` of the health answer of the daemon, then `root`. `--user` overrides it for one command.
 

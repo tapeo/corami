@@ -98,4 +98,14 @@ With `loginctl enable-linger` (the Corami setup does it) the timer runs with no 
 4. On the server, restart the dev servers (a user service, `docker compose up -d`) and register their addresses: `corami serve <port>`.
 5. On every client, `corami sync add <project>` and `corami update`.
 
-The projects are folders: the clients of a restored server find the sync sessions again by running `corami sync add <project>`, and git realigns itself through `corami-git-watch`.
+The projects are folders: the clients of a restored server find the sync sessions again by running `corami sync add <project>`, and git realigns itself through `corami-git-watch`. That holds when the new server keeps the name of the old one in the tailnet. With another name, follow the next section.
+
+## Moving the clients to another server
+
+Corami knows a copy by the name of its project, not by the server it syncs with. After a change of server name the sessions of a client still point at the old one: `corami sync add <project>` would resume them, and `corami sync rm <project>` would act on their copies. On every client, before anything else:
+
+1. `corami sync ls` lists the copies and their folders: note them.
+2. `corami sync stop <project>` for each copy: the session goes, the files stay where they are.
+3. `corami setup client <new-server>`.
+4. For each project, move the old folder away and create the copy in its place: `mv ~/dev/myapp ~/dev/myapp.old`, then `corami sync add myapp --path ~/dev/myapp`. `sync add` refuses a folder that is not empty, so the old copy never mixes with the new one.
+5. Compare the two folders. Work that is only in the old one goes into the new copy by hand, then delete the old folder yourself: it has no session, and `sync rm` does not touch it.

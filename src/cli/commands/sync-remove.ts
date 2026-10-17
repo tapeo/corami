@@ -1,8 +1,6 @@
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
 
-import { homeDirectory } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { directorySize, findLocalOnlyFiles, localGit, rememberRemoval } from '@/core/local-copy.ts';
 import { CONFLICT_RESOLUTION } from '@/core/sync-conflicts.ts';
@@ -172,12 +170,4 @@ export function removalFix(project: string, step: string | undefined, folderGone
   }
 
   return `See both copies of each conflict with corami sync status ${project}, then ${CONFLICT_RESOLUTION}`;
-}
-
-export function defaultLocalPath(project: string): string {
-  return join(homeDirectory(), 'corami', project);
-}
-
-export function resolveLocalPath(project: string, explicit?: string): string {
-  return explicit === undefined ? defaultLocalPath(project) : resolve(explicit);
 }

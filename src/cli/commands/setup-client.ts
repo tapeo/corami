@@ -131,14 +131,11 @@ export async function runClientSetup(
     }
   }
 
-  const localRoot = join(homeDirectory(), 'corami');
-
   if (context.output.json) {
     return {
       data: {
         server: clientContext.server,
         user: clientContext.user,
-        local_root: localRoot,
         steps,
       },
     };

@@ -155,6 +155,40 @@ describe('cli', () => {
     expect(stop.flags).toEqual([]);
   });
 
+  test('takes the folder of a copy only where it creates one', async () => {
+    const add = JSON.parse((await corami(['sync', 'add', '--help'])).stdout).data;
+    const rm = JSON.parse((await corami(['sync', 'rm', '--help'])).stdout).data;
+    const project = JSON.parse((await corami(['project', 'add', '--help'])).stdout).data;
+    const names = (spec: { flags: Array<{ name: string }> }) => spec.flags.map((flag) => flag.name);
+
+    expect(names(add)).toContain('path');
+    expect(names(rm)).not.toContain('path');
+    expect(names(project)).not.toContain('no-sync');
+
+    const removal = await corami(['sync', 'rm', 'myapp', '--path', '/tmp/myapp']);
+
+    expect(removal.exitCode).toBe(2);
+    expect(JSON.parse(removal.stdout).error.code).toBe('usage');
+    expect(rm.usage).toStartWith('corami sync rm <project>');
+  });
+
+  test('never takes the copy to remove from the current folder', async () => {
+    const result = await corami(['sync', 'rm']);
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.exitCode).toBe(2);
+    expect(parsed.error.message).toContain('Missing project');
+  });
+
+  test('asks project import for its folder', async () => {
+    const result = await corami(['project', 'import']);
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.exitCode).toBe(2);
+    expect(parsed.error.message).toBe('Missing folder');
+    expect(parsed.error.fix).toContain('corami project import .');
+  });
+
   test('asks for the role when setup is called alone', async () => {
     const result = await corami(['setup']);
     const parsed = JSON.parse(result.stdout);

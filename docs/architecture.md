@@ -175,7 +175,7 @@ corami/
 | Global config | `~/.corami/config.json` | `~/.corami/config.json` |
 | State | `~/.corami/state.db` | |
 | Service logs | `~/.corami/logs/` (git watch) | `~/.corami/logs/` |
-| Projects | `~/projects/<project>` | `~/corami/<project>` (Windows: `%USERPROFILE%\corami\<project>`). For imported projects, the original path |
+| Projects | `~/projects/<project>` | the folder given to `sync add --path`, or the original path for imported projects. Never a default |
 
 Every service listens on `127.0.0.1:<port>`. `tailscale serve` exposes the same port number over HTTPS on the tailnet (see "Network and security").
 
@@ -227,7 +227,7 @@ Every remote access goes over HTTPS. A preview in HTTP on a name that is not `lo
 
 A project is a folder on the server plus a row in `projects(name, path, repo_url, created_at)`. `corami project add` clones or registers a folder, `corami project import` moves one from a client, `corami project rm` removes it (folder, previews and row).
 
-- **The name is the key.** `~/projects/<name>` on the server, `~/corami/<name>` on every client, `corami-<name>` for the Mutagen session.
+- **The name is the key.** `~/projects/<name>` on the server, `corami-<name>` for the Mutagen session. The folder of a client is chosen there and kept by the session: Corami never derives it from the name.
 - **No file in the repository.** `corami serve` finds the project with `projectForPath` (`src/core/previews.ts`): the longest registered path that contains the current folder. From a client, the sync commands use the sync sessions instead.
 - **One instance per project,** in the main folder. Worktrees created by the harness are not registered.
 
@@ -276,7 +276,7 @@ To open the server preview from a client, the same HTTPS address is used, withou
 Nothing in Corami runs a build or a project command. The details, including builds on a client over SSH and the rules for keys, are in [builds.md](builds.md).
 
 - **Dependencies:** each machine installs them with the command of the project (`pnpm install`, `flutter pub get`). Lockfiles are synced, the dependency folders are not, because they contain native binaries and absolute paths of the machine.
-- **Advice, not obligations:** pnpm with its global store (same file system as `~/corami`, for hard links), FVM with `.fvmrc` for Flutter. Corami does not check them.
+- **Advice, not obligations:** pnpm with its global store (same file system as the local copies, for hard links), FVM with `.fvmrc` for Flutter. Corami does not check them.
 - **A long build on the server** competes with the previews for CPU: run it with `nice` and close the toolchain daemons at the end (`gradlew --stop`).
 
 ## Worktrees
@@ -295,7 +295,7 @@ The instructions to give the agents are a block to copy into `AGENTS.md`, in the
 
 ### Mutagen session
 
-One session per project, created by `corami sync add <project>` on a client, or by `project add <git-url>` there, which runs the same thing for the first copy:
+One session per project, created by `corami sync add <project> --path <folder>` on a client, or by `project import` for the folder it converts:
 
 ```bash
 mutagen sync create \
@@ -304,10 +304,10 @@ mutagen sync create \
   --ignore-vcs \
   --ignore <list> \
   corami@<server>:~/projects/<project> \
-  ~/corami/<project>
+  <folder>
 ```
 
-- Alpha is the server, beta is the client. The server path is the folder the daemon has for the project, so a project registered with `project add --path` syncs from where it is.
+- Alpha is the server, beta is the client: the folder of the copy, the only record of where it is. The server path is the folder the daemon has for the project, so a project registered with `project add --path` syncs from where it is.
 - `two-way-safe`: conflicts that cannot be solved without losing data stay pending and are reported ([docs](https://mutagen.io/documentation/synchronization/)).
 - SSH goes through Tailscale SSH, so no keys to distribute.
 - Mutagen daemon persistence: `mutagen daemon register` on macOS and Windows, user systemd unit `corami-mutagen` on Linux. The `mutagen-daemon` step of `corami setup client` installs it, and `corami doctor` checks it.
@@ -336,7 +336,7 @@ Files generated with absolute paths of the machine (`Generated.xcconfig`, `local
 
 ### Removing the local copy
 
-`corami sync rm <project>` frees space on a client: it deletes **only** the local copy of that client. Project, git and previews on the server stay untouched. `corami sync add <project>` recreates it at any time.
+`corami sync rm <project>` frees space on a client: it deletes **only** the local copy of that client. Project, git and previews on the server stay untouched. `corami sync add <project> --path <folder>` recreates it at any time. It acts only on the folder of the session: without one there is no copy to remove, and no `--path` to point it somewhere else.
 
 `corami sync stop <project>` is the other way out: the session of this machine goes, the files stay as a plain folder. It is what a copy whose project is gone from the server needs, because `sync rm` would be deleting the last copy of the work. Mutagen reports the missing folder on one side as a conflict on the root itself, with an empty path, so `sync status` shows it as the folder of the project and no file inside; `project import <folder>` puts that folder back on the server when the name is free.
 
@@ -411,7 +411,7 @@ corami git watch [proj] --once   # one cycle only, without staying in listen mod
 
 ## Importing a local project
 
-`corami project import [path]` moves to the server a project that today lives on a client, with all the git history and the necessary files that git ignores. At the end the local folder becomes a synced copy, at the same path.
+`corami project import <path>` moves to the server a project that today lives on a client, with all the git history and the necessary files that git ignores. At the end the local folder becomes a synced copy, at the same path.
 
 ### What is transferred
 

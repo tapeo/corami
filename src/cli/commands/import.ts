@@ -1,13 +1,13 @@
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, join } from 'node:path';
 
 import type { CommandContext } from '@/cli/command.ts';
 import type { StepResult } from '@/cli/commands/setup-steps.ts';
-import { createSyncFor } from '@/cli/commands/sync.ts';
+import { copyPlace, createSyncFor, givenPath } from '@/cli/commands/sync.ts';
 import { renderSteps } from '@/cli/output.ts';
 import { booleanFlag, stringFlag, stringListFlag } from '@/cli/parser.ts';
 import { addProject, projectDetail, serverUserForSync } from '@/cli/server-client.ts';
-import { homeDirectory, readGlobalConfig, serverProjectPath } from '@/core/config.ts';
+import { readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { run } from '@/core/exec.ts';
 import { findLocalOnlyFiles, isSensitiveName } from '@/core/local-copy.ts';
@@ -21,11 +21,22 @@ import {
   shellQuote,
   TAR_EXCLUDES,
 } from '@/core/transfer.ts';
+import { MutagenEngine } from '@/integrations/mutagen.ts';
 
 export async function runImport(
   context: CommandContext,
 ): Promise<{ data?: unknown; text?: string }> {
-  const target = resolve(context.args.positionals[0] ?? process.cwd());
+  const folder = context.args.positionals[0];
+
+  if (folder === undefined) {
+    throw new CoramiError({
+      code: 'usage',
+      message: 'Missing folder',
+      fix: 'corami project import <folder>, or corami project import . for the current one',
+    });
+  }
+
+  const target = givenPath(folder);
   const config = await readGlobalConfig();
   const host = config?.server_host;
 
@@ -64,6 +75,20 @@ export async function runImport(
       step: 'name',
       status: 'failed',
       summary: `A project named ${projectName} already exists on the server`,
+    });
+    return finish(context, steps, projectName, target, dryRun);
+  }
+
+  // The folder becomes the copy: the session of the name and the copies of the
+  // other projects are checked before anything moves.
+  try {
+    await copyPlace(new MutagenEngine(), projectName, target, true);
+  } catch (error) {
+    steps.push({
+      step: 'name',
+      status: 'failed',
+      summary: error instanceof Error ? error.message : String(error),
+      detail: error instanceof CoramiError ? error.fix : undefined,
     });
     return finish(context, steps, projectName, target, dryRun);
   }
@@ -197,22 +222,11 @@ export async function runImport(
   renameSync(target, backup);
   steps.push({ step: 'local', status: 'done', summary: `Local folder moved to ${backup}` });
 
-  mkdirSync(join(homeDirectory(), 'corami'), { recursive: true });
-
   let localCopy = target;
 
   try {
     const sync = await createSyncFor({ project: projectName, localPath: target, serverPath, user });
     localCopy = sync.local;
-
-    if (!sync.created && resolve(sync.local) !== resolve(target)) {
-      steps.push({
-        step: 'sync',
-        status: 'skipped',
-        summary: `A sync session for ${projectName} already exists at ${sync.local}`,
-        detail: `The import keeps working in ${target}. For a copy in another place: corami sync rm ${projectName}, then corami sync add ${projectName} --path ${target}`,
-      });
-    }
   } catch (error) {
     steps.push({
       step: 'sync',

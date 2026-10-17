@@ -22,7 +22,7 @@ Some builds only work on a certain machine: an iOS build needs macOS and Xcode. 
 
 ```bash
 # from the server
-ssh macbook 'cd ~/corami/myapp && corami sync flush myapp && flutter build ios --release --no-codesign'
+ssh macbook 'cd ~/dev/myapp && corami sync flush myapp && flutter build ios --release --no-codesign'
 ```
 
 Setup, once:

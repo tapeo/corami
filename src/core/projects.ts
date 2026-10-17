@@ -1,5 +1,5 @@
 import { readdirSync } from 'node:fs';
-import { posix } from 'node:path';
+import { isAbsolute, posix, relative, sep } from 'node:path';
 
 /**
  * Whether `project rm` may delete the folder of a project on the server: only
@@ -35,18 +35,48 @@ export function isFolderEmpty(path: string): boolean {
 }
 
 /**
- * What to do with the folder of a local copy. A session for the project wins,
- * whatever is in the folder. Without one, a folder with something else in it
- * is not touched: the sync would mix the two trees. The caller turns
- * 'not-empty' into the usage error that says what to do.
+ * Whether a path still starts with `~`: the shell expands it, a command run
+ * without one passes it as it is, and resolving it would create a folder
+ * named `~` in the working directory.
+ */
+export function unexpandedHome(path: string): boolean {
+  return path.startsWith('~');
+}
+
+export type LocalCopyTarget = 'existing' | 'create' | 'move' | 'missing' | 'nested' | 'not-empty';
+
+/**
+ * What to do with the folder of a local copy. The folder is never guessed: it
+ * is the one of the session of the project, or the one asked with `--path`.
+ * A session wins, and a different folder asked for it is a move the caller
+ * refuses. Without a session, a folder inside the copy of another project,
+ * or around it, would sync into that project; a folder with something else
+ * in it is not touched, the sync would mix the two trees. Paths come in
+ * absolute and in the same form, the caller turns every state but 'existing'
+ * and 'create' into the usage error that says what to do.
  */
 export function localCopyTarget(state: {
-  session: boolean;
+  /** `--path`, undefined without the flag. */
+  requested?: string | undefined;
+  /** The folder of the session of the project, when there is one. */
+  session?: string | undefined;
+  /** The folders of the sessions of the other projects. */
+  others: string[];
   exists: boolean;
   empty: boolean;
-}): 'existing' | 'create' | 'not-empty' {
-  if (state.session) {
-    return 'existing';
+}): LocalCopyTarget {
+  if (state.session !== undefined) {
+    return state.requested === undefined || state.requested === state.session ? 'existing' : 'move';
+  }
+
+  const requested = state.requested;
+
+  if (requested === undefined) {
+    return 'missing';
+  }
+
+  if (state.others.some((other) => isWithin(requested, other) || isWithin(other, requested))) {
+    return 'nested';
   }
 
   if (state.exists && !state.empty) {
@@ -54,6 +84,29 @@ export function localCopyTarget(state: {
   }
 
   return 'create';
+}
+
+/**
+ * The project of the local copy that holds `path`: the session whose folder
+ * contains it, the deepest one when copies sit inside each other. Paths
+ * absolute and in the same form.
+ */
+export function projectOfCopy(
+  path: string,
+  copies: Array<{ project: string; local: string }>,
+): string | undefined {
+  return copies
+    .filter((copy) => isWithin(path, copy.local))
+    .sort((left, right) => right.local.length - left.local.length)[0]?.project;
+}
+
+/** Whether `path` is `folder` or inside it. Both absolute, in the same form. */
+export function isWithin(path: string, folder: string): boolean {
+  const between = relative(folder, path);
+
+  return (
+    between === '' || (between !== '..' && !between.startsWith(`..${sep}`) && !isAbsolute(between))
+  );
 }
 
 /**

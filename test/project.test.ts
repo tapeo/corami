@@ -19,8 +19,11 @@ import {
 import { planProjectAdd, repositoryAt, sameRepository } from '@/core/project-add.ts';
 import {
   isFolderEmpty,
+  isWithin,
   localCopyTarget,
+  projectOfCopy,
   serverFolderRemoval,
+  unexpandedHome,
   withLocalCopies,
 } from '@/core/projects.ts';
 
@@ -160,17 +163,85 @@ describe('isFolderEmpty', () => {
 });
 
 describe('localCopyTarget', () => {
-  test('an existing session wins over the folder', () => {
-    expect(localCopyTarget({ session: true, exists: true, empty: false })).toBe('existing');
+  const fresh = { others: [], exists: false, empty: false };
+
+  test('the session wins over the folder, and needs no --path', () => {
+    const session = '/Users/me/dev/myapp';
+
+    expect(localCopyTarget({ ...fresh, session, exists: true })).toBe('existing');
+    expect(localCopyTarget({ ...fresh, session, requested: session })).toBe('existing');
   });
 
-  test('creates the copy when the folder is missing or empty', () => {
-    expect(localCopyTarget({ session: false, exists: false, empty: true })).toBe('create');
-    expect(localCopyTarget({ session: false, exists: true, empty: true })).toBe('create');
+  test('refuses another folder for a copy that has a session', () => {
+    expect(
+      localCopyTarget({ ...fresh, session: '/Users/me/dev/myapp', requested: '/Users/me/myapp' }),
+    ).toBe('move');
+  });
+
+  test('never guesses the folder without a session', () => {
+    expect(localCopyTarget(fresh)).toBe('missing');
+    expect(localCopyTarget({ ...fresh, exists: true, empty: true })).toBe('missing');
+  });
+
+  test('creates the copy when the folder asked is missing or empty', () => {
+    const requested = '/Users/me/dev/myapp';
+
+    expect(localCopyTarget({ ...fresh, requested })).toBe('create');
+    expect(localCopyTarget({ ...fresh, requested, exists: true, empty: true })).toBe('create');
   });
 
   test('leaves a folder with something else in it alone', () => {
-    expect(localCopyTarget({ session: false, exists: true, empty: false })).toBe('not-empty');
+    expect(
+      localCopyTarget({ ...fresh, requested: '/Users/me/dev/myapp', exists: true, empty: false }),
+    ).toBe('not-empty');
+  });
+
+  test('refuses a folder inside the copy of another project, or around it', () => {
+    const others = ['/Users/me/dev/site'];
+
+    expect(localCopyTarget({ ...fresh, others, requested: '/Users/me/dev/site/myapp' })).toBe(
+      'nested',
+    );
+    expect(localCopyTarget({ ...fresh, others, requested: '/Users/me/dev/site' })).toBe('nested');
+    expect(localCopyTarget({ ...fresh, others, requested: '/Users/me/dev' })).toBe('nested');
+    expect(localCopyTarget({ ...fresh, others, requested: '/Users/me/dev/site-2' })).toBe('create');
+  });
+});
+
+describe('isWithin', () => {
+  test('tells a folder inside another from a neighbour', () => {
+    expect(isWithin('/a/b', '/a/b')).toBe(true);
+    expect(isWithin('/a/b/c', '/a/b')).toBe(true);
+    expect(isWithin('/a/b/..c', '/a/b')).toBe(true);
+    expect(isWithin('/a/bc', '/a/b')).toBe(false);
+    expect(isWithin('/a', '/a/b')).toBe(false);
+  });
+});
+
+describe('projectOfCopy', () => {
+  const copies = [
+    { project: 'site', local: '/Users/me/dev/site' },
+    { project: 'docs', local: '/Users/me/dev/site/docs' },
+  ];
+
+  test('finds the copy that holds the folder, the deepest one first', () => {
+    expect(projectOfCopy('/Users/me/dev/site', copies)).toBe('site');
+    expect(projectOfCopy('/Users/me/dev/site/app', copies)).toBe('site');
+    expect(projectOfCopy('/Users/me/dev/site/docs/guide', copies)).toBe('docs');
+  });
+
+  test('a neighbour folder is no copy', () => {
+    expect(projectOfCopy('/Users/me/dev/site-2', copies)).toBeUndefined();
+    expect(projectOfCopy('/Users/me/dev', copies)).toBeUndefined();
+  });
+});
+
+describe('unexpandedHome', () => {
+  test('flags a path the shell did not expand', () => {
+    expect(unexpandedHome('~/dev/myapp')).toBe(true);
+    expect(unexpandedHome('~')).toBe(true);
+    expect(unexpandedHome('/Users/me/dev/myapp')).toBe(false);
+    expect(unexpandedHome('dev/~myapp')).toBe(false);
   });
 });
 
@@ -257,15 +328,13 @@ describe('repositoryAt', () => {
 describe('planProjectAdd', () => {
   const client = {
     role: 'client' as const,
+    project: 'myapp',
     url: 'git@github.com:me/myapp.git',
-    noSync: false,
-    session: false,
-    target: { exists: false, empty: true },
+    onServer: false,
   };
 
-  test('creates the copy on a client, in a folder that is missing or empty', () => {
-    expect(planProjectAdd(client)).toBe('create');
-    expect(planProjectAdd({ ...client, target: { exists: true, empty: true } })).toBe('create');
+  test('lets a client add the project on the server', () => {
+    expect(() => planProjectAdd(client)).not.toThrow();
   });
 
   test('refuses --path on a client, and takes it on the server', () => {
@@ -280,9 +349,9 @@ describe('planProjectAdd', () => {
       expect((error as CoramiError).fix).toContain('corami project import');
     }
 
-    expect(
+    expect(() =>
       planProjectAdd({ ...client, role: 'server', url: undefined, path: '/srv/code/myapp' }),
-    ).toBe('skipped');
+    ).not.toThrow();
   });
 
   test('stops on a clone of the same url, naming the folder to import', () => {
@@ -301,33 +370,38 @@ describe('planProjectAdd', () => {
     }
   });
 
-  test('the clone check runs also with --no-sync', () => {
-    const cwdRepository = { root: '/Users/me/dev/myapp', origin: 'git@github.com:me/myapp.git' };
+  test('stops on the session of a project removed from the server', () => {
+    const orphan = () => planProjectAdd({ ...client, session: '/Users/me/dev/myapp' });
 
-    expect(() => planProjectAdd({ ...client, noSync: true, cwdRepository })).toThrow(CoramiError);
+    expect(orphan).toThrow(CoramiError);
+
+    try {
+      orphan();
+      expect.unreachable();
+    } catch (error) {
+      expect((error as CoramiError).message).toContain('/Users/me/dev/myapp');
+      expect((error as CoramiError).fix).toContain('corami sync stop myapp');
+    }
   });
 
-  test('leaves the orphan session alone instead of reusing it', () => {
-    expect(planProjectAdd({ ...client, session: true })).toBe('orphan-session');
+  test('leaves a session of a project still on the server to the server', () => {
+    expect(() =>
+      planProjectAdd({ ...client, session: '/Users/me/dev/myapp', onServer: true }),
+    ).not.toThrow();
   });
 
-  test('does not sync into a folder with something else in it', () => {
-    expect(planProjectAdd({ ...client, target: { exists: true, empty: false } })).toBe(
-      'target-not-empty',
-    );
-  });
+  test('does nothing on a server or without a url', () => {
+    const cwdRepository = { root: '/srv/myapp', origin: 'git@github.com:me/myapp.git' };
 
-  test('does nothing on a server, with --no-sync or without a url', () => {
-    expect(planProjectAdd({ ...client, role: 'server' })).toBe('skipped');
-    expect(planProjectAdd({ ...client, role: undefined })).toBe('skipped');
-    expect(planProjectAdd({ ...client, noSync: true })).toBe('skipped');
-    expect(planProjectAdd({ ...client, url: undefined })).toBe('skipped');
+    expect(() => planProjectAdd({ ...client, role: 'server', cwdRepository })).not.toThrow();
+    expect(() => planProjectAdd({ ...client, role: undefined, session: '/x' })).not.toThrow();
+    expect(() => planProjectAdd({ ...client, url: undefined, session: '/x' })).not.toThrow();
   });
 
   test('a clone of another repository does not stop the command', () => {
     const cwdRepository = { root: '/Users/me/dev/other', origin: 'git@github.com:me/other.git' };
 
-    expect(planProjectAdd({ ...client, cwdRepository })).toBe('create');
+    expect(() => planProjectAdd({ ...client, cwdRepository })).not.toThrow();
   });
 });
 
