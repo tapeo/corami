@@ -467,8 +467,15 @@ export async function stepServe(context: StepContext): Promise<StepResult> {
 }
 
 export async function stepSummary(context: StepContext): Promise<StepResult> {
-  const scope = context.daemonScope ?? 'system';
-  const active = await isUnitActive('corami-daemon', scope);
+  // The scope of the daemon is set by the step that installed it, in a run of
+  // the whole setup. A single `--step summary`, where that step did not run,
+  // asks both: the daemon runs as a user unit unless the account has no user
+  // services, and a summary that looks only at one of them lies.
+  const active =
+    context.daemonScope === undefined
+      ? (await isUnitActive('corami-daemon', 'user')) ||
+        (await isUnitActive('corami-daemon', 'system'))
+      : await isUnitActive('corami-daemon', context.daemonScope);
   const fqdn = context.fqdn ?? 'localhost';
 
   return {
