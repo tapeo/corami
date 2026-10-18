@@ -1,12 +1,21 @@
 import { describe, expect, test } from 'bun:test';
-import { lstatSync, mkdirSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
-import { remoteExtractCommand, restoreLocalFiles, runImport } from '@/cli/commands/import.ts';
+import { restoreLocalFiles, runImport } from '@/cli/commands/import.ts';
+import { remoteExtractCommand } from '@/cli/commands/import-remote.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { shellQuote } from '@/core/exec.ts';
+import { moveStagingIntoPlace } from '@/core/import-staging.ts';
 import { copyInventory } from '@/core/local-copy.ts';
 import { MUTAGEN } from '@/core/pinned-tools.ts';
 import { checksumFor } from '@/core/release.ts';
@@ -227,6 +236,64 @@ describe('checksums', () => {
         expect(MUTAGEN.checksums(asset)).toMatch(/^[0-9a-f]{64}$/);
       }
     }
+  });
+});
+
+describe('the staging folder that takes the name of the project', () => {
+  async function fixture(): Promise<{ root: string; target: string; staging: string }> {
+    const root = await mkdtemp(join(tmpdir(), 'corami-staging-'));
+    const target = join(root, 'app');
+    const staging = join(root, '.corami-import-app-20261018-232001');
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(join(staging, 'notes.txt'), 'x');
+
+    return { root, target, staging };
+  }
+
+  test('moves the folder in when the registration takes the project', async () => {
+    const { target, staging } = await fixture();
+    let registered = 0;
+
+    moveStagingIntoPlace(staging, target, () => {
+      registered += 1;
+    });
+
+    expect(registered).toBe(1);
+    expect(existsSync(staging)).toBe(false);
+    expect(readFileSync(join(target, 'notes.txt'), 'utf8')).toBe('x');
+  });
+
+  test('puts the folder back when the registration fails', async () => {
+    const { target, staging } = await fixture();
+
+    expect(() =>
+      moveStagingIntoPlace(staging, target, () => {
+        throw new Error('registry');
+      }),
+    ).toThrow('registry');
+
+    expect(existsSync(target)).toBe(false);
+    expect(readFileSync(join(staging, 'notes.txt'), 'utf8')).toBe('x');
+  });
+
+  test('refuses a project folder with something in it, and a folder that is not staging', async () => {
+    const { root, target, staging } = await fixture();
+    mkdirSync(target);
+    writeFileSync(join(target, 'keep.txt'), 'x');
+
+    expect(() => moveStagingIntoPlace(staging, target, () => {})).toThrow(CoramiError);
+    expect(readFileSync(join(target, 'keep.txt'), 'utf8')).toBe('x');
+
+    const other = join(root, 'other');
+
+    expect(() => moveStagingIntoPlace(other, target, () => {})).toThrow(CoramiError);
+  });
+
+  test('refuses a staging folder that is not on the server', async () => {
+    const { root, target } = await fixture();
+    const missing = join(root, '.corami-import-app-20261018-232002');
+
+    expect(() => moveStagingIntoPlace(missing, target, () => {})).toThrow(CoramiError);
   });
 });
 

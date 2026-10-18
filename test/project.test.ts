@@ -19,8 +19,11 @@ import {
 } from '@/core/previews.ts';
 import {
   defaultServerPath,
+  importStagingPath,
+  isImportStagingFor,
   missingImportFolder,
   movableLocalFolder,
+  orphanServerFolders,
   planProjectAdd,
   repositoryAt,
   sameRepository,
@@ -28,6 +31,7 @@ import {
   serverPathFrom,
   serverPathsOf,
   suggestedProjectName,
+  takenServerFolder,
   validServerPath,
 } from '@/core/project-add.ts';
 import {
@@ -690,6 +694,97 @@ describe('the paths of an added project', () => {
       'chosen',
     );
     expect(suggestedProjectName({})).toBeUndefined();
+  });
+});
+
+describe('the staging folder of an import', () => {
+  test('sits next to the project, so the registration renames it on one filesystem', () => {
+    expect(importStagingPath('/home/corami/projects/app', 'app', '20261018-232001')).toBe(
+      '/home/corami/projects/.corami-import-app-20261018-232001',
+    );
+    expect(importStagingPath('/srv/code/app/', 'app', '20261018-232001')).toBe(
+      '/srv/code/.corami-import-app-20261018-232001',
+    );
+  });
+
+  test('a folder is the staging of an import only next to its project and with its name', () => {
+    const project = '/home/corami/projects/app';
+    const staging = '/home/corami/projects/.corami-import-app-20261018-232001';
+
+    expect(isImportStagingFor(project, staging)).toBe(true);
+    // Another folder of the same parent, another prefix, another parent, and
+    // the project itself are not staging folders.
+    expect(isImportStagingFor(project, '/home/corami/projects/other')).toBe(false);
+    expect(isImportStagingFor(project, '/home/corami/projects/.backup-app-1')).toBe(false);
+    expect(isImportStagingFor(project, '/srv/code/.corami-import-app-1')).toBe(false);
+    expect(isImportStagingFor(project, project)).toBe(false);
+    expect(isImportStagingFor(project, '/home/corami/projects/.corami-import-')).toBe(false);
+    expect(
+      isImportStagingFor(project, '/home/corami/projects/../projects/.corami-import-app-1'),
+    ).toBe(true);
+  });
+
+  test('a folder that matches the commit of this machine reads as an import that stopped', () => {
+    const head = '3e9c949a1b2c3d4e5f60718293a4b5c6d7e8f901';
+    const error = takenServerFolder({
+      serverPath: '/home/corami/projects/app',
+      folder: '/Users/me/projects/app',
+      remoteHead: head,
+      localHead: head,
+    });
+
+    expect(error.code).toBe('usage');
+    expect(error.message).toBe(
+      'The folder /home/corami/projects/app is on the server, at the same commit as /Users/me/projects/app, and no project names it: an import that stopped probably left it',
+    );
+    expect(error.fix).toContain(
+      'corami project add /Users/me/projects/app --from-server --server-path /home/corami/projects/app',
+    );
+    expect(error.fix).not.toContain('~/');
+  });
+
+  test('a repository with another history, and a folder that is not one', () => {
+    const other = takenServerFolder({
+      serverPath: '/home/corami/projects/app',
+      folder: '/Users/me/projects/app',
+      remoteHead: 'aaaa',
+      localHead: 'bbbb',
+    });
+
+    expect(other.message).toBe(
+      'The folder /home/corami/projects/app is on the server, a git repository that no project names',
+    );
+    expect(other.fix).toContain('--from-server --server-path /home/corami/projects/app');
+
+    const folder = takenServerFolder({
+      serverPath: '/home/corami/projects/app',
+      folder: 'app',
+    });
+
+    expect(folder.message).toBe(
+      'The folder /home/corami/projects/app is already on the server and is not empty',
+    );
+    expect(folder.fix).toContain('--server-path');
+  });
+});
+
+describe('the folders of the projects root that no project uses', () => {
+  test('says which ones are leftovers of an import', () => {
+    const root = '/home/corami/projects';
+    const orphans = orphanServerFolders(
+      [
+        `${root}/app`,
+        `${root}/app/notes`,
+        `${root}/old`,
+        `${root}/.hidden`,
+        `${root}/.corami-import-app-20261018-232001`,
+        `${root}/.corami-import-`,
+      ],
+      [`${root}/app`],
+    );
+
+    expect(orphans.unregistered).toEqual([`${root}/old`]);
+    expect(orphans.staging).toEqual([`${root}/.corami-import-app-20261018-232001`]);
   });
 });
 

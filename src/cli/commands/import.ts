@@ -12,6 +12,12 @@ import {
 import { join } from 'node:path';
 
 import type { CommandResult } from '@/cli/command.ts';
+import {
+  checkServerFolder,
+  remoteHome,
+  removeStaging,
+  transfer,
+} from '@/cli/commands/import-remote.ts';
 import type { StepResult } from '@/cli/commands/setup-steps.ts';
 import { copyPlace, createSyncFor } from '@/cli/commands/sync.ts';
 import type { OutputOptions } from '@/cli/output.ts';
@@ -19,15 +25,15 @@ import { renderSteps } from '@/cli/output.ts';
 import {
   addProject,
   findProject,
-  listProjects,
   removeProject,
+  serverSupports,
   serverUserForSync,
 } from '@/cli/server-client.ts';
 import { readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError, type ErrorCode } from '@/core/errors.ts';
-import { run, shellQuote } from '@/core/exec.ts';
+import { run } from '@/core/exec.ts';
 import { copyInventory, type InventoryEntry, symlinkPortable } from '@/core/local-copy.ts';
-import { serverFolderOverlaps, serverPathFrom, serverPathsOf } from '@/core/project-add.ts';
+import { importStagingPath, serverPathFrom } from '@/core/project-add.ts';
 import { isFolderEmpty, validNewProjectName } from '@/core/projects.ts';
 import { sshFailureFix } from '@/core/ssh-policy.ts';
 import {
@@ -37,8 +43,6 @@ import {
   manifestDiff,
   manifestOf,
   manifestsMatch,
-  type RemoteHome,
-  remoteFolderState,
   remoteGitFacts,
   remoteManifest,
 } from '@/core/transfer.ts';
@@ -179,25 +183,45 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
       ? serverProjectPath(home, projectName)
       : serverPathFrom(home, options.serverPath);
 
-  // The folder of the import is one Corami makes: a folder that is already
-  // there is never written into, and never removed. The check runs before the
-  // transfer, so a refusal leaves the server as it was.
-  await checkServerFolder(host, user, serverPath);
+  // The daemon of a server that is not updated yet cannot move the staging
+  // folder into the name of the project. Nothing is written before it says it
+  // can: no half folder, no folder of the export to clean up.
+  if (!(await serverSupports('import_staging'))) {
+    steps.push({
+      step: 'transfer',
+      status: 'failed',
+      code: 'capability_missing',
+      summary:
+        'The daemon of the server is older than this client: it cannot take the folder of an import',
+      detail: 'Run corami update on the server, then the command again',
+    });
+    return finish(options, steps, projectName, target, serverPath);
+  }
 
-  const transferred = await transfer(
-    target,
-    user,
+  const moment = stamp();
+  const staging = importStagingPath(serverPath, projectName, moment);
+
+  // The import writes into a folder of its own, next to the project, so the
+  // name of the project stays free until the registration gives it to the
+  // copy. The check runs before the transfer, so a refusal changes nothing.
+  await checkServerFolder({
     host,
+    user,
     serverPath,
-    archiveList(target, inventory),
-  );
+    staging,
+    folder: target,
+    localHead: facts.head,
+  });
+
+  const transferred = await transfer(target, user, host, staging, archiveList(target, inventory));
 
   if (!transferred.ok) {
+    const cleanup = await removeStaging(user, host, serverPath, staging);
     steps.push({
       step: 'transfer',
       status: 'failed',
       summary: 'Transfer failed',
-      detail: transferred.detail,
+      detail: `${transferred.detail}. ${cleanup.detail}`,
     });
     return finish(options, steps, projectName, target, serverPath);
   }
@@ -205,18 +229,18 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   steps.push({
     step: 'transfer',
     status: 'done',
-    summary: `Copied to ${host}:${serverPath}`,
+    summary: `Copied to ${host}:${staging}`,
     detail: transferred.detail,
   });
 
   const localManifestResult = manifestOf(inventory);
-  const remoteManifestResult = await remoteManifest(host, user, serverPath);
+  const remoteManifestResult = await remoteManifest(host, user, staging);
 
   if (
     remoteManifestResult === undefined ||
     !manifestsMatch(localManifestResult, remoteManifestResult)
   ) {
-    const cleanup = await cleanupServerFolder(user, host, serverPath);
+    const cleanup = await removeStaging(user, host, serverPath, staging);
     steps.push({
       step: 'verify',
       status: 'failed',
@@ -231,10 +255,10 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     return finish(options, steps, projectName, target, serverPath);
   }
 
-  const remoteFacts = await remoteGitFacts(host, user, serverPath);
+  const remoteFacts = await remoteGitFacts(host, user, staging);
 
   if (remoteFacts === undefined || !factsMatch(facts, remoteFacts)) {
-    const cleanup = await cleanupServerFolder(user, host, serverPath);
+    const cleanup = await removeStaging(user, host, serverPath, staging);
     steps.push({
       step: 'verify',
       status: 'failed',
@@ -251,11 +275,15 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   });
 
   try {
-    await addProject({ name: projectName, path: serverPath, owned: true });
+    // The daemon moves the staging folder into the name of the project while
+    // it registers it: one step on the server, so a client that stops in the
+    // middle leaves either the staging or a registered project, never a
+    // folder that no project names.
+    await addProject({ name: projectName, path: serverPath, owned: true, staging });
   } catch (error) {
     // The folder was copied here by this command: a registration that fails
-    // takes it away again, and this machine keeps everything.
-    const cleanup = await cleanupServerFolder(user, host, serverPath);
+    // leaves the staging behind, and this machine keeps everything.
+    const cleanup = await removeStaging(user, host, serverPath, staging);
 
     steps.push({
       step: 'register',
@@ -270,10 +298,10 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   steps.push({
     step: 'register',
     status: 'done',
-    summary: `Registered on the server as ${projectName}`,
+    summary: `Registered on the server as ${projectName}, in ${serverPath}`,
   });
 
-  const backup = `${target}.corami-backup-${stamp()}`;
+  const backup = `${target}.corami-backup-${moment}`;
 
   try {
     renameSync(target, backup);
@@ -361,93 +389,6 @@ function asMessage(error: unknown): string {
 }
 
 /**
- * Refuses a folder of the server the import does not make: one that is already
- * there with something in it, one that overlaps another project, and one the
- * check cannot read. The command writes only into a folder it creates.
- */
-async function checkServerFolder(host: string, user: string, serverPath: string): Promise<void> {
-  const projects = await listProjects().catch((error: unknown) => {
-    throw new CoramiError({
-      code: 'server_unreachable',
-      message: `Cannot read the projects of the server: ${asMessage(error)}`,
-      fix: 'Check that the daemon answers, then run the command again',
-    });
-  });
-  const others = serverPathsOf(projects);
-
-  if (serverFolderOverlaps(serverPath, others)) {
-    const other = overlappingProject(serverPath, projects);
-
-    throw new CoramiError({
-      code: 'usage',
-      message:
-        other === undefined
-          ? `The folder ${serverPath} overlaps another project of the server`
-          : `The folder ${serverPath} is inside the project at ${other}, or around it`,
-      fix: 'Name a free folder of the server: corami project add <folder> --server-path <folder>',
-    });
-  }
-
-  const state = await remoteFolderState(host, user, serverPath);
-
-  if (state === undefined) {
-    throw new CoramiError({
-      code: 'server_unreachable',
-      message: `Cannot read the folder of the server: ${serverPath}`,
-      fix: 'Check that ssh works for the account, then run the command again',
-    });
-  }
-
-  if (state === 'taken') {
-    throw new CoramiError({
-      code: 'usage',
-      message: `The folder ${serverPath} is already on the server and is not empty`,
-      fix: 'Name a free folder of the server with --server-path: the import writes only into a folder it makes',
-    });
-  }
-}
-
-function overlappingProject(
-  serverPath: string,
-  projects: Array<{ name: string; path: string }>,
-): string | undefined {
-  return projects.find((entry) => serverFolderOverlaps(serverPath, [entry.path]))?.name;
-}
-
-/**
- * Takes the folder away again, with what it holds: only for a folder this
- * import made, which the check before the transfer guaranteed. The result says
- * whether it is gone, so the step can say where the project stayed instead.
- */
-async function cleanupServerFolder(
-  user: string,
-  host: string,
-  serverPath: string,
-): Promise<{ removed: boolean; detail: string }> {
-  const result = await run(
-    'ssh',
-    [
-      '-o',
-      'BatchMode=yes',
-      '-o',
-      'ConnectTimeout=15',
-      `${user}@${host}`,
-      `rm -rf ${shellQuote(serverPath)}`,
-    ],
-    { timeoutMs: 60_000 },
-  );
-
-  return result.ok
-    ? { removed: true, detail: `The folder ${serverPath} was removed from the server` }
-    : {
-        removed: false,
-        detail: `The folder stays at ${host}:${serverPath}: ${
-          (result.stderr || result.stdout).trim() || `ssh exited with ${result.exitCode}`
-        }`,
-      };
-}
-
-/**
  * Puts the folder of this machine back where it was, from the backup the
  * import moved it to. Only an empty or absent folder is taken over: anything
  * else is work the sync may already have brought.
@@ -471,114 +412,6 @@ function restoreBackup(backup: string, target: string): boolean {
   } catch {
     return false;
   }
-}
-
-export async function remoteHome(user: string, host: string): Promise<RemoteHome> {
-  const result = await run(
-    'ssh',
-    ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', `${user}@${host}`, 'printf %s "$HOME"'],
-    {
-      timeoutMs: 60_000,
-    },
-  );
-
-  const home = result.stdout.trim();
-  const sshOutput = `${result.stderr}\n${result.stdout}`;
-
-  if (result.ok && home.startsWith('/')) {
-    return { home, sshOutput };
-  }
-
-  return { home: undefined, sshOutput };
-}
-
-/**
- * The command the server runs to receive the archive: unpack it into the
- * folder of the project. The sync never carries the paths of one machine, and
- * the archive leaves them out too, so there is nothing to protect here.
- */
-export function remoteExtractCommand(serverPath: string): string {
-  return `mkdir -p ${shellQuote(serverPath)} && tar -xzf - --no-same-owner -C ${shellQuote(serverPath)}`;
-}
-
-/**
- * The archive reaches the server through a pipe: `tar` writes it, `ssh` carries
- * it. Both are started with their arguments, never through a shell, and both
- * exit codes are checked: a failure of `tar` would otherwise show as the exit
- * code of `ssh` alone.
- */
-async function transfer(
-  source: string,
-  user: string,
-  host: string,
-  serverPath: string,
-  entries: string[],
-): Promise<{ ok: boolean; detail: string }> {
-  const remote = remoteExtractCommand(serverPath);
-  // The list decides what the archive holds: `tar` follows no folder and
-  // matches no pattern, so a link is carried as a link and nothing the
-  // inventory left out can slip in.
-  const reader = Bun.spawn(
-    ['tar', '-czf', '-', '-C', source, '--null', '--no-recursion', '-T', '-'],
-    {
-      stdin: 'pipe',
-      stdout: 'pipe',
-      stderr: 'pipe',
-      env: { ...process.env, COPYFILE_DISABLE: '1' },
-    },
-  );
-  reader.stdin.write(`${entries.join('\0')}\0`);
-  await reader.stdin.end();
-
-  const writer = Bun.spawn(
-    ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', `${user}@${host}`, remote],
-    {
-      stdin: reader.stdout,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    },
-  );
-
-  const timeout = setTimeout(() => {
-    reader.kill();
-    writer.kill();
-  }, 1_800_000);
-
-  try {
-    const [read, written] = await Promise.all([
-      reader.exited.then(async (code) => ({
-        code,
-        noise: await new Response(reader.stderr).text(),
-      })),
-      writer.exited.then(async (code) => ({
-        code,
-        error: await new Response(writer.stderr).text(),
-      })),
-    ]);
-
-    if (read.code !== 0 || written.code !== 0) {
-      const detail = cleanTarNoise(written.code !== 0 ? written.error : read.noise);
-
-      return {
-        ok: false,
-        detail: detail === '' ? `tar exited with ${read.code}, ssh with ${written.code}` : detail,
-      };
-    }
-
-    return { ok: true, detail: cleanTarNoise(written.error) };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function cleanTarNoise(raw: string): string {
-  const noise = /^tar: (Ignoring unknown extended header keyword|Removing leading)/;
-
-  return raw
-    .split('\n')
-    .filter((line) => line.trim() !== '' && !noise.test(line.trim()))
-    .slice(0, 3)
-    .join(' ');
 }
 
 async function restoreGitDirectory(backup: string, target: string): Promise<boolean> {
@@ -660,7 +493,7 @@ function stamp(): string {
   const now = new Date();
   const pad = (value: number) => String(value).padStart(2, '0');
 
-  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
 
 /** The error code of a step that failed before any call to the daemon. */

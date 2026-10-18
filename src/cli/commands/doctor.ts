@@ -1,8 +1,8 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { userInfo } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
-import { health } from '@/cli/server-client.ts';
+import { health, listProjects } from '@/cli/server-client.ts';
 import { projectRoot, projectsRootFor, readGlobalConfig } from '@/core/config.ts';
 import {
   type CheckResult,
@@ -15,6 +15,7 @@ import {
 import { CoramiError, toCoramiError } from '@/core/errors.ts';
 import { run as runCommand } from '@/core/exec.ts';
 import { findTool, MUTAGEN } from '@/core/pinned-tools.ts';
+import { orphanServerFolders, serverPathsOf } from '@/core/project-add.ts';
 import { canSudo, ownerOfServer, privilegedGroups } from '@/core/server-user.ts';
 import { type SshPolicy, sshPolicyFromHealth, sshPolicyText } from '@/core/ssh-policy.ts';
 import { daemonServiceActive } from '@/integrations/mutagen.ts';
@@ -77,6 +78,7 @@ async function collectChecks(): Promise<CheckResult[]> {
     checkGitService(),
     checkSyncDaemon(),
     checkServerAccount(),
+    checkOrphanFolders(),
     checkDaemon(),
     checkSshPolicy(),
   ]);
@@ -208,8 +210,7 @@ async function checkServerAccount(): Promise<CheckResult[]> {
     ];
   }
 
-  const home = await homeDirectoryForUser(user);
-  const projects = home === undefined ? projectRoot() : projectsRootFor(home);
+  const projects = await projectsFolderForServer();
   const legacy = join('/root', 'corami', 'projects');
   const [groups, sudo, foreign] = await Promise.all([
     runCommand('id', ['-nG', user]),
@@ -273,6 +274,93 @@ async function checkServerAccount(): Promise<CheckResult[]> {
   }
 
   return checks;
+}
+
+/** The projects root of the account that owns the projects, not of this process. */
+async function projectsFolderForServer(): Promise<string> {
+  const config = await readGlobalConfig().catch(() => undefined);
+  const user = config?.server_user;
+
+  if (user === undefined) {
+    return projectRoot();
+  }
+
+  const home = await homeDirectoryForUser(user);
+
+  return home === undefined ? projectRoot() : projectsRootFor(home);
+}
+
+// Servers only: a folder of the projects root that no project names is a
+// leftover, the one an import that stopped leaves included. The import writes
+// into a staging folder next to the project, so a stopped one never takes the
+// name of a project, but it stays on disk until someone removes it.
+async function checkOrphanFolders(): Promise<CheckResult[]> {
+  const config = await readGlobalConfig().catch(() => undefined);
+
+  if (config?.role !== 'server') {
+    return [];
+  }
+
+  const projects = await listProjects().catch(() => undefined);
+
+  if (projects === undefined) {
+    return [];
+  }
+
+  const folder = await projectsFolderForServer();
+  const orphans = orphanServerFolders(foldersIn(folder), serverPathsOf(projects));
+
+  if (orphans.unregistered.length === 0 && orphans.staging.length === 0) {
+    return [
+      {
+        area: 'server',
+        id: 'server.orphan_folders',
+        status: 'ok',
+        summary: 'Every folder of the projects root belongs to a project',
+        detail: folder,
+      },
+    ];
+  }
+
+  const checks: CheckResult[] = [];
+
+  if (orphans.unregistered.length > 0) {
+    checks.push({
+      area: 'server',
+      id: 'server.orphan_folders',
+      status: 'warn',
+      summary: `Folders of the projects root that no project names: ${namesOf(orphans.unregistered)}`,
+      detail: orphans.unregistered.join(', '),
+      fix: 'From a client: corami project add <folder> --from-server --server-path <path> registers one. Otherwise remove it from the server',
+    });
+  }
+
+  if (orphans.staging.length > 0) {
+    checks.push({
+      area: 'server',
+      id: 'server.import_staging',
+      status: 'warn',
+      summary: `Folders left by an import that stopped: ${namesOf(orphans.staging)}`,
+      detail: orphans.staging.join(', '),
+      fix: `Remove them from the server: rm -rf ${orphans.staging.join(' ')}`,
+    });
+  }
+
+  return checks;
+}
+
+function foldersIn(folder: string): string[] {
+  try {
+    return readdirSync(folder, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(folder, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+function namesOf(paths: string[]): string {
+  return paths.map((path) => basename(path)).join(', ');
 }
 
 async function checkGitService(): Promise<CheckResult[]> {

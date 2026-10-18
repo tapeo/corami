@@ -436,13 +436,13 @@ corami git watch [proj] --once   # one cycle only, without staying in listen mod
 
 ### Sequence
 
-1. **Preliminary checks:** no project with the same name on the server (`project_exists`), server reachable, git credentials of the server configured.
+1. **Preliminary checks:** no project with the same name on the server (`project_exists`), server reachable, git credentials of the server configured, and a daemon that announces the `import_staging` capability: a server that is not updated stops the command before anything is written.
 2. **Inventory:** one walk of the folder, `copyInventory`, lists the entries that travel and the entries of this machine, links included, and says how many links point outside the folder. The content of the files is never printed nor written to the logs.
 3. **Transfer:** the entries of the inventory, keys included, and the whole `.git`, enter the archive. The summary names the entries of this machine that stay here, because they are the only ones the server will not have.
-4. **Transfer:** local `tar` streamed to `tar` on the server over SSH, both started with their arguments and never through a shell. The list of the inventory goes to `tar` on stdin (`--null --no-recursion -T -`), so no pattern decides what the archive holds. On macOS with `COPYFILE_DISABLE=1`, to leave out the `._*` files. Windows uses the system `tar.exe`.
-5. **Verification:** `corami` computes a sha256 manifest of the entries on both sides, one line per file, link and folder, and compares the output of `git for-each-ref` and `git stash list`. When something does not match, it stops with an error that names the paths present on one side only, and the local folder stays intact.
+4. **Transfer:** local `tar` streamed to `tar` on the server over SSH, both started with their arguments and never through a shell. The archive lands in the staging folder of the import, `.corami-import-<project>-<time>`, next to `~/projects/<project>`: the name of the project stays free until the registration gives it to the copy. The list of the inventory goes to `tar` on stdin (`--null --no-recursion -T -`), so no pattern decides what the archive holds. On macOS with `COPYFILE_DISABLE=1`, to leave out the `._*` files. Windows uses the system `tar.exe`.
+5. **Verification:** `corami` computes a sha256 manifest of the entries of the staging folder and of the folder of this machine, one line per file, link and folder, and compares the output of `git for-each-ref` and `git stash list`. When something does not match, it stops with an error that names the paths present on one side only, removes the staging folder, and the local folder stays intact.
 6. **Git cleanup on the server:** `git worktree prune` (local worktrees are not imported and are listed in the summary). A warning when `.git/config` contains absolute paths or a credential helper of the local machine.
-7. **Registration:** the project is added to the registry, like `corami project add`.
+7. **Registration:** the daemon renames the staging folder to the name of the project and writes the registry in the same call. A registration that fails puts the folder back to staging. A client that stops in the middle leaves the staging folder or a registered project, never a folder that no project names, and `corami doctor` reports the staging folders that are left.
 8. **Converting the local folder:** renamed to `<dir>.corami-backup-<date>`, then the synced copy is created at the same path, as `corami project add <dir> --from-server --name <project>` would, so IDE and habits do not change. After the sync, the `.git` of the renamed folder (which is never moved: it stays complete) is copied into the new local copy, so the local side and the server side each have their own repository, and the files of this machine (which the sync never brings) are copied back from the backup. Right after, the local copy runs `git fetch` on `origin` and aligns with a mixed reset, when needed.
 9. **Summary:** files moved, the files of this machine left here and put back into the copy, worktrees not imported, path of the renamed folder. It is never deleted automatically.
 
@@ -483,9 +483,9 @@ All routes are under `/v1`, authenticated with the Tailscale identity headers an
 
 | Method | Route | Use |
 |---|---|---|
-| GET | `/health` | name, version, uptime, Tailscale state, SSH policy for the account of the projects (`accept`, `check`, `denied`, or null) |
+| GET | `/health` | name, version, capabilities, uptime, Tailscale state, SSH policy for the account of the projects (`accept`, `check`, `denied`, or null) |
 | GET | `/projects` | list, with the previews of each project |
-| POST | `/projects` | add: `{ "name": ..., "url": ... }` clones into the folder of `"path"` or `~/projects/<name>`, `{ "name": ..., "path": ... }` registers a folder that is there; `"owned": true` says Corami made the folder |
+| POST | `/projects` | add: `{ "name": ..., "url": ... }` clones into the folder of `"path"` or `~/projects/<name>`, `{ "name": ..., "path": ... }` registers a folder that is there; `"owned": true` says Corami made the folder; `"staging"` is the folder of an import next to `"path"`, which the daemon moves into place while it registers the project |
 | GET | `/projects/:project` | detail: path, repo url, previews |
 | DELETE | `/projects/:project` | remove the project and its previews; the folder only when the registry says Corami made it |
 | GET | `/projects/:project/git/state` | git state of the project on the server, read at the moment, and the url of its `origin` |

@@ -222,6 +222,9 @@ async function cachedSshPolicy(user: string | undefined): Promise<SshPolicy | un
   return policy;
 }
 
+/** What this daemon can do for a client that is newer than the server: the import asks for the staging folder. */
+export const CAPABILITIES = ['import_staging'] as const;
+
 async function healthData(options: DaemonOptions, startedAt: number) {
   const ts = await tailscaleStatus().catch(() => undefined);
 
@@ -232,6 +235,7 @@ async function healthData(options: DaemonOptions, startedAt: number) {
     port: options.port,
     user: options.user,
     fqdn: options.fqdn ?? ts?.dnsName,
+    capabilities: [...CAPABILITIES],
     tailscale: {
       installed: ts?.installed ?? false,
       online: ts?.online ?? false,

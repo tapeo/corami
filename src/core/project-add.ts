@@ -180,6 +180,119 @@ export function serverPathsOf(projects: Array<{ path: string }>): string[] {
   return projects.map((project) => project.path);
 }
 
+/** The prefix of the folder an import writes into before it takes the name of the project. */
+export const IMPORT_STAGING_PREFIX = '.corami-import-';
+
+/**
+ * The folder of an import before the registration gives it the name of the
+ * project: next to it, so the rename stays on one filesystem whatever the
+ * folder of the server is. A stopped import leaves this one, never the name of
+ * the project.
+ */
+export function importStagingPath(serverPath: string, project: string, stamp: string): string {
+  const folder = posix.dirname(posix.normalize(serverPath));
+
+  return posix.join(folder, `${IMPORT_STAGING_PREFIX}${project}-${stamp}`);
+}
+
+/**
+ * Whether a folder is the staging of an import into this path: next to the
+ * project, named the way the import names it. The daemon moves only a folder
+ * that passes this check, and the client deletes only one that passes it.
+ */
+export function isImportStagingFor(serverPath: string, staging: string): boolean {
+  const target = posix.normalize(serverPath);
+  const candidate = posix.normalize(staging);
+  const name = posix.basename(candidate);
+
+  return (
+    candidate !== target &&
+    posix.dirname(candidate) === posix.dirname(target) &&
+    name.startsWith(IMPORT_STAGING_PREFIX) &&
+    name.length > IMPORT_STAGING_PREFIX.length
+  );
+}
+
+export interface TakenServerFolder {
+  /** The folder of the project on the server, absolute. */
+  serverPath: string;
+  /** The folder of this machine, as the command was given it. */
+  folder: string;
+  /** The HEAD of the folder on the server, undefined when it is not a repository. */
+  remoteHead?: string | undefined;
+  /** The HEAD of the folder of this machine. */
+  localHead?: string | undefined;
+}
+
+/**
+ * The error of a folder on the server that the import does not make: it is
+ * there with something in it. A repository whose HEAD matches the folder of
+ * this machine is what a stopped import leaves behind, and the fix leads to
+ * the copy on the server instead of naming another folder.
+ */
+export function takenServerFolder(state: TakenServerFolder): CoramiError {
+  const sameCommit =
+    state.remoteHead !== undefined &&
+    state.localHead !== undefined &&
+    state.remoteHead === state.localHead;
+
+  if (sameCommit) {
+    return new CoramiError({
+      code: 'usage',
+      message: `The folder ${state.serverPath} is on the server, at the same commit as ${state.folder}, and no project names it: an import that stopped probably left it`,
+      fix: `To keep the server copy, move ${state.folder} away, then corami project add ${state.folder} --from-server --server-path ${state.serverPath}. To import ${state.folder} again, remove ${state.serverPath} from the server first`,
+    });
+  }
+
+  if (state.remoteHead !== undefined) {
+    return new CoramiError({
+      code: 'usage',
+      message: `The folder ${state.serverPath} is on the server, a git repository that no project names`,
+      fix: `To keep the server copy, move ${state.folder} away, then corami project add ${state.folder} --from-server --server-path ${state.serverPath}. To import ${state.folder} again, remove ${state.serverPath} from the server first`,
+    });
+  }
+
+  return new CoramiError({
+    code: 'usage',
+    message: `The folder ${state.serverPath} is already on the server and is not empty`,
+    fix: 'Name a free folder of the server with --server-path: the import writes only into a folder it makes',
+  });
+}
+
+export interface OrphanServerFolders {
+  /** Folders of the projects root that no project names, staging excluded. */
+  unregistered: string[];
+  /** Folders an import left behind when it stopped. */
+  staging: string[];
+}
+
+/**
+ * The folders of the projects root that no project uses: the leftovers of an
+ * import that stopped, separate, and the others. A folder that is a project,
+ * inside one, or around one is not an orphan.
+ */
+export function orphanServerFolders(entries: string[], projects: string[]): OrphanServerFolders {
+  const known = projects.map((path) => posix.normalize(path));
+  const unregistered: string[] = [];
+  const staging: string[] = [];
+
+  for (const entry of entries.map((path) => posix.normalize(path)).sort()) {
+    if (known.some((path) => within(path, entry) || within(entry, path))) {
+      continue;
+    }
+
+    const name = posix.basename(entry);
+
+    if (name.startsWith(IMPORT_STAGING_PREFIX) && name.length > IMPORT_STAGING_PREFIX.length) {
+      staging.push(entry);
+    } else if (!name.startsWith('.')) {
+      unregistered.push(entry);
+    }
+  }
+
+  return { unregistered, staging };
+}
+
 function withinLocal(flavor: typeof posix, folder: string, path: string): boolean {
   const between = flavor.relative(folder, path);
 

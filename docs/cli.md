@@ -56,7 +56,7 @@ A role and flags after `--` go to the setup. Without a terminal it installs the 
 | `corami-git-watch` | server and clients: systemd on Linux, launchd agent `dev.corami.git-watch` on macOS, scheduled task on Windows | keeps `.git` aligned with `origin` | both setups, step `git-watch` |
 | Mutagen daemon | clients: user systemd unit `corami-mutagen` on Linux, launchd agent `io.mutagen.mutagen` on macOS, logon registration on Windows | carries the sync sessions, also after a reboot | `corami setup client`, step `mutagen-daemon` |
 
-`corami doctor` reports a service that is not running and the step that installs it again.
+`corami doctor` reports a service that is not running and the step that installs it again. On the server it also reports the folders of the projects root that no project names, and the ones an import that stopped left behind.
 
 ## Projects
 
@@ -83,7 +83,7 @@ With `--from-server --name` of a registered project the server path is the one t
 
 Without a source flag the folder must exist: a path that is not here is a `usage` error, because there is nothing to copy. The fix names `--from-server` when the server already has a project with that name, and `--from-git <url>` otherwise.
 
-`--from-git` stops when the command runs inside a clone of the same repository: give that folder as the argument and it is copied instead of cloning a second one. `--from-server --name <name>` takes a registered project, wherever its folder is, and refuses a `--server-path` that says otherwise. A folder of this machine that is the home itself, or contains it, is not a project: the command refuses it rather than copying keys and personal files to the server. A step that fails after the server was given the project takes the project away again: a project with no copy on any machine is what this command never leaves behind. `--dry-run` shows both steps, server and client, without touching anything.
+`--from-git` stops when the command runs inside a clone of the same repository: give that folder as the argument and it is copied instead of cloning a second one. `--from-server --name <name>` takes a registered project, wherever its folder is, and refuses a `--server-path` that says otherwise. A folder of this machine that is the home itself, or contains it, is not a project: the command refuses it rather than copying keys and personal files to the server. The import writes into a folder next to the project, `.corami-import-<name>-<time>`, and the registration moves it into place: a command that stops leaves that folder at most, never the name of the project, and `corami doctor` reports it. A step that fails after the server was given the project takes the project away again: a project with no copy on any machine is what this command never leaves behind. `--dry-run` shows both steps, server and client, without touching anything.
 
 A name is taken by the `project add` that registers it: a second one is refused, and nothing of the project already there is touched. Two projects whose folders contain each other are refused too: they would sync the same files.
 

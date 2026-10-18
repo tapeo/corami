@@ -187,6 +187,17 @@ export async function health(): Promise<Record<string, unknown>> {
 }
 
 /**
+ * Whether the daemon of the server announces a capability of this client, the
+ * import's staging folder for example: a daemon that does not announce it is
+ * older than the client that asks. A daemon that does not answer throws.
+ */
+export async function serverSupports(capability: string): Promise<boolean> {
+  const announced = (await health()).capabilities;
+
+  return Array.isArray(announced) && announced.includes(capability);
+}
+
+/**
  * The account that owns the projects on the server, for the SSH of the sync
  * and of the import: the one saved at the setup, then the one the daemon
  * announces, then root for a server that announces nothing.
@@ -249,6 +260,8 @@ export async function addProject(input: {
   path?: string;
   /** The import made the folder on the server: a removal may delete it. */
   owned?: boolean;
+  /** The folder of an import before it takes the name of the project: the daemon moves it in. */
+  staging?: string;
 }): Promise<Record<string, unknown>> {
   return request('/v1/projects', {
     method: 'POST',

@@ -7,6 +7,7 @@ import { run, runOrThrow } from '@/core/exec.ts';
 import { gitOriginUrl, readGitState } from '@/core/git.ts';
 import { gitStateJson } from '@/core/git-align.ts';
 import { gitOriginState, originStatusJson } from '@/core/git-follow.ts';
+import { moveStagingIntoPlace } from '@/core/import-staging.ts';
 import { validatePreviewName, validateTargetPort } from '@/core/previews.ts';
 import { serverFolderOverlaps, serverPathFrom, validServerPath } from '@/core/project-add.ts';
 import { validNewProjectName, validProjectName } from '@/core/projects.ts';
@@ -243,6 +244,7 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
   const url = typeof body.url === 'string' ? body.url : undefined;
   const name = typeof body.name === 'string' ? body.name : undefined;
   const path = typeof body.path === 'string' ? body.path : undefined;
+  const staging = typeof body.staging === 'string' ? body.staging : undefined;
   // Whether the folder is one Corami made or is making here: the import moves
   // a folder of a client onto the server and says so. A folder only registered
   // keeps its `false`, and a removal leaves it on disk.
@@ -281,6 +283,21 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
     });
   }
 
+  if (staging !== undefined && (path === undefined || !owned)) {
+    throw new CoramiError({
+      code: 'usage',
+      message: 'The staging folder of an import needs the path of the project and `owned`',
+    });
+  }
+
+  if (staging !== undefined && !validServerPath(staging)) {
+    throw new CoramiError({
+      code: 'usage',
+      message: `The staging folder of an import is absolute or starts with ~/: ${staging}`,
+      fix: 'Give the folder in full, as the server sees it',
+    });
+  }
+
   const home = homeDirectory();
   const underHome = path?.startsWith('~/') === true;
 
@@ -305,7 +322,7 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
     });
   }
 
-  if (url === undefined && path !== undefined && !existsSync(target)) {
+  if (url === undefined && path !== undefined && staging === undefined && !existsSync(target)) {
     throw new CoramiError({
       code: 'config_invalid',
       message: `Folder not found on the server: ${target}`,
@@ -336,6 +353,22 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
     }
 
     await runOrThrow('git', ['clone', '--', url, target]);
+  }
+
+  const fromStaging = staging === undefined ? undefined : serverPathFrom(home, staging);
+
+  if (fromStaging !== undefined) {
+    moveStagingIntoPlace(fromStaging, target, () => {
+      upsertProject({
+        name,
+        path: target,
+        repo_url: url ?? null,
+        created_at: new Date().toISOString(),
+        owned,
+      });
+    });
+
+    return { status: 200, body: { ok: true, data: await projectDetail(name, context) } };
   }
 
   upsertProject({
