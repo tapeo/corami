@@ -58,12 +58,24 @@ describe('the archive', () => {
 
     const inventory = copyInventory(root);
     const list = archiveList(root, inventory);
-    const archive = `${root}.tgz`;
-    const packed = Bun.spawnSync(
-      ['tar', '-czf', archive, '-C', root, '--null', '--no-recursion', '-T', '-'],
-      { stdin: new TextEncoder().encode(`${list.join('\0')}\0`), stderr: 'pipe' },
+    // The same command the import runs, fed the same way: the list goes
+    // through the pipe of the process, not through a buffer handed to it.
+    const packed = Bun.spawn(
+      ['tar', '-czf', '-', '-C', root, '--null', '--no-recursion', '-T', '-'],
+      { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' },
     );
-    expect(packed.exitCode).toBe(0);
+    packed.stdin.write(`${list.join('\0')}\0`);
+    await packed.stdin.end();
+
+    const [code, stderr, bytes] = await Promise.all([
+      packed.exited,
+      new Response(packed.stderr).text(),
+      new Response(packed.stdout).arrayBuffer(),
+    ]);
+    expect({ code, stderr }).toEqual({ code: 0, stderr: '' });
+
+    const archive = `${root}.tgz`;
+    writeFileSync(archive, new Uint8Array(bytes));
 
     const listed = Bun.spawnSync(['tar', '-tzf', archive], { stderr: 'pipe' });
     const paths = listed.stdout
