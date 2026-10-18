@@ -52,6 +52,8 @@ export interface ProjectSummary {
 // the system timeout, which on macOS is over a minute.
 const REQUEST_TIMEOUT_MS = 20_000;
 
+const GATEWAY_ERRORS = new Set([502, 503, 504]);
+
 export async function baseUrl(): Promise<string> {
   // A configuration that cannot be read is an error of its own: without it
   // the command would speak to the loopback daemon of this machine and call
@@ -134,9 +136,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     envelope = JSON.parse(text) as Envelope<T>;
   } catch {
+    // `tailscale serve` answers on its own, with an empty body, when the
+    // daemon behind it is down: the server is reached, the daemon is not.
+    if (GATEWAY_ERRORS.has(response.status)) {
+      throw new CoramiError({
+        code: 'server_unreachable',
+        message: `The Corami daemon behind ${url} does not answer (HTTP ${response.status})`,
+        fix: 'On the server: systemctl --user status corami-daemon',
+      });
+    }
+
     throw new CoramiError({
       code: 'generic',
-      message: `Unexpected response from ${url}: ${text.slice(0, 120)}`,
+      message: `Unexpected response from ${url} (HTTP ${response.status}): ${text.slice(0, 120)}`,
     });
   }
 

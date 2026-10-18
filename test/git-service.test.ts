@@ -184,13 +184,16 @@ describe('service files', () => {
   test('the systemd unit of the server runs as its user', () => {
     // On a server without linger the service is a system one and must say who
     // runs it, like the daemon unit.
-    const unit = renderUnit({
-      name: spec.name,
-      description: spec.description,
-      execStart: [spec.binary, ...spec.args].join(' '),
-      restart: 'always',
-      user: 'corami',
-    });
+    const unit = renderUnit(
+      {
+        name: spec.name,
+        description: spec.description,
+        execStart: [spec.binary, ...spec.args].join(' '),
+        restart: 'always',
+        user: 'corami',
+      },
+      'system',
+    );
 
     expect(unit).toContain('User=corami');
     expect(unit).toContain('ExecStart=/usr/local/bin/corami git watch');

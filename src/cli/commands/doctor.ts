@@ -12,7 +12,7 @@ import {
   checkServeRules,
   checkTailscale,
 } from '@/core/doctor.ts';
-import { CoramiError } from '@/core/errors.ts';
+import { CoramiError, toCoramiError } from '@/core/errors.ts';
 import { run as runCommand } from '@/core/exec.ts';
 import { findTool, MUTAGEN } from '@/core/pinned-tools.ts';
 import { canSudo, ownerOfServer, privilegedGroups } from '@/core/server-user.ts';
@@ -77,10 +77,41 @@ async function collectChecks(): Promise<CheckResult[]> {
     checkGitService(),
     checkSyncDaemon(),
     checkServerAccount(),
+    checkDaemon(),
     checkSshPolicy(),
   ]);
 
   return groups.flat();
+}
+
+// Both roles: the daemon answers, from the server on the loopback, from a
+// client through `tailscale serve`. A service that did not come back after a
+// reboot shows here, before a command fails on it.
+async function checkDaemon(): Promise<CheckResult[]> {
+  const role = (await readGlobalConfig().catch(() => undefined))?.role;
+
+  if (role !== 'server' && role !== 'client') {
+    return [];
+  }
+
+  try {
+    await health();
+  } catch (error) {
+    const failure = toCoramiError(error);
+
+    return [
+      {
+        area: 'server',
+        id: 'server.daemon',
+        status: 'fail',
+        summary: 'The Corami daemon does not answer',
+        detail: failure.message,
+        fix: failure.fix,
+      },
+    ];
+  }
+
+  return [{ area: 'server', id: 'server.daemon', status: 'ok', summary: 'Corami daemon answers' }];
 }
 
 async function checkSshPolicy(): Promise<CheckResult[]> {

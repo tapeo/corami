@@ -10,8 +10,18 @@ export interface UnitSpec {
   environment?: Record<string, string> | undefined;
   user?: string | undefined;
   restart?: 'always' | 'on-failure' | 'no' | undefined;
-  wantedBy?: string | undefined;
 }
+
+export type UnitScope = 'system' | 'user';
+
+// The target a unit starts with at boot. The user manager has no
+// `multi-user.target` and no `network-online.target`: a user unit enabled
+// there is linked to a target that never starts, and stays down after a
+// reboot.
+const BOOT_TARGET: Record<UnitScope, string> = {
+  system: 'multi-user.target',
+  user: 'default.target',
+};
 
 export async function enableLinger(user: string): Promise<boolean> {
   await run('loginctl', ['enable-linger', user]);
@@ -55,17 +65,14 @@ export async function homeDirectoryForUser(user: string): Promise<string | undef
   return home === '' ? undefined : home;
 }
 
-export function renderUnit(spec: UnitSpec): string {
-  const lines = [
-    '[Unit]',
-    `Description=${spec.description}`,
-    'After=network-online.target',
-    'Wants=network-online.target',
-    '',
-    '[Service]',
-    'Type=simple',
-    `ExecStart=${spec.execStart}`,
-  ];
+export function renderUnit(spec: UnitSpec, scope: UnitScope): string {
+  const lines = ['[Unit]', `Description=${spec.description}`];
+
+  if (scope === 'system') {
+    lines.push('After=network-online.target', 'Wants=network-online.target');
+  }
+
+  lines.push('', '[Service]', 'Type=simple', `ExecStart=${spec.execStart}`);
 
   if (spec.user !== undefined) {
     lines.push(`User=${spec.user}`);
@@ -80,13 +87,13 @@ export function renderUnit(spec: UnitSpec): string {
   }
 
   lines.push(`Restart=${spec.restart ?? 'on-failure'}`, 'RestartSec=5', '', '[Install]');
-  lines.push(`WantedBy=${spec.wantedBy ?? 'multi-user.target'}`);
+  lines.push(`WantedBy=${BOOT_TARGET[scope]}`);
 
   return `${lines.join('\n')}\n`;
 }
 
 export interface InstallUnitOptions {
-  scope: 'system' | 'user';
+  scope: UnitScope;
   spec: UnitSpec;
   unitDir?: string | undefined;
   /** The home of the account a user unit belongs to, when installing one. */
@@ -116,9 +123,13 @@ export async function installUnit(
   const path = join(dir, `${options.spec.name}.service`);
 
   await run('mkdir', ['-p', dir]);
-  await Bun.write(path, renderUnit(options.spec));
+  await Bun.write(path, renderUnit(options.spec, options.scope));
   await runOrThrow('systemctl', [...scopeArgs, 'daemon-reload'], { env });
-  await runOrThrow('systemctl', [...scopeArgs, 'enable', `${options.spec.name}.service`], { env });
+  // `reenable` drops the links of an older unit before making the new ones: a
+  // unit that changed its target is not left linked to the old one too.
+  await runOrThrow('systemctl', [...scopeArgs, 'reenable', `${options.spec.name}.service`], {
+    env,
+  });
   await runOrThrow('systemctl', [...scopeArgs, 'restart', `${options.spec.name}.service`], { env });
 
   return { path, scope: options.scope };
