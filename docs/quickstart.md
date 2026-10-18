@@ -57,6 +57,35 @@ irm https://github.com/tapeo/corami/releases/latest/download/install.ps1 | iex
 
 The setup finds the server in your tailnet and asks you to confirm it. Open a new terminal and run `corami doctor`.
 
+### Tailscale SSH and the periodic check
+
+The default SSH policy of a tailnet asks for a check: every 12 hours Tailscale opens a browser page before the next ssh connection goes through. Corami runs ssh in batch mode, so `corami project add` and the sync stop until the check is approved. `corami doctor` says when this policy is on:
+
+```
+[warning] tailscale.ssh_policy: Tailscale SSH asks corami for a periodic check: the sync and the import stop each time it expires
+```
+
+To remove the check for the account of the projects, replace the SSH rule of the tailnet policy, in the Tailscale admin console (Access controls), with two rules:
+
+```json
+"ssh": [
+  {
+    "action": "accept",
+    "src": ["autogroup:member"],
+    "dst": ["autogroup:self"],
+    "users": ["autogroup:nonroot"]
+  },
+  {
+    "action": "check",
+    "src": ["autogroup:member"],
+    "dst": ["autogroup:self"],
+    "users": ["root"]
+  }
+]
+```
+
+`accept` covers every device of the user, not only the server, and `root` keeps the check. The syntax, and the duration of a check with `checkPeriod`, are in the [Tailscale documentation](https://tailscale.com/kb/1337/policy-syntax).
+
 ## 3. Your first project
 
 Pick the line that matches where the project is today:
@@ -168,6 +197,7 @@ Start with `corami doctor`: it says what is missing and the step that fixes it.
 | Symptom | Where to look |
 |---|---|
 | `server_unreachable` from a client | `corami doctor net` on the server; is Tailscale up on both sides? |
+| `Cannot read the home directory` from `corami project add`, or a sync that stops | The Tailscale SSH check expired: `corami doctor net` reports it, and the fix of the import carries the link to open ([policy](#tailscale-ssh-and-the-periodic-check)) |
 | The preview does not open | `corami serve ls`: does it answer? `journalctl --user -u <project>-web` |
 | A page loads half styled | The dev server needs the Tailscale name in its allowed origins, e.g. `allowedDevOrigins` in Next.js ([previews.md](previews.md#dev-servers-that-check-the-host-header)) |
 | The preview answers on the wrong port | `corami serve <port>` again: the URL stays the same |

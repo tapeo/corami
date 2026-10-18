@@ -6,9 +6,10 @@ import {
   isJsonContentType,
 } from '@/core/daemon-auth.ts';
 import { type ErrorCode, toCoramiError } from '@/core/errors.ts';
+import type { SshPolicy } from '@/core/ssh-policy.ts';
 import { handleApi } from '@/daemon/api.ts';
 import { type PreviewOptions, reconcileServeRules } from '@/daemon/previews.ts';
-import { status as tailscaleStatus } from '@/integrations/tailscale.ts';
+import { sshPolicy, status as tailscaleStatus } from '@/integrations/tailscale.ts';
 import { VERSION } from '@/version.ts';
 
 export interface DaemonOptions {
@@ -199,6 +200,28 @@ function statusForError(code: ErrorCode): number {
   return 500;
 }
 
+const SSH_POLICY_TTL_MS = 60_000;
+
+let sshPolicyCache: { user: string; at: number; policy: SshPolicy | undefined } | undefined;
+
+async function cachedSshPolicy(user: string | undefined): Promise<SshPolicy | undefined> {
+  if (user === undefined) {
+    return undefined;
+  }
+
+  const cached = sshPolicyCache;
+  const now = Date.now();
+
+  if (cached !== undefined && cached.user === user && now - cached.at < SSH_POLICY_TTL_MS) {
+    return cached.policy;
+  }
+
+  const policy = await sshPolicy(user).catch(() => undefined);
+  sshPolicyCache = { user, at: now, policy };
+
+  return policy;
+}
+
 async function healthData(options: DaemonOptions, startedAt: number) {
   const ts = await tailscaleStatus().catch(() => undefined);
 
@@ -214,6 +237,7 @@ async function healthData(options: DaemonOptions, startedAt: number) {
       online: ts?.online ?? false,
       dns_name: ts?.dnsName,
       tailnet: ts?.tailnetName,
+      ssh_policy: (await cachedSshPolicy(options.user)) ?? null,
     },
     uptime_seconds: Math.round((Date.now() - startedAt) / 1000),
   };

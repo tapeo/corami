@@ -171,6 +171,11 @@ export function sshManifestRunner(host: string, user: string): ManifestRunner {
   };
 }
 
+export interface RemoteHome {
+  home: string | undefined;
+  sshOutput: string;
+}
+
 export type RemoteFolderState = 'missing' | 'empty' | 'taken';
 
 /**

@@ -1,5 +1,6 @@
 import { run } from '@/core/exec.ts';
 import type { TailnetPeer } from '@/core/setup-choices.ts';
+import { type SshPolicy, sshPolicyFor } from '@/core/ssh-policy.ts';
 
 export interface TailscaleStatus {
   installed: boolean;
@@ -101,6 +102,21 @@ export async function sshEnabled(): Promise<boolean | undefined> {
   const prefs = parseJson(result.stdout);
 
   return prefs === undefined ? undefined : prefs.RunSSH === true;
+}
+
+/** How Tailscale SSH treats `user` on this machine, from the netmap of the daemon. */
+export async function sshPolicy(user: string): Promise<SshPolicy | undefined> {
+  if ((await sshEnabled()) !== true) {
+    return undefined;
+  }
+
+  const result = await run('tailscale', ['debug', 'netmap']);
+
+  if (!result.ok) {
+    return undefined;
+  }
+
+  return sshPolicyFor(parseJson(result.stdout), user, new Date());
 }
 
 export async function up(options: { hostname?: string; ssh?: boolean } = {}): Promise<void> {

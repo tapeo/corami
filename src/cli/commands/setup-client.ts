@@ -11,6 +11,7 @@ import { run } from '@/core/exec.ts';
 import { ensureTool, findTool, MUTAGEN } from '@/core/pinned-tools.ts';
 import { serverUser } from '@/core/server-user.ts';
 import { serverCandidates } from '@/core/setup-choices.ts';
+import { sshFailureFix, sshPolicyFromHealth, sshPolicyText } from '@/core/ssh-policy.ts';
 import { installDaemonService } from '@/integrations/mutagen.ts';
 import { gitWatchSpec, installService } from '@/integrations/service.ts';
 import { peers as tailnetPeers, status as tailscaleStatus } from '@/integrations/tailscale.ts';
@@ -272,27 +273,45 @@ async function stepDaemon(context: ClientContext): Promise<StepResult> {
 async function stepSsh(context: ClientContext): Promise<StepResult> {
   const user = context.user ?? 'root';
   const target = `${user}@${context.server}`;
-  const ssh = await run('ssh', [
-    '-o',
-    'BatchMode=yes',
-    '-o',
-    'StrictHostKeyChecking=accept-new',
-    '-o',
-    'ConnectTimeout=15',
-    target,
-    'true',
-  ]);
+  const ssh = await run(
+    'ssh',
+    [
+      '-o',
+      'BatchMode=yes',
+      '-o',
+      'StrictHostKeyChecking=accept-new',
+      '-o',
+      'ConnectTimeout=15',
+      target,
+      'true',
+    ],
+    { timeoutMs: 60_000 },
+  );
 
   if (!ssh.ok) {
     return {
       step: 'ssh',
       status: 'failed',
       summary: `SSH over Tailscale failed for ${target}`,
-      detail: (ssh.stderr || ssh.stdout).trim().split('\n').slice(0, 2).join(' '),
+      detail: sshFailureFix(`${ssh.stderr}\n${ssh.stdout}`),
     };
   }
 
-  return { step: 'ssh', status: 'done', summary: `SSH over Tailscale works as ${user}` };
+  const health = context.health ?? (await fetchHealth(`https://${context.server}:7420`, 5_000));
+  const policy = sshPolicyFromHealth(health);
+  const announced = typeof health?.user === 'string' ? health.user : undefined;
+  let sshText: string | undefined;
+
+  if (policy !== undefined && policy !== 'accept' && announced === user) {
+    sshText = sshPolicyText(policy, user).summary;
+  }
+
+  return {
+    step: 'ssh',
+    status: 'done',
+    summary: `SSH over Tailscale works as ${user}`,
+    detail: sshText,
+  };
 }
 
 async function stepMutagen(context: ClientContext): Promise<StepResult> {

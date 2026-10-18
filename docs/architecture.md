@@ -226,6 +226,7 @@ Every remote access goes over HTTPS. A preview in HTTP on a name that is not `lo
 - Optional firewall (ufw): inbound blocked on every interface except `tailscale0`. The setup applies it only after verifying that Tailscale SSH works, and only with explicit confirmation.
 - Docker writes its own iptables rules and bypasses `ufw`: a port published by a container without `127.0.0.1:` in front is reachable from the public IP even with the firewall on. `corami doctor net` reports it, and [previews.md](previews.md) explains how to avoid it.
 - The setup adds the line `<tailscale-ip> <magicdns-fqdn>` to `/etc/hosts`. That way the server reaches its own HTTPS URL even without local MagicDNS.
+- The default SSH policy of a tailnet is `check`: every 12 hours Tailscale asks the user to authenticate in a browser before an ssh connection goes through. Corami runs ssh in batch mode, so the import, the sync and `setup client --step ssh` stop at each expiry. The server reads the policy from `tailscale debug netmap` and the daemon reports it in `/health` (`tailscale.ssh_policy`); `corami doctor` and the setup warn when the account of the projects is on `check`. The remedy is in the [quick start](quickstart.md#tailscale-ssh-and-the-periodic-check).
 
 ## Projects
 
@@ -482,7 +483,7 @@ All routes are under `/v1`, authenticated with the Tailscale identity headers an
 
 | Method | Route | Use |
 |---|---|---|
-| GET | `/health` | name, version, uptime, Tailscale state |
+| GET | `/health` | name, version, uptime, Tailscale state, SSH policy for the account of the projects (`accept`, `check`, `denied`, or null) |
 | GET | `/projects` | list, with the previews of each project |
 | POST | `/projects` | add: `{ "name": ..., "url": ... }` clones into the folder of `"path"` or `~/projects/<name>`, `{ "name": ..., "path": ... }` registers a folder that is there; `"owned": true` says Corami made the folder |
 | GET | `/projects/:project` | detail: path, repo url, previews |

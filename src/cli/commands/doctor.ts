@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
-
+import { health } from '@/cli/server-client.ts';
 import { projectRoot, projectsRootFor, readGlobalConfig } from '@/core/config.ts';
 import {
   type CheckResult,
@@ -16,6 +16,7 @@ import { CoramiError } from '@/core/errors.ts';
 import { run as runCommand } from '@/core/exec.ts';
 import { findTool, MUTAGEN } from '@/core/pinned-tools.ts';
 import { canSudo, ownerOfServer, privilegedGroups } from '@/core/server-user.ts';
+import { type SshPolicy, sshPolicyFromHealth, sshPolicyText } from '@/core/ssh-policy.ts';
 import { daemonServiceActive } from '@/integrations/mutagen.ts';
 import {
   gitWatchSpec,
@@ -24,6 +25,7 @@ import {
   servicePlatform,
 } from '@/integrations/service.ts';
 import { homeDirectoryForUser, systemctlAsUser } from '@/integrations/systemd.ts';
+import { sshPolicy } from '@/integrations/tailscale.ts';
 
 export const DOCTOR_AREAS = ['net', 'tools', 'git', 'server'] as const;
 
@@ -75,9 +77,60 @@ async function collectChecks(): Promise<CheckResult[]> {
     checkGitService(),
     checkSyncDaemon(),
     checkServerAccount(),
+    checkSshPolicy(),
   ]);
 
   return groups.flat();
+}
+
+async function checkSshPolicy(): Promise<CheckResult[]> {
+  const config = await readGlobalConfig().catch(() => undefined);
+
+  if (config?.role === 'server') {
+    const user = config.server_user;
+
+    if (user === undefined) {
+      return [];
+    }
+
+    return policyFor(await sshPolicy(user).catch(() => undefined), user);
+  }
+
+  if (config?.role === 'client') {
+    const answer = await health().catch(() => undefined);
+    const user = typeof answer?.user === 'string' ? answer.user : config.server_user;
+
+    return policyFor(sshPolicyFromHealth(answer), user);
+  }
+
+  return [];
+}
+
+function policyFor(policy: SshPolicy | undefined, user: string | undefined): CheckResult[] {
+  if (policy === undefined || user === undefined) {
+    return [];
+  }
+
+  const text = sshPolicyText(policy, user);
+  let status: CheckStatus;
+
+  if (policy === 'accept') {
+    status = 'ok';
+  } else if (policy === 'check') {
+    status = 'warn';
+  } else {
+    status = 'fail';
+  }
+
+  return [
+    {
+      area: 'net',
+      id: 'tailscale.ssh_policy',
+      status,
+      summary: text.summary,
+      fix: text.fix,
+    },
+  ];
 }
 
 interface ServerAccount {

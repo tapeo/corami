@@ -29,6 +29,7 @@ import { run, shellQuote } from '@/core/exec.ts';
 import { copyInventory, type InventoryEntry, symlinkPortable } from '@/core/local-copy.ts';
 import { serverFolderOverlaps, serverPathFrom, serverPathsOf } from '@/core/project-add.ts';
 import { isFolderEmpty, validNewProjectName } from '@/core/projects.ts';
+import { sshFailureFix } from '@/core/ssh-policy.ts';
 import {
   archiveList,
   factsMatch,
@@ -36,6 +37,7 @@ import {
   manifestDiff,
   manifestOf,
   manifestsMatch,
+  type RemoteHome,
   remoteFolderState,
   remoteGitFacts,
   remoteManifest,
@@ -159,14 +161,15 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     return finish(options, steps, projectName, target, options.serverPath);
   }
 
-  const home = await remoteHome(user, host);
+  const remote = await remoteHome(user, host);
+  const home = remote.home;
 
   if (home === undefined) {
     steps.push({
       step: 'transfer',
       status: 'failed',
       summary: `Cannot read the home directory of ${user} on the server`,
-      detail: 'Check that ssh works, and that the account owns the projects',
+      detail: sshFailureFix(remote.sshOutput),
     });
     return finish(options, steps, projectName, target, options.serverPath);
   }
@@ -470,7 +473,7 @@ function restoreBackup(backup: string, target: string): boolean {
   }
 }
 
-export async function remoteHome(user: string, host: string): Promise<string | undefined> {
+export async function remoteHome(user: string, host: string): Promise<RemoteHome> {
   const result = await run(
     'ssh',
     ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', `${user}@${host}`, 'printf %s "$HOME"'],
@@ -480,7 +483,13 @@ export async function remoteHome(user: string, host: string): Promise<string | u
   );
 
   const home = result.stdout.trim();
-  return result.ok && home.startsWith('/') ? home : undefined;
+  const sshOutput = `${result.stderr}\n${result.stdout}`;
+
+  if (result.ok && home.startsWith('/')) {
+    return { home, sshOutput };
+  }
+
+  return { home: undefined, sshOutput };
 }
 
 /**

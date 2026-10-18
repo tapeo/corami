@@ -6,6 +6,7 @@ import { type GlobalConfig, paths, readGlobalConfig, writeGlobalConfig } from '@
 import { CoramiError, type ErrorCode } from '@/core/errors.ts';
 import { run, runOrThrow } from '@/core/exec.ts';
 import { isTailnetOnlyFirewall } from '@/core/setup-choices.ts';
+import { sshPolicyText } from '@/core/ssh-policy.ts';
 import { gitWatchSpec, installService } from '@/integrations/service.ts';
 import {
   enableLinger,
@@ -15,6 +16,7 @@ import {
 } from '@/integrations/systemd.ts';
 import {
   serveHttps,
+  sshPolicy,
   type TailscaleStatus,
   status as tailscaleStatusRaw,
 } from '@/integrations/tailscale.ts';
@@ -477,15 +479,25 @@ export async function stepSummary(context: StepContext): Promise<StepResult> {
         (await isUnitActive('corami-daemon', 'system'))
       : await isUnitActive('corami-daemon', context.daemonScope);
   const fqdn = context.fqdn ?? 'localhost';
+  const details: string[] = [];
+
+  if (context.ownerLogin === undefined) {
+    details.push(
+      'Owner login not set: any tailnet member can reach the daemon. Set it with --owner',
+    );
+  }
+
+  const policy = await sshPolicy(context.serverUser).catch(() => undefined);
+
+  if (policy !== undefined && policy !== 'accept') {
+    details.push(sshPolicyText(policy, context.serverUser).summary);
+  }
 
   return {
     step: 'summary',
     status: active ? 'done' : 'failed',
     summary: active ? `Ready at https://${fqdn}:7420` : 'Daemon is not running',
-    detail:
-      context.ownerLogin === undefined
-        ? 'Owner login not set: any tailnet member can reach the daemon. Set it with --owner'
-        : undefined,
+    detail: details.length === 0 ? undefined : details.join('. '),
   };
 }
 
