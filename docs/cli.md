@@ -24,7 +24,7 @@ Commands of v1. A command that does several things has actions, as in `corami sy
 | `corami setup client [server] [--user <user>]` | client | idempotent setup: checks Tailscale, daemon and SSH, installs Mutagen, the Mutagen daemon service and `corami-git-watch`, saves the configuration |
 | `corami setup client <server> --step <step>` | client | runs a single step: `tailscale`, `daemon`, `ssh`, `mutagen`, `mutagen-daemon`, `config`, `git-watch` |
 | `corami setup git [--provider github\|gitlab\|bitbucket] [--identity-name <name>] [--identity-email <email>]` | server, as the account | SSH key of the server, check and rewriting of HTTPS remotes; with `--identity-email` it also sets the git identity of the account, `Corami` as the name by default |
-| `corami doctor [area]` | all | checks with remedies. Areas: `net`, `tools`, `git`, `server` |
+| `corami doctor` | all | checks with remedies, in one list |
 | `corami update [--check] [--version vX.Y.Z] [--force]` | all | updates the binary from the GitHub release, with a sum check, or installs the version named with `--version` (an older one included); `--force` installs the same version again; on the server it restarts the daemon, and as root it also replaces the binary of the account |
 
 In a terminal the setups ask what the flags do not say, and only that:
@@ -56,7 +56,7 @@ A role and flags after `--` go to the setup. Without a terminal it installs the 
 | `corami-git-watch` | server and clients: systemd on Linux, launchd agent `dev.corami.git-watch` on macOS, scheduled task on Windows | keeps `.git` aligned with `origin` | both setups, step `git-watch` |
 | Mutagen daemon | clients: user systemd unit `corami-mutagen` on Linux, launchd agent `io.mutagen.mutagen` on macOS, logon registration on Windows | carries the sync sessions, also after a reboot | `corami setup client`, step `mutagen-daemon` |
 
-`corami doctor` reports a service that is not running and the step that installs it again. On the server it also reports the folders of the projects root that no project names, and the ones an import that stopped left behind.
+`corami doctor` reports a service that is not running and the step that installs it again. On the server it also reports the folders of the projects root that no project names, and the ones an import that stopped left behind. It reports how Tailscale SSH treats `root` and the other accounts of the machine, and whether the tailnet holds people besides the owner: the remedies are in [security.md](security.md).
 
 ## Projects
 

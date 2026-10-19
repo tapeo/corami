@@ -3,7 +3,6 @@ import { run } from '@/core/exec.ts';
 export type CheckStatus = 'ok' | 'warn' | 'fail' | 'skip';
 
 export interface CheckResult {
-  area: string;
   id: string;
   status: CheckStatus;
   summary: string;
@@ -17,7 +16,6 @@ export async function checkTailscale(): Promise<CheckResult[]> {
   if (!version.ok) {
     return [
       {
-        area: 'net',
         id: 'tailscale.installed',
         status: 'skip',
         summary: 'tailscale not installed',
@@ -30,9 +28,8 @@ export async function checkTailscale(): Promise<CheckResult[]> {
 
   if (!status.ok) {
     return [
-      { area: 'net', id: 'tailscale.installed', status: 'ok', summary: 'tailscale installed' },
+      { id: 'tailscale.installed', status: 'ok', summary: 'tailscale installed' },
       {
-        area: 'net',
         id: 'tailscale.connected',
         status: 'fail',
         summary: 'tailscale not connected',
@@ -46,7 +43,6 @@ export async function checkTailscale(): Promise<CheckResult[]> {
   if (parsed === undefined) {
     return [
       {
-        area: 'net',
         id: 'tailscale.status',
         status: 'fail',
         summary: 'tailscale status is not valid JSON',
@@ -59,9 +55,8 @@ export async function checkTailscale(): Promise<CheckResult[]> {
   const online = readBoolean(self, 'Online');
 
   return [
-    { area: 'net', id: 'tailscale.installed', status: 'ok', summary: 'tailscale installed' },
+    { id: 'tailscale.installed', status: 'ok', summary: 'tailscale installed' },
     {
-      area: 'net',
       id: 'tailscale.connected',
       status: online ? 'ok' : 'warn',
       summary: online ? 'tailscale connected' : 'tailscale not online',
@@ -76,7 +71,6 @@ export async function checkServeRules(): Promise<CheckResult[]> {
   if (!status.ok) {
     return [
       {
-        area: 'net',
         id: 'serve.rules',
         status: 'skip',
         summary: 'no tailscale serve rules',
@@ -89,7 +83,6 @@ export async function checkServeRules(): Promise<CheckResult[]> {
   if (parsed === undefined) {
     return [
       {
-        area: 'net',
         id: 'serve.rules',
         status: 'warn',
         summary: 'tailscale serve status is not valid JSON',
@@ -101,7 +94,6 @@ export async function checkServeRules(): Promise<CheckResult[]> {
 
   return [
     {
-      area: 'net',
       id: 'serve.rules',
       status: 'ok',
       summary: count === 0 ? 'no serve rules yet' : `${count} serve endpoints`,
@@ -113,7 +105,6 @@ export async function checkListeningPorts(): Promise<CheckResult[]> {
   if (process.platform !== 'linux') {
     return [
       {
-        area: 'net',
         id: 'net.exposed_ports',
         status: 'skip',
         summary: 'exposed port check runs on the server',
@@ -126,7 +117,6 @@ export async function checkListeningPorts(): Promise<CheckResult[]> {
   if (!ss.ok) {
     return [
       {
-        area: 'net',
         id: 'net.exposed_ports',
         status: 'skip',
         summary: 'ss not available',
@@ -139,7 +129,6 @@ export async function checkListeningPorts(): Promise<CheckResult[]> {
   if (exposed.length === 0) {
     return [
       {
-        area: 'net',
         id: 'net.exposed_ports',
         status: 'ok',
         summary: 'no ports exposed outside localhost',
@@ -149,7 +138,6 @@ export async function checkListeningPorts(): Promise<CheckResult[]> {
 
   return [
     {
-      area: 'net',
       id: 'net.exposed_ports',
       status: 'fail',
       summary: `${exposed.length} ports listening outside 127.0.0.1`,
@@ -165,7 +153,6 @@ export async function checkPinnedTools(): Promise<CheckResult[]> {
   const installed = found !== undefined;
   const results: CheckResult[] = [
     {
-      area: 'tools',
       id: 'mutagen.installed',
       status: installed ? 'ok' : 'skip',
       summary: installed ? 'mutagen installed' : 'mutagen not installed',

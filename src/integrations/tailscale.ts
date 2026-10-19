@@ -1,6 +1,15 @@
+import { readFile } from 'node:fs/promises';
+
 import { run } from '@/core/exec.ts';
+import { loginAccounts, privilegedGroups } from '@/core/server-user.ts';
 import type { TailnetPeer } from '@/core/setup-choices.ts';
-import { type SshPolicy, sshPolicyFor } from '@/core/ssh-policy.ts';
+import {
+  type SshAccount,
+  type SshExposure,
+  type SshPolicy,
+  sshExposure,
+  sshPolicyFor,
+} from '@/core/ssh-policy.ts';
 
 export interface TailscaleStatus {
   installed: boolean;
@@ -104,8 +113,16 @@ export async function sshEnabled(): Promise<boolean | undefined> {
   return prefs === undefined ? undefined : prefs.RunSSH === true;
 }
 
-/** How Tailscale SSH treats `user` on this machine, from the netmap of the daemon. */
-export async function sshPolicy(user: string): Promise<SshPolicy | undefined> {
+export interface SshState {
+  policy: SshPolicy | undefined;
+  exposure: SshExposure;
+}
+
+/**
+ * How Tailscale SSH treats `user`, root and the other accounts of this machine,
+ * from the netmap of the daemon. Undefined when the netmap cannot be read.
+ */
+export async function sshState(user: string): Promise<SshState | undefined> {
   if ((await sshEnabled()) !== true) {
     return undefined;
   }
@@ -116,7 +133,56 @@ export async function sshPolicy(user: string): Promise<SshPolicy | undefined> {
     return undefined;
   }
 
-  return sshPolicyFor(parseJson(result.stdout), user, new Date());
+  const netmap = parseJson(result.stdout);
+
+  if (netmap === undefined) {
+    return undefined;
+  }
+
+  const now = new Date();
+
+  return {
+    policy: sshPolicyFor(netmap, user, now),
+    exposure: sshExposure(netmap, user, await serverAccounts(), now),
+  };
+}
+
+// The accounts someone can log in as on this machine, with the groups that let
+// each of them become root. Only Linux has `/etc/passwd`: elsewhere the list is
+// empty and the exposure never names an account.
+async function serverAccounts(): Promise<SshAccount[]> {
+  const passwd = await readFile('/etc/passwd', 'utf8').catch(() => undefined);
+
+  if (passwd === undefined) {
+    return [];
+  }
+
+  return Promise.all(
+    loginAccounts(passwd).map(async (name) => {
+      const groups = await run('id', ['-nG', name]).catch(() => undefined);
+
+      return { name, rootThrough: groups?.ok === true ? privilegedGroups(groups.stdout) : [] };
+    }),
+  );
+}
+
+/** Every login in `tailscale status --json`, tagged devices included. */
+export async function tailnetLogins(): Promise<string[]> {
+  const result = await run('tailscale', ['status', '--json']);
+
+  return result.ok ? readLogins(parseJson(result.stdout)) : [];
+}
+
+export function readLogins(status: Record<string, unknown> | undefined): string[] {
+  const users = status?.User;
+
+  if (!isRecord(users)) {
+    return [];
+  }
+
+  return Object.values(users)
+    .map((user) => readString(user, 'LoginName'))
+    .filter((login): login is string => login !== undefined && login !== '');
 }
 
 export async function up(options: { hostname?: string; ssh?: boolean } = {}): Promise<void> {

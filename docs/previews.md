@@ -61,7 +61,7 @@ services:
 | The dev server listens on `127.0.0.1` | Corami publishes with `tailscale serve`, which forwards to localhost only. A server reachable on `0.0.0.0` is reachable from the public IP of the server |
 | With Docker, publish ports as `127.0.0.1:<port>:<port>` | Docker writes its own iptables rules and bypasses `ufw` |
 | No fixed volume `name:` in compose | Compose prefixes volumes with the project name: every project gets its own data |
-| The address is on the tailnet, never public | A dev server is not a public service. `corami doctor net` reports what listens outside localhost |
+| The address is on the tailnet, never public | A dev server is not a public service. `corami doctor` reports what listens outside localhost |
 
 ## Dev servers that check the Host header
 

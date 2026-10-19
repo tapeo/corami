@@ -127,6 +127,50 @@ export function privilegedGroups(groupNames: string): string[] {
   return groups.filter((group) => PRIVILEGED_GROUPS.includes(group));
 }
 
+// The shells that keep an account from opening a session, so that it never
+// counts as an account someone can log in as.
+const NO_LOGIN_SHELLS = new Set([
+  '/sbin/nologin',
+  '/usr/sbin/nologin',
+  '/bin/false',
+  '/usr/bin/false',
+  '/bin/sync',
+  '/sbin/shutdown',
+  '/sbin/halt',
+]);
+
+/**
+ * The accounts someone can log in as, from `/etc/passwd`: a uid of a person,
+ * not of the system, and a shell that opens a session. `root` has uid 0 and
+ * stays out, like `nobody` with 65534.
+ */
+export function loginAccounts(passwd: string): string[] {
+  const names: string[] = [];
+
+  for (const line of passwd.split('\n')) {
+    const fields = line.split(':');
+    const [name, , uid, , , , shell] = fields;
+
+    if (name === undefined || uid === undefined || shell === undefined) {
+      continue;
+    }
+
+    const id = Number(uid);
+
+    if (!Number.isInteger(id) || id < 1000 || id > 65533) {
+      continue;
+    }
+
+    if (shell === '' || NO_LOGIN_SHELLS.has(shell)) {
+      continue;
+    }
+
+    names.push(name);
+  }
+
+  return names;
+}
+
 /**
  * The account a command run as root has to leave to: the one that owns the
  * projects on this server. Undefined when the command may run where it is.

@@ -81,13 +81,17 @@ Corami takes care of server, network, sync, previews and verification. It **does
 
 ### `corami doctor`
 
-Checks with a remedy for each item, by area:
+Checks with a remedy for each item. One command: there are no areas.
 
-| Area | What |
+| Check | What |
 |---|---|
-| `net` | Tailscale up on both sides, daemon reachable, ports listening outside `127.0.0.1` or on `0.0.0.0` (Docker iptables included) |
-| `tools` | Mutagen of the pinned version, `~/.corami/bin` in the PATH |
-| `git` | Key of the server, `known_hosts`, access to the providers, commit identity |
+| `tailscale.installed`, `tailscale.connected` | Tailscale installed and online on both sides |
+| `tailscale.ssh_policy` | how Tailscale SSH treats the account of the projects |
+| `serve.rules` | the endpoints published with `tailscale serve` |
+| `net.exposed_ports` | ports listening outside `127.0.0.1` or on `0.0.0.0` (Docker iptables included) |
+| `mutagen.installed`, `mutagen.service` | Mutagen of the pinned version, `~/.corami/bin` in the PATH, the daemon service |
+| `git.service` | the git alignment service |
+| `server.*` | daemon reachable, account of the projects and its privileges, folders of the projects root that no project names |
 
 ## Roles
 
@@ -200,6 +204,8 @@ Every service listens on `127.0.0.1:<port>`. `tailscale serve` exposes the same 
 
 ## Network and security
 
+What the user has to keep in place, in order of weight, is in [security.md](security.md).
+
 ### Remote access: always HTTPS
 
 Every remote access goes over HTTPS. A preview in HTTP on a name that is not `localhost` is not a secure context, so service workers, camera, geolocation, clipboard and `crypto.subtle` would not work.
@@ -224,9 +230,9 @@ Every remote access goes over HTTPS. A preview in HTTP on a name that is not `lo
 ### Other
 
 - Optional firewall (ufw): inbound blocked on every interface except `tailscale0`. The setup applies it only after verifying that Tailscale SSH works, and only with explicit confirmation.
-- Docker writes its own iptables rules and bypasses `ufw`: a port published by a container without `127.0.0.1:` in front is reachable from the public IP even with the firewall on. `corami doctor net` reports it, and [previews.md](previews.md) explains how to avoid it.
+- Docker writes its own iptables rules and bypasses `ufw`: a port published by a container without `127.0.0.1:` in front is reachable from the public IP even with the firewall on. `corami doctor` reports it, and [previews.md](previews.md) explains how to avoid it.
 - The setup adds the line `<tailscale-ip> <magicdns-fqdn>` to `/etc/hosts`. That way the server reaches its own HTTPS URL even without local MagicDNS.
-- The default SSH policy of a tailnet is `check`: every 12 hours Tailscale asks the user to authenticate in a browser before an ssh connection goes through. Corami runs ssh in batch mode, so the import, the sync and `setup client --step ssh` stop at each expiry. The server reads the policy from `tailscale debug netmap` and the daemon reports it in `/health` (`tailscale.ssh_policy`); `corami doctor` and the setup warn when the account of the projects is on `check`. The remedy is in the [quick start](quickstart.md#tailscale-ssh-and-the-periodic-check).
+- The default SSH policy of a tailnet is `check`: every 12 hours Tailscale asks the user to authenticate in a browser before an ssh connection goes through. Corami runs ssh in batch mode, so the import, the sync and `setup client --step ssh` stop at each expiry. The server reads the policy from `tailscale debug netmap` and the daemon reports it in `/health` (`tailscale.ssh_policy`, `tailscale.ssh_root`, `tailscale.ssh_accounts`); `corami doctor` and the setup warn when the account of the projects is on `check`. The remedy is in [security.md](security.md#the-ssh-rules-of-the-tailnet).
 
 ## Projects
 
@@ -465,7 +471,7 @@ More:
 - The key has access to all the repositories of the account, like any user key. It is revoked from the provider settings. Per-repository keys are an idea for the [v2](v2/README.md).
 - Commit identity (`user.name`, `user.email`): proposed by copying the global git config of the client at the first client setup.
 - Before the import, `git ls-remote` on the remote of the project, run from the server, confirms the access. When it fails, the remedy is `corami setup git`.
-- `corami doctor git` checks key, `known_hosts`, access to every provider and identity.
+- The key and the access to every provider are checked by `corami setup git` and by the import; `corami doctor` checks the git alignment service (`git.service`).
 - No provider CLIs in v1. The integration with PRs and issues (e.g. `gh`) is an idea for the [v2](v2/README.md).
 
 ## Backup

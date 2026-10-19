@@ -1,10 +1,19 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  otherPeople,
+  PROTECTIONS_OFF,
+  peopleText,
+  protectionsOff,
+  type SshAccount,
+  sshAccountsText,
+  sshExposure,
+  sshExposureFromHealth,
   sshFailureFix,
   sshPolicyFor,
   sshPolicyFromHealth,
   sshPolicyText,
+  sshRootText,
 } from '@/core/ssh-policy.ts';
 
 const NOW = new Date('2026-10-18T18:00:00Z');
@@ -90,7 +99,8 @@ describe('what the policy means for the user', () => {
   test('accept is ok, check and denied carry a fix', () => {
     expect(sshPolicyText('accept', 'corami').fix).toBeUndefined();
     expect(sshPolicyText('check', 'corami').summary).toContain('periodic check');
-    expect(sshPolicyText('check', 'corami').fix).toContain('autogroup:nonroot');
+    expect(sshPolicyText('check', 'corami').fix).toContain('for corami');
+    expect(sshPolicyText('check', 'corami').fix).toContain('docs/security.md');
     expect(sshPolicyText('denied', 'corami').summary).toContain('denies corami');
   });
 });
@@ -129,5 +139,110 @@ describe('the fix of a failed ssh', () => {
     expect(sshFailureFix('\n')).toBe(
       'Check that ssh works, and that the account owns the projects',
     );
+  });
+});
+
+describe('what the policy does with root and the other accounts', () => {
+  const accounts: SshAccount[] = [
+    { name: 'corami', rootThrough: [] },
+    { name: 'ubuntu', rootThrough: ['sudo', 'lxd', 'adm'] },
+    { name: 'backup', rootThrough: [] },
+  ];
+
+  test('a rule that reaches every account lets root and the others in', () => {
+    const exposure = sshExposure(netmapWith([acceptRule]), 'corami', accounts, NOW);
+
+    expect(exposure.root).toBe('accept');
+    expect(exposure.accounts.map((account) => account.name)).toEqual(['ubuntu', 'backup']);
+  });
+
+  test('a rule that names the account leaves root and the others out', () => {
+    const named = {
+      principals: [{ nodeIP: '100.64.0.7' }],
+      sshUsers: { corami: 'corami' },
+      action: { accept: true },
+    };
+    const rootCheck = { ...checkRule, sshUsers: { root: 'root' } };
+    const exposure = sshExposure(netmapWith([named, rootCheck]), 'corami', accounts, NOW);
+
+    expect(exposure.root).toBe('check');
+    expect(exposure.accounts).toEqual([]);
+  });
+
+  test('the health answer carries root and the accounts of the daemon', () => {
+    const health = {
+      tailscale: {
+        ssh_policy: 'accept',
+        ssh_root: 'accept',
+        ssh_accounts: [{ name: 'ubuntu', root_through: ['sudo'] }, { name: 'backup' }],
+      },
+    };
+
+    expect(sshExposureFromHealth(health)).toEqual({
+      root: 'accept',
+      accounts: [
+        { name: 'ubuntu', rootThrough: ['sudo'] },
+        { name: 'backup', rootThrough: [] },
+      ],
+    });
+  });
+
+  test('an older daemon has no exposure to read', () => {
+    expect(sshExposureFromHealth({ tailscale: { ssh_policy: 'accept' } })).toBeUndefined();
+    expect(sshExposureFromHealth({})).toBeUndefined();
+  });
+
+  test('root on accept carries the fix, a check on root does not', () => {
+    expect(sshRootText('accept').fix).toContain('give root the action check');
+    expect(sshRootText('check').fix).toBeUndefined();
+    expect(sshRootText('denied').summary).toContain('denies root');
+  });
+
+  test('the other accounts are named with the way to root they have', () => {
+    const text = sshAccountsText(accounts.slice(1), 'corami');
+
+    expect(text.summary).toContain('ubuntu (can become root: sudo, lxd, adm)');
+    expect(text.summary).toContain('backup');
+    expect(text.fix).toContain('name corami in the SSH rule');
+    expect(sshAccountsText([], 'corami').fix).toBeUndefined();
+  });
+});
+
+describe('the people of the tailnet', () => {
+  test('every login that is not the owner is someone else', () => {
+    expect(
+      otherPeople(['me@example.com', 'other@example.com', 'tagged-devices'], 'me@example.com'),
+    ).toEqual(['other@example.com']);
+  });
+
+  test('tagged devices belong to no person', () => {
+    expect(otherPeople(['me@example.com', 'tagged-devices'], 'me@example.com')).toEqual([]);
+  });
+
+  test('without the owner, a single login is not enough', () => {
+    expect(otherPeople(['me@example.com'], undefined)).toEqual([]);
+    expect(otherPeople(['me@example.com', 'other@example.com'], undefined)).toEqual([
+      'me@example.com',
+      'other@example.com',
+    ]);
+  });
+
+  test('the text names them and says what they reach', () => {
+    expect(peopleText([]).summary).toBe('Only you in the tailnet');
+    expect(peopleText(['a@example.com']).summary).toContain('previews and the agents');
+    expect(peopleText(['a@example.com']).fix).toContain('#people-in-your-tailnet');
+  });
+});
+
+describe('the protections the setup names once', () => {
+  test('any of them off is enough', () => {
+    expect(protectionsOff({ root: 'accept' })).toBe(true);
+    expect(protectionsOff({ accounts: [{ name: 'ubuntu', rootThrough: [] }] })).toBe(true);
+    expect(protectionsOff({ people: ['a@example.com'] })).toBe(true);
+    expect(protectionsOff({ root: 'check', accounts: [], people: [] })).toBe(false);
+  });
+
+  test('the line points at doctor', () => {
+    expect(PROTECTIONS_OFF).toContain('corami doctor');
   });
 });

@@ -33,7 +33,7 @@ Setup, once:
 
 Make it safe:
 
-- Restrict the key to the single script it needs, with `command="..."` in `authorized_keys`, or use a dedicated macOS user. A server key without limits lets anything on the server run anything on your Mac, with your credentials.
+- Restrict the key to the single script it needs, with `command="..."` in `authorized_keys`, or use a dedicated macOS user. A server key without limits lets anything on the server run anything on your Mac, with your credentials. See [security.md](security.md#builds-on-the-mac).
 - The Mac must be awake, otherwise SSH fails: the agent sees the error and can say so.
 - An SSH session reads neither `.zshrc` nor `.bashrc`: put `PATH` in `~/.zshenv`, or run the command as `zsh -lc '...'`.
 - Over SSH the login keychain can be locked and `codesign` fails. For builds without signing (`--no-codesign`) nothing is needed; for a signed build run `security unlock-keychain` before it.

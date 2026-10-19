@@ -58,6 +58,7 @@ Early: it works end to end on a real VPS with a macOS client. Binaries and updat
 ## Documentation
 
 - [Quick start](docs/quickstart.md): from nothing to an agent and a preview on your phone
+- [Security](docs/security.md): what to keep in place, in order of weight
 - [CLI reference](docs/cli.md)
 - [Previews](docs/previews.md): a dev server with an HTTPS address
 - [Builds](docs/builds.md): on the server, or on a client over SSH

@@ -12,12 +12,22 @@ import {
   checkServeRules,
   checkTailscale,
 } from '@/core/doctor.ts';
-import { CoramiError, toCoramiError } from '@/core/errors.ts';
+import { toCoramiError } from '@/core/errors.ts';
 import { run as runCommand } from '@/core/exec.ts';
 import { findTool, MUTAGEN } from '@/core/pinned-tools.ts';
 import { orphanServerFolders, serverPathsOf } from '@/core/project-add.ts';
 import { canSudo, ownerOfServer, privilegedGroups } from '@/core/server-user.ts';
-import { type SshPolicy, sshPolicyFromHealth, sshPolicyText } from '@/core/ssh-policy.ts';
+import {
+  otherPeople,
+  peopleText,
+  type SshAccount,
+  type SshPolicy,
+  sshAccountsText,
+  sshExposureFromHealth,
+  sshPolicyFromHealth,
+  sshPolicyText,
+  sshRootText,
+} from '@/core/ssh-policy.ts';
 import { daemonServiceActive } from '@/integrations/mutagen.ts';
 import {
   gitWatchSpec,
@@ -26,9 +36,7 @@ import {
   servicePlatform,
 } from '@/integrations/service.ts';
 import { homeDirectoryForUser, systemctlAsUser } from '@/integrations/systemd.ts';
-import { sshPolicy } from '@/integrations/tailscale.ts';
-
-export const DOCTOR_AREAS = ['net', 'tools', 'git', 'server'] as const;
+import { sshState, tailnetLogins } from '@/integrations/tailscale.ts';
 
 const STATUS_LABEL: Record<CheckStatus, string> = {
   ok: 'ok',
@@ -38,35 +46,18 @@ const STATUS_LABEL: Record<CheckStatus, string> = {
 };
 
 async function run(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
-  const requested = context.args.positionals[0];
-
-  if (requested !== undefined && !isArea(requested)) {
-    throw new CoramiError({
-      code: 'usage',
-      message: `Unknown area: ${requested}`,
-      fix: `Available areas: ${DOCTOR_AREAS.join(', ')}`,
-    });
-  }
-
   const checks = await collectChecks();
-  const filtered =
-    requested === undefined ? checks : checks.filter((check) => check.area === requested);
 
   if (context.output.json) {
     return {
       data: {
-        areas: DOCTOR_AREAS,
-        counts: countByStatus(filtered),
-        checks: filtered,
+        counts: countByStatus(checks),
+        checks,
       },
     };
   }
 
-  return { text: render(filtered) };
-}
-
-function isArea(value: string): value is (typeof DOCTOR_AREAS)[number] {
-  return (DOCTOR_AREAS as readonly string[]).includes(value);
+  return { text: render(checks) };
 }
 
 async function collectChecks(): Promise<CheckResult[]> {
@@ -80,7 +71,8 @@ async function collectChecks(): Promise<CheckResult[]> {
     checkServerAccount(),
     checkOrphanFolders(),
     checkDaemon(),
-    checkSshPolicy(),
+    checkSsh(),
+    checkPeople(),
   ]);
 
   return groups.flat();
@@ -103,7 +95,6 @@ async function checkDaemon(): Promise<CheckResult[]> {
 
     return [
       {
-        area: 'server',
         id: 'server.daemon',
         status: 'fail',
         summary: 'The Corami daemon does not answer',
@@ -113,11 +104,15 @@ async function checkDaemon(): Promise<CheckResult[]> {
     ];
   }
 
-  return [{ area: 'server', id: 'server.daemon', status: 'ok', summary: 'Corami daemon answers' }];
+  return [{ id: 'server.daemon', status: 'ok', summary: 'Corami daemon answers' }];
 }
 
-async function checkSshPolicy(): Promise<CheckResult[]> {
+// Both roles: the server reads the netmap, a client the fields the daemon
+// reports. The account of the projects is the one the commands use; root and
+// the other accounts are what the policy does with the rest of the machine.
+async function checkSsh(): Promise<CheckResult[]> {
   const config = await readGlobalConfig().catch(() => undefined);
+  const checks: CheckResult[] = [];
 
   if (config?.role === 'server') {
     const user = config.server_user;
@@ -126,17 +121,83 @@ async function checkSshPolicy(): Promise<CheckResult[]> {
       return [];
     }
 
-    return policyFor(await sshPolicy(user).catch(() => undefined), user);
-  }
+    const state = await sshState(user).catch(() => undefined);
 
-  if (config?.role === 'client') {
+    if (state === undefined) {
+      return [];
+    }
+
+    checks.push(...policyFor(state.policy, user));
+
+    if (state.exposure.root !== undefined) {
+      checks.push(rootFor(state.exposure.root));
+    }
+
+    checks.push(accountsFor(state.exposure.accounts, user));
+  } else if (config?.role === 'client') {
     const answer = await health().catch(() => undefined);
     const user = typeof answer?.user === 'string' ? answer.user : config.server_user;
+    const exposure = sshExposureFromHealth(answer);
 
-    return policyFor(sshPolicyFromHealth(answer), user);
+    checks.push(...policyFor(sshPolicyFromHealth(answer), user));
+
+    if (exposure !== undefined) {
+      if (exposure.root !== undefined) {
+        checks.push(rootFor(exposure.root));
+      }
+
+      if (user !== undefined) {
+        checks.push(accountsFor(exposure.accounts, user));
+      }
+    }
   }
 
-  return [];
+  return checks;
+}
+
+// Warns when the tailnet holds people who are not the owner: they reach every
+// preview and agent published with `tailscale serve`.
+async function checkPeople(): Promise<CheckResult[]> {
+  const logins = await tailnetLogins().catch(() => []);
+
+  if (logins.length === 0) {
+    return [];
+  }
+
+  const config = await readGlobalConfig().catch(() => undefined);
+  const others = otherPeople(logins, config?.owner_login);
+  const text = peopleText(others);
+
+  return [
+    {
+      id: 'tailscale.people',
+      status: others.length === 0 ? 'ok' : 'warn',
+      summary: text.summary,
+      fix: text.fix,
+    },
+  ];
+}
+
+function rootFor(policy: SshPolicy): CheckResult {
+  const text = sshRootText(policy);
+
+  return {
+    id: 'tailscale.ssh_root',
+    status: policy === 'accept' ? 'warn' : 'ok',
+    summary: text.summary,
+    fix: text.fix,
+  };
+}
+
+function accountsFor(accounts: readonly SshAccount[], user: string): CheckResult {
+  const text = sshAccountsText(accounts, user);
+
+  return {
+    id: 'tailscale.ssh_accounts',
+    status: accounts.length === 0 ? 'ok' : 'warn',
+    summary: text.summary,
+    fix: text.fix,
+  };
 }
 
 function policyFor(policy: SshPolicy | undefined, user: string | undefined): CheckResult[] {
@@ -157,7 +218,6 @@ function policyFor(policy: SshPolicy | undefined, user: string | undefined): Che
 
   return [
     {
-      area: 'net',
       id: 'tailscale.ssh_policy',
       status,
       summary: text.summary,
@@ -201,7 +261,6 @@ async function checkServerAccount(): Promise<CheckResult[]> {
   if (user === undefined) {
     return [
       {
-        area: 'server',
         id: 'server.account',
         status: 'warn',
         summary: 'No account owns the projects: they live in the home of root',
@@ -219,7 +278,6 @@ async function checkServerAccount(): Promise<CheckResult[]> {
   ]);
   const checks: CheckResult[] = [
     {
-      area: 'server',
       id: 'server.account',
       status: 'ok',
       summary: `The projects are owned by ${user}`,
@@ -229,7 +287,6 @@ async function checkServerAccount(): Promise<CheckResult[]> {
 
   if (existsSync(legacy)) {
     checks.push({
-      area: 'server',
       id: 'server.legacy',
       status: 'fail',
       summary: 'Projects of root are still in /root/corami/projects',
@@ -242,7 +299,6 @@ async function checkServerAccount(): Promise<CheckResult[]> {
 
   if (foreignEntry !== '') {
     checks.push({
-      area: 'server',
       id: 'server.owner',
       status: 'warn',
       summary: `Some files in the projects are not owned by ${user}`,
@@ -258,7 +314,6 @@ async function checkServerAccount(): Promise<CheckResult[]> {
     const ways = [...privileged, ...(sudoAllowed ? ['sudo'] : [])].join(', ');
 
     checks.push({
-      area: 'server',
       id: 'server.privileges',
       status: 'warn',
       summary: `${user} can become root (${ways})`,
@@ -266,7 +321,6 @@ async function checkServerAccount(): Promise<CheckResult[]> {
     });
   } else {
     checks.push({
-      area: 'server',
       id: 'server.privileges',
       status: 'ok',
       summary: `${user} cannot become root`,
@@ -313,7 +367,6 @@ async function checkOrphanFolders(): Promise<CheckResult[]> {
   if (orphans.unregistered.length === 0 && orphans.staging.length === 0) {
     return [
       {
-        area: 'server',
         id: 'server.orphan_folders',
         status: 'ok',
         summary: 'Every folder of the projects root belongs to a project',
@@ -326,7 +379,6 @@ async function checkOrphanFolders(): Promise<CheckResult[]> {
 
   if (orphans.unregistered.length > 0) {
     checks.push({
-      area: 'server',
       id: 'server.orphan_folders',
       status: 'warn',
       summary: `Folders of the projects root that no project names: ${namesOf(orphans.unregistered)}`,
@@ -337,7 +389,6 @@ async function checkOrphanFolders(): Promise<CheckResult[]> {
 
   if (orphans.staging.length > 0) {
     checks.push({
-      area: 'server',
       id: 'server.import_staging',
       status: 'warn',
       summary: `Folders left by an import that stopped: ${namesOf(orphans.staging)}`,
@@ -374,7 +425,6 @@ async function checkGitService(): Promise<CheckResult[]> {
   if (active) {
     return [
       {
-        area: 'git',
         id: 'git.service',
         status: 'ok',
         summary: 'git alignment service running',
@@ -387,7 +437,6 @@ async function checkGitService(): Promise<CheckResult[]> {
 
   return [
     {
-      area: 'git',
       id: 'git.service',
       status: 'warn',
       summary: 'git alignment service not running',
@@ -416,7 +465,6 @@ async function checkSyncDaemon(): Promise<CheckResult[]> {
   if (active) {
     return [
       {
-        area: 'tools',
         id: 'mutagen.service',
         status: 'ok',
         summary: 'Mutagen daemon service running',
@@ -426,7 +474,6 @@ async function checkSyncDaemon(): Promise<CheckResult[]> {
 
   return [
     {
-      area: 'tools',
       id: 'mutagen.service',
       status: 'warn',
       summary: 'Mutagen daemon service not running: the sync stops after a reboot',
@@ -470,8 +517,7 @@ function render(checks: CheckResult[]): string {
 export const doctorCommand: CommandSpec = {
   name: 'doctor',
   summary: 'Checks network, HTTPS, tools and services',
-  usage: `corami doctor [${DOCTOR_AREAS.join('|')}]`,
-  arguments: 1,
-  examples: ['corami doctor', 'corami doctor net'],
+  usage: 'corami doctor',
+  examples: ['corami doctor', 'corami doctor --json'],
   run,
 };

@@ -6,10 +6,9 @@ import {
   isJsonContentType,
 } from '@/core/daemon-auth.ts';
 import { type ErrorCode, toCoramiError } from '@/core/errors.ts';
-import type { SshPolicy } from '@/core/ssh-policy.ts';
 import { handleApi } from '@/daemon/api.ts';
 import { type PreviewOptions, reconcileServeRules } from '@/daemon/previews.ts';
-import { sshPolicy, status as tailscaleStatus } from '@/integrations/tailscale.ts';
+import { type SshState, sshState, status as tailscaleStatus } from '@/integrations/tailscale.ts';
 import { VERSION } from '@/version.ts';
 
 export interface DaemonOptions {
@@ -202,24 +201,24 @@ function statusForError(code: ErrorCode): number {
 
 const SSH_POLICY_TTL_MS = 60_000;
 
-let sshPolicyCache: { user: string; at: number; policy: SshPolicy | undefined } | undefined;
+let sshStateCache: { user: string; at: number; state: SshState | undefined } | undefined;
 
-async function cachedSshPolicy(user: string | undefined): Promise<SshPolicy | undefined> {
+async function cachedSshState(user: string | undefined): Promise<SshState | undefined> {
   if (user === undefined) {
     return undefined;
   }
 
-  const cached = sshPolicyCache;
+  const cached = sshStateCache;
   const now = Date.now();
 
   if (cached !== undefined && cached.user === user && now - cached.at < SSH_POLICY_TTL_MS) {
-    return cached.policy;
+    return cached.state;
   }
 
-  const policy = await sshPolicy(user).catch(() => undefined);
-  sshPolicyCache = { user, at: now, policy };
+  const state = await sshState(user).catch(() => undefined);
+  sshStateCache = { user, at: now, state };
 
-  return policy;
+  return state;
 }
 
 /** What this daemon can do for a client that is newer than the server: the import asks for the staging folder. */
@@ -227,6 +226,7 @@ export const CAPABILITIES = ['import_staging'] as const;
 
 async function healthData(options: DaemonOptions, startedAt: number) {
   const ts = await tailscaleStatus().catch(() => undefined);
+  const ssh = await cachedSshState(options.user);
 
   return {
     name: 'corami',
@@ -241,7 +241,9 @@ async function healthData(options: DaemonOptions, startedAt: number) {
       online: ts?.online ?? false,
       dns_name: ts?.dnsName,
       tailnet: ts?.tailnetName,
-      ssh_policy: (await cachedSshPolicy(options.user)) ?? null,
+      ssh_policy: ssh?.policy ?? null,
+      ssh_root: ssh?.exposure.root ?? null,
+      ssh_accounts: ssh?.exposure.accounts ?? null,
     },
     uptime_seconds: Math.round((Date.now() - startedAt) / 1000),
   };

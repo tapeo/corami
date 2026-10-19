@@ -6,7 +6,7 @@ import { type GlobalConfig, paths, readGlobalConfig, writeGlobalConfig } from '@
 import { CoramiError, type ErrorCode } from '@/core/errors.ts';
 import { run, runOrThrow } from '@/core/exec.ts';
 import { isTailnetOnlyFirewall } from '@/core/setup-choices.ts';
-import { sshPolicyText } from '@/core/ssh-policy.ts';
+import { otherPeople, PROTECTIONS_OFF, protectionsOff, sshPolicyText } from '@/core/ssh-policy.ts';
 import { gitWatchSpec, installService } from '@/integrations/service.ts';
 import {
   enableLinger,
@@ -16,8 +16,9 @@ import {
 } from '@/integrations/systemd.ts';
 import {
   serveHttps,
-  sshPolicy,
+  sshState,
   type TailscaleStatus,
+  tailnetLogins,
   status as tailscaleStatusRaw,
 } from '@/integrations/tailscale.ts';
 
@@ -487,10 +488,23 @@ export async function stepSummary(context: StepContext): Promise<StepResult> {
     );
   }
 
-  const policy = await sshPolicy(context.serverUser).catch(() => undefined);
+  const ssh = await sshState(context.serverUser).catch(() => undefined);
+  const policy = ssh?.policy;
 
   if (policy !== undefined && policy !== 'accept') {
     details.push(sshPolicyText(policy, context.serverUser).summary);
+  }
+
+  const others = otherPeople(await tailnetLogins().catch(() => []), context.ownerLogin);
+
+  if (
+    protectionsOff({
+      root: ssh?.exposure.root,
+      accounts: ssh?.exposure.accounts,
+      people: others,
+    })
+  ) {
+    details.push(PROTECTIONS_OFF);
   }
 
   return {

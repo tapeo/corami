@@ -2,14 +2,33 @@ const TAILSCALE_CHECK_URL = /To authenticate, visit: (https:\/\/\S+)/;
 
 const SSH_ADVICE = 'Check that ssh works, and that the account owns the projects';
 
-const POLICY_FIX =
-  'In the tailnet policy, give the SSH rule for autogroup:nonroot the action accept. See docs/quickstart.md';
+const SECURITY_DOC = 'docs/security.md';
 
 export type SshPolicy = 'accept' | 'check' | 'denied';
 
 export interface SshPolicyText {
   summary: string;
   fix?: string | undefined;
+}
+
+/** An account of the server that Tailscale SSH lets in without a check. */
+export interface SshAccount {
+  name: string;
+  /** The groups through which the account can become root, if any. */
+  rootThrough: string[];
+}
+
+/** What the SSH policy of the tailnet does with root and the other accounts. */
+export interface SshExposure {
+  root: SshPolicy | undefined;
+  accounts: SshAccount[];
+}
+
+/** The line the setup adds when one of the protections is off. */
+export const PROTECTIONS_OFF = 'Some protections are off: corami doctor says which';
+
+function policyFix(user: string): string {
+  return `In the tailnet policy, give the SSH rule for ${user} the action accept. See ${SECURITY_DOC}#the-ssh-rules-of-the-tailnet`;
 }
 
 export function sshPolicyText(policy: SshPolicy, user: string): SshPolicyText {
@@ -20,7 +39,7 @@ export function sshPolicyText(policy: SshPolicy, user: string): SshPolicyText {
   if (policy === 'check') {
     return {
       summary: `Tailscale SSH asks ${user} for a periodic check: the sync and the import stop each time it expires`,
-      fix: POLICY_FIX,
+      fix: policyFix(user),
     };
   }
 
@@ -39,6 +58,132 @@ export function sshPolicyFromHealth(health: unknown): SshPolicy | undefined {
   }
 
   return undefined;
+}
+
+/**
+ * What the policy does with root and with the accounts of the machine, through
+ * the same decision `sshPolicyFor` makes for the account of the projects.
+ */
+export function sshExposure(
+  netmap: unknown,
+  user: string,
+  accounts: SshAccount[],
+  now: Date,
+): SshExposure {
+  const reached = accounts.filter(
+    (account) => account.name !== user && sshPolicyFor(netmap, account.name, now) === 'accept',
+  );
+
+  return { root: sshPolicyFor(netmap, 'root', now), accounts: reached };
+}
+
+/** The exposure of the daemon, from `/v1/health`. Undefined with an older daemon. */
+export function sshExposureFromHealth(health: unknown): SshExposure | undefined {
+  const tailscale = isRecord(health) ? health.tailscale : undefined;
+
+  if (!isRecord(tailscale)) {
+    return undefined;
+  }
+
+  const root = tailscale.ssh_root;
+
+  if (root !== 'accept' && root !== 'check' && root !== 'denied') {
+    return undefined;
+  }
+
+  const accounts = tailscale.ssh_accounts;
+
+  if (!Array.isArray(accounts)) {
+    return undefined;
+  }
+
+  return { root, accounts: accounts.flatMap(sshAccountOf) };
+}
+
+export function sshRootText(policy: SshPolicy): SshPolicyText {
+  if (policy === 'accept') {
+    return {
+      summary: 'Tailscale SSH lets root in without a check',
+      fix: `In the tailnet policy, give root the action check. See ${SECURITY_DOC}#the-ssh-rules-of-the-tailnet`,
+    };
+  }
+
+  if (policy === 'check') {
+    return { summary: 'Tailscale SSH asks root for a check' };
+  }
+
+  return { summary: 'Tailscale SSH denies root' };
+}
+
+export function sshAccountsText(accounts: readonly SshAccount[], user: string): SshPolicyText {
+  if (accounts.length === 0) {
+    return { summary: 'Tailscale SSH reaches no other account' };
+  }
+
+  const listed = accounts.map(describeAccount).join(', ');
+
+  return {
+    summary: `Tailscale SSH lets other accounts in without a check: ${listed}`,
+    fix: `In the tailnet policy, name ${user} in the SSH rule instead of autogroup:nonroot. See ${SECURITY_DOC}#other-accounts-on-the-server`,
+  };
+}
+
+export function peopleText(others: string[]): SshPolicyText {
+  if (others.length === 0) {
+    return { summary: 'Only you in the tailnet' };
+  }
+
+  return {
+    summary: `Other people in the tailnet reach the previews and the agents: ${others.join(', ')}`,
+    fix: `Limit access to the server in the tailnet policy. See ${SECURITY_DOC}#people-in-your-tailnet`,
+  };
+}
+
+/**
+ * The logins of people who are not the owner, from the `User` map of
+ * `tailscale status --json`. Tagged devices belong to no person and stay out.
+ * Without the owner login, one login is not enough to tell there are others.
+ */
+export function otherPeople(logins: string[], owner: string | undefined): string[] {
+  const people = new Set(logins.filter((login) => login !== '' && login !== 'tagged-devices'));
+
+  if (owner === undefined || owner === '') {
+    return people.size > 1 ? [...people].sort() : [];
+  }
+
+  people.delete(owner);
+
+  return [...people].sort();
+}
+
+/** True when a protection the user has to keep is off, so that the setup says it once. */
+export function protectionsOff(input: {
+  root?: SshPolicy | undefined;
+  accounts?: SshAccount[] | undefined;
+  people?: string[] | undefined;
+}): boolean {
+  const accounts = input.accounts?.length ?? 0;
+  const people = input.people?.length ?? 0;
+
+  return input.root === 'accept' || accounts > 0 || people > 0;
+}
+
+function describeAccount(account: SshAccount): string {
+  return account.rootThrough.length === 0
+    ? account.name
+    : `${account.name} (can become root: ${account.rootThrough.join(', ')})`;
+}
+
+function sshAccountOf(value: unknown): SshAccount[] {
+  if (!isRecord(value) || typeof value.name !== 'string' || value.name === '') {
+    return [];
+  }
+
+  const groups = Array.isArray(value.root_through)
+    ? value.root_through.filter((group): group is string => typeof group === 'string')
+    : [];
+
+  return [{ name: value.name, rootThrough: groups }];
 }
 
 export function sshFailureFix(sshOutput: string): string {

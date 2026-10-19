@@ -101,10 +101,19 @@ describe('cli', () => {
     expect(JSON.parse(asked.stdout).data.command).toBe('sync prune');
   });
 
-  test('refuses the area of doctor as a flag', async () => {
+  test('refuses an unknown flag of doctor', async () => {
     const result = await corami(['doctor', '--area', 'net']);
     expect(result.exitCode).toBe(2);
     expect(JSON.parse(result.stdout).error.message).toBe('Unknown flag for corami doctor: --area');
+  });
+
+  test('refuses an area of doctor as an argument', async () => {
+    const result = await corami(['doctor', 'net']);
+    const parsed = JSON.parse(result.stdout);
+
+    expect(result.exitCode).toBe(2);
+    expect(parsed.error.code).toBe('usage');
+    expect(parsed.error.message).toBe('Too many arguments for corami doctor: net');
   });
 
   test('fails with a usage error on an unknown command', async () => {

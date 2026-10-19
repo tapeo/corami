@@ -5,6 +5,7 @@ import {
   canSudo,
   DEFAULT_SERVER_USER,
   isValidServerUser,
+  loginAccounts,
   ownerBinary,
   ownerOfServer,
   privilegedGroups,
@@ -123,5 +124,35 @@ describe('commands that have to leave root', () => {
     ).toBeUndefined();
     expect(accountToLeaveTo({ platform: 'linux', user: 'corami', config: server })).toBeUndefined();
     expect(accountToLeaveTo({ platform: 'darwin', user: 'root', config: server })).toBeUndefined();
+  });
+});
+
+describe('the accounts someone can log in as', () => {
+  const passwd = [
+    'root:x:0:0:root:/root:/bin/bash',
+    'daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin',
+    'ubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash',
+    'corami:x:1001:1001::/home/corami:/bin/bash',
+    'backup:x:1002:1002::/home/backup:/usr/sbin/nologin',
+    'nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin',
+    '',
+  ].join('\n');
+
+  test('keeps the accounts of people with a shell that opens a session', () => {
+    expect(loginAccounts(passwd)).toEqual(['ubuntu', 'corami']);
+  });
+
+  test('leaves out root, the system accounts and the shells of no session', () => {
+    const names = loginAccounts(passwd);
+
+    expect(names).not.toContain('root');
+    expect(names).not.toContain('daemon');
+    expect(names).not.toContain('backup');
+    expect(names).not.toContain('nobody');
+  });
+
+  test('read nothing from a passwd that is empty or broken', () => {
+    expect(loginAccounts('')).toEqual([]);
+    expect(loginAccounts('corami:x:notanumber:1001::/home/corami:/bin/bash')).toEqual([]);
   });
 });

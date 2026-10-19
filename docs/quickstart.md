@@ -65,26 +65,7 @@ The default SSH policy of a tailnet asks for a check: every 12 hours Tailscale o
 [warning] tailscale.ssh_policy: Tailscale SSH asks corami for a periodic check: the sync and the import stop each time it expires
 ```
 
-To remove the check for the account of the projects, replace the SSH rule of the tailnet policy, in the Tailscale admin console (Access controls), with two rules:
-
-```json
-"ssh": [
-  {
-    "action": "accept",
-    "src": ["autogroup:member"],
-    "dst": ["autogroup:self"],
-    "users": ["autogroup:nonroot"]
-  },
-  {
-    "action": "check",
-    "src": ["autogroup:member"],
-    "dst": ["autogroup:self"],
-    "users": ["root"]
-  }
-]
-```
-
-`accept` covers every device of the user, not only the server, and `root` keeps the check. The syntax, and the duration of a check with `checkPeriod`, are in the [Tailscale documentation](https://tailscale.com/kb/1337/policy-syntax).
+To remove the check for the account of the projects, replace the SSH rule of the tailnet policy, in the Tailscale admin console (Access controls), with the two rules in [security.md](security.md#the-ssh-rules-of-the-tailnet). They give `accept` to the account of the projects, named one by one, and keep `check` on `root`.
 
 ## 3. Your first project
 
@@ -138,7 +119,7 @@ tailscale serve --bg --https=4096 http://127.0.0.1:4096
 
 From the laptop: `opencode attach https://your-server.<your-tailnet>.ts.net:4096`. A web UI on top of it, such as OpenChamber, takes the same steps with its own port and opens in the browser, phone included. Terminal-only harnesses, such as Claude Code, run over SSH on the server, inside tmux.
 
-A port published with `tailscale serve` is reachable by everyone in your tailnet. A tailnet used only by you is fine; otherwise restrict access with a Tailscale ACL, and keep the password of the agent.
+A port published with `tailscale serve` is reachable by everyone in your tailnet. A tailnet used only by you is fine; otherwise restrict access with a Tailscale ACL, and keep the password of the agent. [security.md](security.md#people-in-your-tailnet) has the details.
 
 ### Tell the agent about Corami
 
@@ -196,8 +177,8 @@ Start with `corami doctor`: it says what is missing and the step that fixes it.
 
 | Symptom | Where to look |
 |---|---|
-| `server_unreachable` from a client | `corami doctor net` on the server; is Tailscale up on both sides? |
-| `Cannot read the home directory` from `corami project add`, or a sync that stops | The Tailscale SSH check expired: `corami doctor net` reports it, and the fix of the import carries the link to open ([policy](#tailscale-ssh-and-the-periodic-check)) |
+| `server_unreachable` from a client | `corami doctor` on the server; is Tailscale up on both sides? |
+| `Cannot read the home directory` from `corami project add`, or a sync that stops | The Tailscale SSH check expired: `corami doctor` reports it, and the fix of the import carries the link to open ([policy](#tailscale-ssh-and-the-periodic-check)) |
 | The preview does not open | `corami serve ls`: does it answer? `journalctl --user -u <project>-web` |
 | A page loads half styled | The dev server needs the Tailscale name in its allowed origins, e.g. `allowedDevOrigins` in Next.js ([previews.md](previews.md#dev-servers-that-check-the-host-header)) |
 | The preview answers on the wrong port | `corami serve <port>` again: the URL stays the same |

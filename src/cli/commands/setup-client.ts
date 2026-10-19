@@ -11,10 +11,22 @@ import { run } from '@/core/exec.ts';
 import { ensureTool, findTool, MUTAGEN } from '@/core/pinned-tools.ts';
 import { serverUser } from '@/core/server-user.ts';
 import { serverCandidates } from '@/core/setup-choices.ts';
-import { sshFailureFix, sshPolicyFromHealth, sshPolicyText } from '@/core/ssh-policy.ts';
+import {
+  otherPeople,
+  PROTECTIONS_OFF,
+  protectionsOff,
+  sshExposureFromHealth,
+  sshFailureFix,
+  sshPolicyFromHealth,
+  sshPolicyText,
+} from '@/core/ssh-policy.ts';
 import { installDaemonService } from '@/integrations/mutagen.ts';
 import { gitWatchSpec, installService } from '@/integrations/service.ts';
-import { peers as tailnetPeers, status as tailscaleStatus } from '@/integrations/tailscale.ts';
+import {
+  tailnetLogins,
+  peers as tailnetPeers,
+  status as tailscaleStatus,
+} from '@/integrations/tailscale.ts';
 
 export const CLIENT_STEPS = [
   'tailscale',
@@ -306,11 +318,28 @@ async function stepSsh(context: ClientContext): Promise<StepResult> {
     sshText = sshPolicyText(policy, user).summary;
   }
 
+  const others = otherPeople(
+    await tailnetLogins().catch(() => []),
+    (await readGlobalConfig().catch(() => undefined))?.owner_login,
+  );
+  const exposure = sshExposureFromHealth(health);
+  const details = [sshText ?? ''].filter((line) => line !== '');
+
+  if (
+    protectionsOff({
+      root: exposure?.root,
+      accounts: exposure?.accounts,
+      people: others,
+    })
+  ) {
+    details.push(PROTECTIONS_OFF);
+  }
+
   return {
     step: 'ssh',
     status: 'done',
     summary: `SSH over Tailscale works as ${user}`,
-    detail: sshText,
+    detail: details.length === 0 ? undefined : details.join('. '),
   };
 }
 
