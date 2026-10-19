@@ -12,7 +12,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { restoreLocalFiles, runImport } from '@/cli/commands/import.ts';
-import { remoteExtractCommand } from '@/cli/commands/import-remote.ts';
+import { countingStream, gzipStream, remoteExtractCommand } from '@/cli/commands/import-remote.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { shellQuote } from '@/core/exec.ts';
 import { moveStagingIntoPlace } from '@/core/import-staging.ts';
@@ -20,7 +20,9 @@ import { copyInventory } from '@/core/local-copy.ts';
 import { MUTAGEN } from '@/core/pinned-tools.ts';
 import { checksumFor } from '@/core/release.ts';
 import {
+  archiveBytes,
   archiveList,
+  archivePlan,
   factsMatch,
   localManifest,
   manifestsMatch,
@@ -113,6 +115,50 @@ describe('the archive', () => {
     expect(paths).toContain('upload.jks');
     expect(paths).toContain('service-account.json');
     expect(paths).toContain('.env');
+  });
+
+  test('count the bytes of the files it carries, the history included', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-archive-bytes-'));
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'index.ts'), 'x'.repeat(1200));
+    writeFileSync(join(root, 'notes.txt'), 'y'.repeat(300));
+
+    // The total the progress line counts against: the content of the files,
+    // without the headers and padding of the archive itself.
+    expect(archiveBytes(root, copyInventory(root))).toBe(1500);
+    expect(archivePlan(root).entries).toEqual(archiveList(root));
+
+    git(root, ['init', '-q']);
+    git(root, ['-c', 'user.name=test', '-c', 'user.email=test@test', 'add', '.']);
+    git(root, ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-qm', 'first']);
+
+    expect(archiveBytes(root)).toBeGreaterThan(1500);
+  });
+
+  test('the stream that carries it counts the bytes and compresses them', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-archive-stream-'));
+    writeFileSync(join(root, 'notes.txt'), 'x'.repeat(5000));
+
+    const tar = Bun.spawn(['tar', '-cf', '-', '-C', root, '.'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    let counted = 0;
+    const sent = gzipStream(
+      countingStream(tar.stdout, (bytes) => {
+        counted = bytes;
+      }),
+    );
+
+    const [data, code] = await Promise.all([new Response(sent).arrayBuffer(), tar.exited]);
+    expect(code).toBe(0);
+
+    const raw = Bun.gunzipSync(new Uint8Array(data));
+    // The count is of what `tar` wrote, the wire carried gzip: the server
+    // unpacks the archive it always unpacked.
+    expect(raw.length).toBe(counted);
+    expect(raw.length % 512).toBe(0);
+    expect(Buffer.from(raw).includes('notes.txt')).toBe(true);
   });
 });
 

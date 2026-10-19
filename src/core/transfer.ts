@@ -15,18 +15,48 @@ import { copyInventory, type Inventory } from '@/core/local-copy.ts';
  * list decides what the archive holds, never a pattern.
  */
 export function archiveList(root: string, inventory: Inventory = copyInventory(root)): string[] {
-  return [...inventory.synced.map((entry) => entry.path), ...gitEntries(root)];
+  return archivePlan(root, inventory).entries;
 }
 
-function gitEntries(root: string): string[] {
+export interface ArchivePlan {
+  /** The entries the archive carries, in the order `tar` writes them. */
+  entries: string[];
+  /** The bytes of the files it carries: what the progress line counts against. */
+  bytes: number;
+}
+
+/**
+ * What the archive carries and how many bytes of files it holds. The bytes are
+ * the content of the files, without the headers and the padding of the archive:
+ * the `tar` stream is a little longer, so the progress line stays under 100.
+ */
+export function archivePlan(root: string, inventory: Inventory = copyInventory(root)): ArchivePlan {
+  const git = gitEntries(root);
+
+  return {
+    entries: [...inventory.synced.map((entry) => entry.path), ...git.entries],
+    bytes:
+      inventory.synced.reduce(
+        (sum, entry) => (entry.kind === 'file' ? sum + entry.bytes : sum),
+        0,
+      ) + git.bytes,
+  };
+}
+
+export function archiveBytes(root: string, inventory: Inventory = copyInventory(root)): number {
+  return archivePlan(root, inventory).bytes;
+}
+
+function gitEntries(root: string): { entries: string[]; bytes: number } {
   const git = join(root, '.git');
 
   if (!existsSync(git)) {
-    return [];
+    return { entries: [], bytes: 0 };
   }
 
   const stack = [git];
   const entries = ['.git'];
+  let bytes = 0;
 
   while (stack.length > 0) {
     const current = stack.pop();
@@ -49,12 +79,18 @@ function gitEntries(root: string): string[] {
       const full = join(current, name);
       const path = toPosix(relative(root, full));
 
+      let info: ReturnType<typeof lstatSync>;
+
       try {
-        if (lstatSync(full).isDirectory()) {
-          stack.push(full);
-        }
+        info = lstatSync(full);
       } catch {
         continue;
+      }
+
+      if (info.isDirectory()) {
+        stack.push(full);
+      } else if (info.isFile()) {
+        bytes += info.size;
       }
 
       found.push(path);
@@ -63,7 +99,7 @@ function gitEntries(root: string): string[] {
     entries.push(...found.sort());
   }
 
-  return entries.sort((left, right) => comparePaths(left, right));
+  return { entries: entries.sort((left, right) => comparePaths(left, right)), bytes };
 }
 
 /** Parents before content, so `tar` finds the folder of an entry already made. */

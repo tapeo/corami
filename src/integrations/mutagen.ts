@@ -154,6 +154,26 @@ export class MutagenEngine implements SyncEngine {
     return sessions.find((session) => session.project === project);
   }
 
+  /**
+   * The first cycle of a session, undefined when Mutagen does not answer the
+   * one session it was asked. A session that is not there is none of the two.
+   */
+  async progress(project: string): Promise<SyncProgress | undefined> {
+    const binary = await this.path().catch(() => undefined);
+
+    if (binary === undefined) {
+      return undefined;
+    }
+
+    const result = await run(
+      binary,
+      ['sync', 'list', sessionName(project), '--template', '{{ json . }}'],
+      { timeoutMs: 60_000 },
+    );
+
+    return result.ok ? syncProgress(result.stdout, project) : undefined;
+  }
+
   async terminate(project: string): Promise<void> {
     await this.simple(['sync', 'terminate', sessionName(project)]);
   }
@@ -260,6 +280,129 @@ function describeEndpoint(value: unknown): string {
   }
 
   return path;
+}
+
+/** What the first cycle of a session is doing, as the progress line says it. */
+export interface SyncProgress {
+  state: 'waiting' | 'count' | 'done' | 'halted';
+  /** What to say while it works, or why it stopped. */
+  activity: string;
+  /** `count`: how much is done and the total, in `unit`. */
+  received?: number | undefined;
+  total?: number | undefined;
+  /** `count`: bytes when the two sides know the size, files otherwise. */
+  unit?: 'bytes' | 'files' | undefined;
+  /** `done`: the files the copy holds. */
+  files?: number | undefined;
+}
+
+const SYNC_ACTIVITY: Record<string, string> = {
+  'connecting-alpha': 'Connecting to the server',
+  'connecting-beta': 'Connecting',
+  scanning: 'Scanning the files',
+  'waiting-for-rescan': 'Scanning the files again',
+  reconciling: 'Comparing the two sides',
+  transitioning: 'Applying the changes',
+  'staging-alpha': 'Writing the files on the server',
+  saving: 'Saving the session',
+  watching: 'Waiting for the first cycle to finish',
+  disconnected: 'Waiting for the server',
+};
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function asCount(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  // The JSON of Mutagen has numbers, but an older build may quote them.
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    return Number(value);
+  }
+
+  return 0;
+}
+
+/**
+ * The state of the first cycle of a session, read from the JSON Mutagen gives
+ * for it. Mutagen counts the files, never the total of the bytes, so the
+ * progress of a copy is in files. `successfulCycles` alone is not the end: it
+ * counts a cycle before the files of the copy are all written, so the session
+ * is done only when it is back to `watching`.
+ */
+export function syncProgress(raw: string, project: string): SyncProgress | undefined {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+
+  const records = Array.isArray(parsed) ? parsed : [parsed];
+  const record = records
+    .map((entry) => asRecord(entry))
+    .find((entry) => String(entry?.name ?? entry?.identifier ?? '') === sessionName(project));
+
+  if (record === undefined) {
+    return undefined;
+  }
+
+  const cycles = asCount(record.successfulCycles);
+  const beta = asRecord(record.beta);
+  const files = asCount(beta?.files);
+  const lastError = typeof record.lastError === 'string' ? record.lastError.trim() : '';
+  const status = typeof record.status === 'string' ? record.status : 'unknown';
+
+  if (status === 'watching' && cycles >= 1) {
+    return { state: 'done', activity: 'The first sync is complete', files };
+  }
+
+  if (status.startsWith('halted')) {
+    const reason =
+      lastError === '' ? status.replaceAll('-', ' ') : (lastError.split('\n')[0] ?? '');
+
+    return { state: 'halted', activity: reason };
+  }
+
+  const staging = asRecord(beta?.stagingProgress);
+  const expected = asCount(staging?.expectedFiles);
+
+  if (staging !== undefined && expected > 0) {
+    // The bytes of the whole project are the smoothest count there is: a
+    // single big file would leave the files at 0 for the whole transfer.
+    const totalBytes = asCount(asRecord(record.alpha)?.totalFileSize);
+
+    if (totalBytes > 0) {
+      return {
+        state: 'count',
+        activity: 'Writing the files here',
+        received: asCount(staging?.totalReceivedSize),
+        total: totalBytes,
+        unit: 'bytes',
+      };
+    }
+
+    return {
+      state: 'count',
+      activity: 'Writing the files here',
+      received: asCount(staging?.receivedFiles),
+      total: expected,
+      unit: 'files',
+    };
+  }
+
+  const activity =
+    lastError === ''
+      ? (SYNC_ACTIVITY[status] ?? 'Waiting for the sync')
+      : `Retrying: ${(lastError.split('\n')[0] ?? '').slice(0, 80)}`;
+
+  return { state: 'waiting', activity };
 }
 
 export function collectConflicts(record: Record<string, unknown>): string[] {

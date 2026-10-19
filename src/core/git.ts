@@ -176,6 +176,55 @@ export interface CopyGitResult {
   detail?: string | undefined;
 }
 
+/** One line of `git clone --progress`: the phase, and its counts when git gives them. */
+export interface GitProgress {
+  phase: string;
+  done?: number | undefined;
+  total?: number | undefined;
+}
+
+// Only the phases git reports with counts: a warning or a remote message that
+// happens to hold a colon is not progress, and stays in the error detail.
+const GIT_PROGRESS =
+  /^(?:remote: )?((?:[A-Z][A-Za-z ]*?(?:objects|deltas|files))|Total)\s*:\s*(?:(\d+)%\s*)?(?:\((\d+)\/(\d+)\))?/;
+
+export function parseGitProgress(line: string): GitProgress | undefined {
+  const match = GIT_PROGRESS.exec(line.trim());
+
+  if (match === null) {
+    return undefined;
+  }
+
+  const phase = match[1] ?? '';
+  const done = match[3] === undefined ? undefined : Number(match[3]);
+  const total = match[4] === undefined ? undefined : Number(match[4]);
+
+  if (done === undefined || total === undefined) {
+    return { phase };
+  }
+
+  return { phase, done, total };
+}
+
+// The chunks of stderr into the lines git writes: progress repaints its line
+// with `\r`, and a chunk may end in the middle of one.
+function progressLines(onProgress: (progress: GitProgress) => void): (chunk: string) => void {
+  let rest = '';
+
+  return (chunk) => {
+    const parts = `${rest}${chunk}`.split(/[\r\n]/);
+    rest = parts.pop() ?? '';
+
+    for (const part of parts) {
+      const progress = parseGitProgress(part);
+
+      if (progress !== undefined) {
+        onProgress(progress);
+      }
+    }
+  };
+}
+
 // Gives a local copy born from the sync its own `.git`: a clone of `origin`
 // without checkout, moved into the copy, on the branch of the server. The
 // files are the synced ones: `git reset` only rebuilds the index from HEAD.
@@ -184,8 +233,10 @@ export async function giveCopyGit(options: {
   originUrl: string | undefined;
   branch: string;
   timeoutMs?: number;
+  /** The phases of the clone, while it runs. */
+  onProgress?: (progress: GitProgress) => void;
 }): Promise<CopyGitResult> {
-  const { local, originUrl, branch } = options;
+  const { local, originUrl, branch, onProgress } = options;
 
   if (existsSync(join(local, '.git'))) {
     return { status: 'skipped', summary: 'The local copy already has its .git' };
@@ -207,8 +258,13 @@ export async function giveCopyGit(options: {
 
   const cloned = await run(
     'git',
-    [...sshArgs(60_000), 'clone', '--quiet', '--no-checkout', '--', originUrl, temporary],
-    { timeoutMs, env: NO_PROMPT },
+    [...sshArgs(60_000), 'clone', '--progress', '--no-checkout', '--', originUrl, temporary],
+    {
+      timeoutMs,
+      // An English locale, so the phases are the ones this file reads.
+      env: { ...NO_PROMPT, LC_ALL: 'C' },
+      ...(onProgress === undefined ? {} : { onStderr: progressLines(onProgress) }),
+    },
   );
 
   if (!cloned.ok) {
@@ -378,12 +434,13 @@ export async function filesArrived(root: string, from: string, to: string): Prom
 }
 
 // The first stderr lines on a single line: in a rejected fetch or push the
-// first line is the remote address, and the reason is in the ones after.
+// first line is the remote address, and the reason is in the ones after. The
+// progress lines of a clone repaint themselves, and are not the reason.
 function failureDetail(stderr: string, fallback: string): string {
   const lines = stderr
-    .split('\n')
+    .split(/[\r\n]/)
     .map((line) => line.trim())
-    .filter((line) => line !== '');
+    .filter((line) => line !== '' && parseGitProgress(line) === undefined);
 
   return lines.slice(0, 3).join(' ') || fallback;
 }

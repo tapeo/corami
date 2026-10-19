@@ -19,9 +19,10 @@ import {
   transfer,
 } from '@/cli/commands/import-remote.ts';
 import type { StepResult } from '@/cli/commands/setup-steps.ts';
-import { copyPlace, createSyncFor } from '@/cli/commands/sync.ts';
+import { copyPlace, createSyncFor, syncUpdate, waitFirstSync } from '@/cli/commands/sync.ts';
 import type { OutputOptions } from '@/cli/output.ts';
 import { renderSteps } from '@/cli/output.ts';
+import { type ProgressReporter, silentProgress } from '@/cli/progress.ts';
 import {
   addProject,
   findProject,
@@ -37,7 +38,7 @@ import { importStagingPath, serverPathFrom } from '@/core/project-add.ts';
 import { isFolderEmpty, validNewProjectName } from '@/core/projects.ts';
 import { sshFailureFix } from '@/core/ssh-policy.ts';
 import {
-  archiveList,
+  archivePlan,
   factsMatch,
   localGitFacts,
   manifestDiff,
@@ -58,12 +59,16 @@ export interface ImportOptions {
   user?: string | undefined;
   dryRun: boolean;
   output: OutputOptions;
+  /** The line of the phases: the silent one when the command has no terminal. */
+  progress?: ProgressReporter | undefined;
 }
 
 export async function runImport(options: ImportOptions): Promise<CommandResult> {
   const target = options.localPath;
   const config = await readGlobalConfig();
   const host = config?.server_host;
+  const progress = options.progress ?? silentProgress;
+  const engine = new MutagenEngine();
 
   if (host === undefined) {
     throw new CoramiError({
@@ -86,7 +91,9 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     });
   }
 
-  const facts = await localGitFacts(target);
+  const facts = await progress.wait('git', 'Reading the local repository', () =>
+    localGitFacts(target),
+  );
 
   if (facts === undefined) {
     steps.push({ step: 'git', status: 'failed', summary: `${target} is not a git repository` });
@@ -103,7 +110,7 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   // The name is asked of the daemon before anything moves, and a daemon that
   // does not answer is an error: its "no" is the only answer that lets an
   // import go on.
-  const known = await findProject(projectName);
+  const known = await progress.wait('name', 'Asking the server', () => findProject(projectName));
 
   if (known !== undefined) {
     steps.push({
@@ -118,7 +125,9 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   // The folder becomes the copy: the session of the name and the copies of the
   // other projects are checked before anything moves.
   try {
-    await copyPlace(new MutagenEngine(), projectName, target, true);
+    await progress.wait('name', 'Checking the copies of this machine', () =>
+      copyPlace(engine, projectName, target, true),
+    );
   } catch (error) {
     steps.push({
       step: 'name',
@@ -138,7 +147,9 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
 
   // One walk decides what travels and what stays: the archive and the manifest
   // read the same inventory, so they cannot count different things.
-  const inventory = copyInventory(target);
+  const inventory = await progress.wait('inventory', 'Listing the files', async () =>
+    copyInventory(target),
+  );
   const localFiles = inventory.localOnly;
   const outside = localFiles.filter((entry) => entry.kind === 'link' && !isPortable(entry)).length;
 
@@ -165,7 +176,7 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     return finish(options, steps, projectName, target, options.serverPath);
   }
 
-  const remote = await remoteHome(user, host);
+  const remote = await progress.wait('server', 'Reaching the server', () => remoteHome(user, host));
   const home = remote.home;
 
   if (home === undefined) {
@@ -186,7 +197,9 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   // The daemon of a server that is not updated yet cannot move the staging
   // folder into the name of the project. Nothing is written before it says it
   // can: no half folder, no folder of the export to clean up.
-  if (!(await serverSupports('import_staging'))) {
+  if (
+    !(await progress.wait('server', 'Checking the daemon', () => serverSupports('import_staging')))
+  ) {
     steps.push({
       step: 'transfer',
       status: 'failed',
@@ -204,16 +217,23 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   // The import writes into a folder of its own, next to the project, so the
   // name of the project stays free until the registration gives it to the
   // copy. The check runs before the transfer, so a refusal changes nothing.
-  await checkServerFolder({
-    host,
-    user,
-    serverPath,
-    staging,
-    folder: target,
-    localHead: facts.head,
-  });
+  await progress.wait('server', 'Checking the folder on the server', () =>
+    checkServerFolder({
+      host,
+      user,
+      serverPath,
+      staging,
+      folder: target,
+      localHead: facts.head,
+    }),
+  );
 
-  const transferred = await transfer(target, user, host, staging, archiveList(target, inventory));
+  const archive = archivePlan(target, inventory);
+  const transferred = await progress.count('transfer', 'Sending the files', 'bytes', (update) =>
+    transfer(target, user, host, staging, archive.entries, (sent) =>
+      update({ done: sent, total: archive.bytes }),
+    ),
+  );
 
   if (!transferred.ok) {
     const cleanup = await removeStaging(user, host, serverPath, staging);
@@ -234,7 +254,9 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   });
 
   const localManifestResult = manifestOf(inventory);
-  const remoteManifestResult = await remoteManifest(host, user, staging);
+  const remoteManifestResult = await progress.wait('verify', 'Comparing the two copies', () =>
+    remoteManifest(host, user, staging),
+  );
 
   if (
     remoteManifestResult === undefined ||
@@ -255,7 +277,9 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     return finish(options, steps, projectName, target, serverPath);
   }
 
-  const remoteFacts = await remoteGitFacts(host, user, staging);
+  const remoteFacts = await progress.wait('verify', 'Comparing the git history', () =>
+    remoteGitFacts(host, user, staging),
+  );
 
   if (remoteFacts === undefined || !factsMatch(facts, remoteFacts)) {
     const cleanup = await removeStaging(user, host, serverPath, staging);
@@ -279,7 +303,9 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     // it registers it: one step on the server, so a client that stops in the
     // middle leaves either the staging or a registered project, never a
     // folder that no project names.
-    await addProject({ name: projectName, path: serverPath, owned: true, staging });
+    await progress.wait('register', 'Registering the project', () =>
+      addProject({ name: projectName, path: serverPath, owned: true, staging }),
+    );
   } catch (error) {
     // The folder was copied here by this command: a registration that fails
     // leaves the staging behind, and this machine keeps everything.
@@ -330,7 +356,9 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   let localCopy = target;
 
   try {
-    const sync = await createSyncFor({ project: projectName, localPath: target, serverPath, user });
+    const sync = await progress.wait('sync', 'Creating the local copy', () =>
+      createSyncFor({ project: projectName, localPath: target, serverPath, user, engine }),
+    );
     localCopy = sync.local;
   } catch (error) {
     // The project is on the server without its copy, the one thing the
@@ -363,7 +391,11 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
 
   steps.push({ step: 'sync', status: 'done', summary: `Local copy created in ${localCopy}` });
 
-  if (await restoreGitDirectory(backup, localCopy)) {
+  if (
+    await progress.wait('local', 'Restoring the git directory', () =>
+      restoreGitDirectory(backup, localCopy),
+    )
+  ) {
     steps.push({
       step: 'git',
       status: 'done',
@@ -371,7 +403,11 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     });
   }
 
-  const restored = restoreLocalFiles(backup, localCopy, localFiles);
+  const restored = await progress.wait(
+    'local',
+    'Bringing back the files of this machine',
+    async () => restoreLocalFiles(backup, localCopy, localFiles),
+  );
 
   if (restored > 0) {
     steps.push({
@@ -381,7 +417,52 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     });
   }
 
+  if (progress.interactive) {
+    steps.push(await firstSyncStep(progress, engine, projectName));
+  }
+
   return finish(options, steps, projectName, target, serverPath);
+}
+
+/**
+ * Waits for the copy to be complete: only where a person is watching. A
+ * command without a terminal answers as it always did, as soon as the session
+ * exists, and the sync fills the copy on its own.
+ */
+async function firstSyncStep(
+  progress: ProgressReporter,
+  engine: MutagenEngine,
+  project: string,
+): Promise<StepResult> {
+  const settled = await progress.count(
+    'first-sync',
+    'Waiting for the first sync',
+    'files',
+    (update) => waitFirstSync(engine, project, (state) => update(syncUpdate(state))),
+  );
+
+  if (settled === undefined) {
+    return {
+      step: 'first-sync',
+      status: 'waiting',
+      summary: 'The state of the first sync could not be read: corami sync status shows it',
+    };
+  }
+
+  if (settled.state === 'halted') {
+    return {
+      step: 'first-sync',
+      status: 'skipped',
+      summary: `The first sync stopped: ${settled.activity}`,
+      detail: 'corami sync status shows the session; Ctrl+C leaves it running',
+    };
+  }
+
+  return {
+    step: 'first-sync',
+    status: 'done',
+    summary: `Local copy complete: ${describeCount(settled.files ?? 0, 'file', 'files')}`,
+  };
 }
 
 function asMessage(error: unknown): string {

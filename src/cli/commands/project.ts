@@ -8,9 +8,12 @@ import {
   givenPath,
   removeLocalCopy,
   syncSessions,
+  syncUpdate,
+  waitFirstSync,
 } from '@/cli/commands/sync.ts';
 import { renderOrphanCopies, renderTable } from '@/cli/output.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
+import { type ProgressUpdate, progressFor } from '@/cli/progress.ts';
 import { canPrompt, terminalPrompter } from '@/cli/prompt.ts';
 import {
   addProject,
@@ -22,6 +25,7 @@ import {
 } from '@/cli/server-client.ts';
 import { homeDirectory, readGlobalConfig } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
+import type { GitProgress } from '@/core/git.ts';
 import {
   type AddFrom,
   type CwdRepository,
@@ -33,7 +37,7 @@ import {
   validServerPath,
 } from '@/core/project-add.ts';
 import { validNewProjectName, withLocalCopies } from '@/core/projects.ts';
-import { MutagenEngine } from '@/integrations/mutagen.ts';
+import { MutagenEngine, type SyncProgress } from '@/integrations/mutagen.ts';
 
 async function ls(context: CommandContext): Promise<CommandResult> {
   const projects = await listProjects();
@@ -171,6 +175,7 @@ function addForm(from: AddFrom, folder: string, url: string | undefined): string
 async function add(context: CommandContext): Promise<CommandResult> {
   const config = await readGlobalConfig().catch(() => undefined);
   const prompter = canPrompt(context.output) ? terminalPrompter() : undefined;
+  const progress = progressFor(context.output);
   const dryRun = booleanFlag(context.args, 'dry-run');
   const user = stringFlag(context.args, 'user');
   const noGit = negatedFlag(context.args, 'git');
@@ -307,7 +312,9 @@ async function add(context: CommandContext): Promise<CommandResult> {
 
   const engine = new MutagenEngine();
   const onClient = config?.role === 'client';
-  const sessions = onClient ? await syncSessions(engine) : [];
+  const sessions = onClient
+    ? await progress.wait('name', 'Reading the copies of this machine', () => syncSessions(engine))
+    : [];
   const session = sessions.find((entry) => entry.project === name)?.beta;
 
   planProjectAdd({
@@ -330,7 +337,9 @@ async function add(context: CommandContext): Promise<CommandResult> {
 
   // The folder of the copy: with the import it is the folder that moves,
   // anywhere else it is created. An empty folder is fine, the session takes it.
-  const place = await copyPlace(engine, name, localPath, from === 'local');
+  const place = await progress.wait('name', 'Choosing the folder of the copy', () =>
+    copyPlace(engine, name, localPath, from === 'local'),
+  );
   // The project is where the server says it is: a registered one knows its
   // folder, and no path typed here overrides it.
   const target = from === 'server' && registeredPath !== undefined ? registeredPath : serverArg;
@@ -355,6 +364,7 @@ async function add(context: CommandContext): Promise<CommandResult> {
       user,
       dryRun: false,
       output: context.output,
+      progress,
     });
   }
 
@@ -365,26 +375,42 @@ async function add(context: CommandContext): Promise<CommandResult> {
       throw new CoramiError({ code: 'usage', message: 'Missing repository url' });
     }
 
-    await addProject({ name, url, path: target });
+    await progress.wait('clone', 'Cloning the repository on the server', () =>
+      addProject({ name, url, path: target }),
+    );
     registered = true;
   } else if (registeredPath === undefined) {
-    await addProject({ name, path: target });
+    await progress.wait('register', 'Registering the project', () =>
+      addProject({ name, path: target }),
+    );
     registered = true;
   }
 
   let copy: Awaited<ReturnType<typeof createLocalCopy>>;
 
   try {
-    copy = await createLocalCopy({
-      project: name,
-      localPath: place.local,
-      serverPath: target,
-      user,
-      git: !noGit,
-    });
+    copy = await progress.count('sync', 'Creating the local copy', 'objects', (update) =>
+      createLocalCopy({
+        project: name,
+        localPath: place.local,
+        serverPath: target,
+        user,
+        git: !noGit,
+        engine,
+        onGitProgress: (git) => update(gitUpdate(git)),
+      }),
+    );
   } catch (error) {
     throw await copyFailure({ error, name, target, registered, localPath: place.local });
   }
+
+  // The copy fills after the session exists: only a person watching waits for
+  // it. Ctrl+C leaves the session running, and `corami sync status` follows it.
+  const firstSync = progress.interactive
+    ? await progress.count('first-sync', 'Waiting for the first sync', 'files', (update) =>
+        waitFirstSync(engine, name, (state) => update(syncUpdate(state))),
+      )
+    : undefined;
 
   if (context.output.json) {
     return {
@@ -418,7 +444,35 @@ async function add(context: CommandContext): Promise<CommandResult> {
     lines.push(`  ${copy.git.detail}`);
   }
 
+  if (firstSync !== undefined) {
+    lines.push(describeFirstSync(firstSync));
+  }
+
   return { text: lines.join('\n') };
+}
+
+/** The line of the first cycle: complete, stopped, or not readable. */
+function describeFirstSync(progress: SyncProgress): string {
+  if (progress.state === 'done') {
+    const files = progress.files ?? 0;
+
+    return `First sync complete: ${files} ${files === 1 ? 'file' : 'files'}.`;
+  }
+
+  if (progress.state === 'halted') {
+    return `First sync stopped: ${progress.activity}.`;
+  }
+
+  return 'First sync still running: corami sync status shows it.';
+}
+
+/** The line of the clone of `.git`: a count only while git gives one. */
+function gitUpdate(progress: GitProgress): ProgressUpdate {
+  if (progress.done !== undefined && progress.total !== undefined && progress.total > 0) {
+    return { done: progress.done, total: progress.total, activity: progress.phase };
+  }
+
+  return { done: 0, total: undefined, activity: progress.phase };
 }
 
 interface PlanInput {

@@ -13,6 +13,7 @@ import {
   gitUpstreamOf,
   giveCopyGit,
   isAncestor,
+  parseGitProgress,
   readGitState,
   sshArgs,
 } from '@/core/git.ts';
@@ -627,5 +628,65 @@ describe('giveCopyGit', () => {
     expect(none.status).toBe('skipped');
 
     rmSync(copy, { recursive: true, force: true });
+  });
+
+  test('follows the phases of the clone while it runs', async () => {
+    const { origin, server, client } = await originAndClones();
+    const copy = await mkdtemp(join(tmpdir(), 'corami-copy-'));
+    syncFiles(server, copy);
+    const phases: string[] = [];
+
+    const result = await giveCopyGit({
+      local: copy,
+      // Through the transport, as a clone from `origin` on the network is: a
+      // clone from a local path copies the files and reports no phase.
+      originUrl: `file://${origin}`,
+      branch: 'main',
+      onProgress: (progress) => phases.push(progress.phase),
+    });
+
+    expect(result.status).toBe('done');
+    expect(phases).toContain('Receiving objects');
+
+    for (const path of [origin, server, client, copy]) {
+      rmSync(path, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('parseGitProgress', () => {
+  test('reads the counts of the phases git reports them for', () => {
+    expect(parseGitProgress('Receiving objects:  45% (450/1000), 1.2 MiB | 3.0 MiB/s')).toEqual({
+      phase: 'Receiving objects',
+      done: 450,
+      total: 1000,
+    });
+    expect(parseGitProgress('remote: Counting objects: 100% (5/5)')).toEqual({
+      phase: 'Counting objects',
+      done: 5,
+      total: 5,
+    });
+    expect(parseGitProgress('Resolving deltas: 100% (10/10), done.')).toEqual({
+      phase: 'Resolving deltas',
+      done: 10,
+      total: 10,
+    });
+    expect(parseGitProgress('Updating files:  60% (6/10)')).toEqual({
+      phase: 'Updating files',
+      done: 6,
+      total: 10,
+    });
+  });
+
+  test('a phase without counts is a phase all the same', () => {
+    expect(parseGitProgress('Enumerating objects: 42, done.')).toEqual({
+      phase: 'Enumerating objects',
+    });
+  });
+
+  test('a warning or an error is not progress', () => {
+    expect(parseGitProgress('fatal: repository not found')).toBeUndefined();
+    expect(parseGitProgress('warning: redirecting to https://github.com/x')).toBeUndefined();
+    expect(parseGitProgress("Cloning into 'copy'...")).toBeUndefined();
   });
 });

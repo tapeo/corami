@@ -36,6 +36,8 @@ export interface RunOptions {
   env?: Record<string, string | undefined>;
   stdin?: 'ignore' | 'inherit' | 'pipe';
   timeoutMs?: number;
+  /** Read from stderr while the command runs, as with the progress of a clone. */
+  onStderr?: (chunk: string) => void;
 }
 
 function mergeEnv(env: Record<string, string | undefined> | undefined): Record<string, string> {
@@ -97,7 +99,7 @@ export async function run(
 
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
+    readText(child.stderr, options.onStderr),
     child.exited,
   ]);
 
@@ -106,6 +108,36 @@ export async function run(
   }
 
   return { ok: exitCode === 0, stdout, stderr, exitCode };
+}
+
+// The whole text of a stream, handed to `onChunk` as it arrives: a command
+// that reports progress on stderr can be followed while it runs, and the
+// result is still the complete text.
+async function readText(
+  stream: ReadableStream<Uint8Array>,
+  onChunk: ((chunk: string) => void) | undefined,
+): Promise<string> {
+  if (onChunk === undefined) {
+    return new Response(stream).text();
+  }
+
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+
+  for (;;) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    const piece = decoder.decode(value, { stream: true });
+    text += piece;
+    onChunk(piece);
+  }
+
+  return text + decoder.decode();
 }
 
 export async function runOrThrow(

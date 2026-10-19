@@ -42,6 +42,19 @@ describe('setup git remotes', () => {
   });
 });
 
+describe('run', () => {
+  test('follows stderr while the command runs, and still returns all of it', async () => {
+    const chunks: string[] = [];
+    const result = await run('sh', ['-c', 'echo first >&2; echo second >&2'], {
+      onStderr: (chunk) => chunks.push(chunk),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.stderr).toBe('first\nsecond\n');
+    expect(chunks.join('')).toBe(result.stderr);
+  });
+});
+
 function restore(name: string, value: string | undefined): void {
   if (value === undefined) {
     delete process.env[name];

@@ -5,6 +5,7 @@ import type { CommandContext, CommandResult, CommandSpec } from '@/cli/command.t
 import { gitSides } from '@/cli/commands/git.ts';
 import { applyRemoval, planRemoval } from '@/cli/commands/sync-remove.ts';
 import { booleanFlag, stringFlag } from '@/cli/parser.ts';
+import type { ProgressUpdate } from '@/cli/progress.ts';
 import {
   findProject,
   projectDetail,
@@ -14,7 +15,7 @@ import {
 } from '@/cli/server-client.ts';
 import { readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
-import { type CopyGitResult, giveCopyGit } from '@/core/git.ts';
+import { type CopyGitResult, type GitProgress, giveCopyGit } from '@/core/git.ts';
 import { describeOrigin } from '@/core/git-follow.ts';
 import { lastChange } from '@/core/last-change.ts';
 import {
@@ -25,10 +26,11 @@ import {
   unexpandedHome,
 } from '@/core/projects.ts';
 import { conflictCopies, conflictFix, conflictLabel } from '@/core/sync-conflicts.ts';
-import { MutagenEngine, type SyncSession } from '@/integrations/mutagen.ts';
+import { MutagenEngine, type SyncProgress, type SyncSession } from '@/integrations/mutagen.ts';
 
 async function engineAndServer(
   explicitUser?: string,
+  existing?: MutagenEngine,
 ): Promise<{ engine: MutagenEngine; host: string; user: string }> {
   const config = await readGlobalConfig();
   const host = config?.server_host;
@@ -43,7 +45,7 @@ async function engineAndServer(
 
   const user = explicitUser ?? (await serverUserForSync());
 
-  return { engine: new MutagenEngine(), host, user };
+  return { engine: existing ?? new MutagenEngine(), host, user };
 }
 
 /**
@@ -231,6 +233,8 @@ export interface CreateSyncOptions {
   serverPath?: string | undefined;
   /** The account on the server, `--user`: default the one of the configuration. */
   user?: string | undefined;
+  /** The engine already at hand, so the caller can follow the same session. */
+  engine?: MutagenEngine | undefined;
 }
 
 // The folder the server keeps the project in: `--server-path` leaves it where
@@ -266,7 +270,7 @@ export async function createSyncFor(options: CreateSyncOptions): Promise<{
   local: string;
   created: boolean;
 }> {
-  const { engine, host, user } = await engineAndServer(options.user);
+  const { engine, host, user } = await engineAndServer(options.user, options.engine);
 
   const detail = await projectOnServerOrFail(options.project);
 
@@ -298,6 +302,8 @@ export async function createSyncFor(options: CreateSyncOptions): Promise<{
 export interface CreateLocalCopyOptions extends CreateSyncOptions {
   /** false with `--no-git`: the copy stays without a repository of its own. */
   git?: boolean;
+  /** The phases of the clone of `.git`, while it runs. */
+  onGitProgress?: (progress: GitProgress) => void;
 }
 
 /**
@@ -315,14 +321,18 @@ export async function createLocalCopy(options: CreateLocalCopyOptions): Promise<
   const git =
     options.git === false
       ? ({ status: 'skipped', summary: 'Skipped with --no-git' } satisfies CopyGitResult)
-      : await copyGit(options.project, result.local);
+      : await copyGit(options.project, result.local, options.onGitProgress);
 
   return { ...result, git };
 }
 
 // The local copy gets its own `.git`, cloned from the `origin` of the server
 // and on its branch. A copy that already has one is left alone.
-async function copyGit(project: string, local: string): Promise<CopyGitResult> {
+async function copyGit(
+  project: string,
+  local: string,
+  onProgress?: (progress: GitProgress) => void,
+): Promise<CopyGitResult> {
   const server = await projectGit(project).catch(() => undefined);
 
   if (server === undefined) {
@@ -346,7 +356,50 @@ async function copyGit(project: string, local: string): Promise<CopyGitResult> {
     local,
     originUrl: server.originUrl,
     branch: server.origin?.state.branch ?? '',
+    ...(onProgress === undefined ? {} : { onProgress }),
   });
+}
+
+/**
+ * Waits for the first cycle of a session: the copy is complete when Mutagen
+ * says so. A session that is not there gives nothing, and the caller says it
+ * instead of waiting. A session that retries keeps waiting: Ctrl+C is the way
+ * out, and the sync goes on without the command.
+ */
+export async function waitFirstSync(
+  engine: MutagenEngine,
+  project: string,
+  update: (progress: SyncProgress) => void,
+): Promise<SyncProgress | undefined> {
+  for (;;) {
+    const progress = await engine.progress(project);
+
+    if (progress === undefined) {
+      return undefined;
+    }
+
+    update(progress);
+
+    if (progress.state === 'done' || progress.state === 'halted') {
+      return progress;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+}
+
+/** The same progress for the line: bytes when Mutagen knows the size, files otherwise. */
+export function syncUpdate(progress: SyncProgress): ProgressUpdate {
+  if (progress.state === 'count') {
+    return {
+      done: progress.received ?? 0,
+      total: progress.total,
+      unit: progress.unit ?? 'files',
+      activity: progress.activity,
+    };
+  }
+
+  return { done: 0, total: undefined, activity: progress.activity };
 }
 
 async function status(context: CommandContext): Promise<{ data?: unknown; text?: string }> {

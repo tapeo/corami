@@ -169,10 +169,41 @@ export function remoteExtractCommand(folder: string): string {
 }
 
 /**
- * The archive reaches the server through a pipe: `tar` writes it, `ssh` carries
- * it. Both are started with their arguments, never through a shell, and both
- * exit codes are checked: a failure of `tar` would otherwise show as the exit
- * code of `ssh` alone.
+ * The bytes of the archive counted, then compressed: the count is of the
+ * stream `tar` writes, the wire carries gzip. The server runs the same `tar -xzf`
+ * it always ran, whatever the transport accepts for `ssh -C`.
+ */
+export function countingStream(
+  source: ReadableStream<Uint8Array>,
+  onBytes?: (bytes: number) => void,
+): ReadableStream<Uint8Array> {
+  let sent = 0;
+
+  return source.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        sent += chunk.byteLength;
+        onBytes?.(sent);
+        controller.enqueue(chunk);
+      },
+    }),
+  );
+}
+
+export function gzipStream(source: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  return source.pipeThrough(
+    new CompressionStream('gzip') as TransformStream<Uint8Array, Uint8Array>,
+  );
+}
+
+/**
+ * The archive reaches the server through a pipe: `tar` writes it, this process
+ * counts it and compresses it, `ssh` carries it. All are started with their
+ * arguments, never through a shell, and both exit codes are checked: a failure
+ * of `tar` would otherwise show as the exit code of `ssh` alone. Counting here
+ * is what the progress line knows against the bytes of the files: `ssh -C`
+ * depends on what the server accepts, gzip does not, and the server still
+ * receives the archive it always received.
  */
 export async function transfer(
   source: string,
@@ -180,13 +211,14 @@ export async function transfer(
   host: string,
   folder: string,
   entries: string[],
+  onBytes?: (bytes: number) => void,
 ): Promise<{ ok: boolean; detail: string }> {
   const remote = remoteExtractCommand(folder);
   // The list decides what the archive holds: `tar` follows no folder and
   // matches no pattern, so a link is carried as a link and nothing the
   // inventory left out can slip in.
   const reader = Bun.spawn(
-    ['tar', '-czf', '-', '-C', source, '--null', '--no-recursion', '-T', '-'],
+    ['tar', '-cf', '-', '-C', source, '--null', '--no-recursion', '-T', '-'],
     {
       stdin: 'pipe',
       stdout: 'pipe',
@@ -197,10 +229,12 @@ export async function transfer(
   reader.stdin.write(`${entries.join('\0')}\0`);
   await reader.stdin.end();
 
+  const counted = countingStream(reader.stdout, onBytes);
+
   const writer = Bun.spawn(
     ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', `${user}@${host}`, remote],
     {
-      stdin: reader.stdout,
+      stdin: gzipStream(counted),
       stdout: 'pipe',
       stderr: 'pipe',
     },
@@ -210,6 +244,15 @@ export async function transfer(
     reader.kill();
     writer.kill();
   }, 1_800_000);
+
+  // The archive flows through this process: an `ssh` that exits early would
+  // leave `tar` blocked on a full pipe until the timeout. Its exit is the
+  // signal that nobody is reading any more.
+  void writer.exited.then((code) => {
+    if (code !== 0) {
+      reader.kill();
+    }
+  });
 
   try {
     const [read, written] = await Promise.all([
