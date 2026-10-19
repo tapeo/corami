@@ -10,7 +10,6 @@ export interface RemovalCheck {
   step: string;
   status: 'ok' | 'blocked';
   detail: string;
-  /** The error code a blocked check answers with. */
   code?: ErrorCode | undefined;
   paths?: string[];
 }
@@ -28,21 +27,12 @@ export interface RemovalOptions {
   localPath: string;
 }
 
-/**
- * The engine a removal is planned and applied with. Only the two operations a
- * removal needs: the rest of the sync does not enter it.
- */
 export interface RemovalEngine {
   status(project: string): Promise<SyncSession | undefined>;
   flush(project: string): Promise<void>;
   terminate(project: string): Promise<void>;
 }
 
-/**
- * Whether the copy of this machine can go, and what it would cost. Every check
- * is decided before anything is touched: the last one to run, `mutagen sync
- * terminate` in `applyRemoval`, is the point of no return for the local files.
- */
 export async function planRemoval(
   options: RemovalOptions,
   engine: RemovalEngine = new MutagenEngine(),
@@ -100,12 +90,6 @@ export async function planRemoval(
   };
 }
 
-/**
- * Flush first, so every local change reaches the server, then read the state:
- * a copy that is not watching has work still on the way, and deleting now
- * deletes it. A missing session is not a failure, Mutagen may have been
- * restarted; anything else is.
- */
 async function checkSync(
   engine: RemovalEngine,
   project: string,
@@ -176,9 +160,6 @@ export async function applyRemoval(
   const first = blocked[0];
 
   if (blocked.length > 0 && !force) {
-    // The folder of the project gone on the server, with the files still here:
-    // the copy is all that is left of it, and the session holds a conflict on
-    // the folder itself. Deleting is not the only way out, `sync stop` keeps it.
     const folderGone =
       (plan.session?.conflicts.includes('') ?? false) && existsSync(plan.localPath);
 

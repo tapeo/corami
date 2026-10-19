@@ -1,6 +1,3 @@
-// Git commands and the state of one side. Every side follows `origin` only: the
-// files are always moved by the sync, here we read states and move the local HEAD.
-
 import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { redactUrl, run, shellQuote } from '@/core/exec.ts';
@@ -46,7 +43,6 @@ export async function readGitState(root: string): Promise<GitRepoState> {
   let dirtyChanges = 0;
 
   for (const line of status.stdout.split('\n')) {
-    // `# branch.head (detached)` means a detached HEAD: branch stays empty.
     if (line.startsWith('# branch.head ')) {
       const name = line.slice('# branch.head '.length);
       branch = name === '(detached)' ? '' : name;
@@ -63,8 +59,6 @@ export async function readGitState(root: string): Promise<GitRepoState> {
       continue;
     }
 
-    // An untracked file (`?`) does not count. In `1`/`2`/`u` the first character
-    // is about the index, the second the worktree.
     if (line.startsWith('1 ') || line.startsWith('2 ') || line.startsWith('u ')) {
       dirtyChanges += 1;
 
@@ -121,8 +115,6 @@ export async function isAncestor(
   return (await git(root, ['merge-base', '--is-ancestor', ancestor, descendant])).ok;
 }
 
-// Updates a ref only if it still equals `expected`, then moves the index with a
-// mixed reset: the files stay the ones from the sync.
 export async function gitCompareAndSwap(
   root: string,
   ref: string,
@@ -138,18 +130,13 @@ export async function gitCompareAndSwap(
   return update.ok ? gitStep(root, ['reset', '--quiet', ref], 'git reset failed') : update;
 }
 
-// The ssh command for git commands towards `origin`, with a timeout: when the
-// service starts the network may not be ready yet, and we do not hang.
 export function sshArgs(timeoutMs = 60_000): string[] {
   const seconds = Math.max(1, Math.round(timeoutMs / 1_000));
   return ['-c', `core.sshCommand=ssh -o BatchMode=yes -o ConnectTimeout=${seconds}`];
 }
 
-// Nobody watches the terminal: a `fetch` must never ask for credentials.
 const NO_PROMPT = { GIT_TERMINAL_PROMPT: '0' };
 
-// Downloads the refs of `origin`. Without network it fails, and the caller
-// decides with the refs of the last successful fetch.
 export async function gitFetchOrigin(
   root: string,
   timeoutMs = 60_000,
@@ -176,15 +163,12 @@ export interface CopyGitResult {
   detail?: string | undefined;
 }
 
-/** One line of `git clone --progress`: the phase, and its counts when git gives them. */
 export interface GitProgress {
   phase: string;
   done?: number | undefined;
   total?: number | undefined;
 }
 
-// Only the phases git reports with counts: a warning or a remote message that
-// happens to hold a colon is not progress, and stays in the error detail.
 const GIT_PROGRESS =
   /^(?:remote: )?((?:[A-Z][A-Za-z ]*?(?:objects|deltas|files))|Total)\s*:\s*(?:(\d+)%\s*)?(?:\((\d+)\/(\d+)\))?/;
 
@@ -206,8 +190,6 @@ export function parseGitProgress(line: string): GitProgress | undefined {
   return { phase, done, total };
 }
 
-// The chunks of stderr into the lines git writes: progress repaints its line
-// with `\r`, and a chunk may end in the middle of one.
 function progressLines(onProgress: (progress: GitProgress) => void): (chunk: string) => void {
   let rest = '';
 
@@ -225,15 +207,11 @@ function progressLines(onProgress: (progress: GitProgress) => void): (chunk: str
   };
 }
 
-// Gives a local copy born from the sync its own `.git`: a clone of `origin`
-// without checkout, moved into the copy, on the branch of the server. The
-// files are the synced ones: `git reset` only rebuilds the index from HEAD.
 export async function giveCopyGit(options: {
   local: string;
   originUrl: string | undefined;
   branch: string;
   timeoutMs?: number;
-  /** The phases of the clone, while it runs. */
   onProgress?: (progress: GitProgress) => void;
 }): Promise<CopyGitResult> {
   const { local, originUrl, branch, onProgress } = options;
@@ -261,7 +239,6 @@ export async function giveCopyGit(options: {
     [...sshArgs(60_000), 'clone', '--progress', '--no-checkout', '--', originUrl, temporary],
     {
       timeoutMs,
-      // An English locale, so the phases are the ones this file reads.
       env: { ...NO_PROMPT, LC_ALL: 'C' },
       ...(onProgress === undefined ? {} : { onStderr: progressLines(onProgress) }),
     },
@@ -304,8 +281,6 @@ export async function giveCopyGit(options: {
   };
 }
 
-// The branch that follows `origin`, in the form `origin/<branch>`. Without a
-// configured upstream there is no destination, and the caller says so.
 export async function gitUpstreamOf(root: string, branch: string): Promise<string | undefined> {
   if (branch === '') {
     return undefined;
@@ -326,8 +301,6 @@ export async function gitRefCommit(root: string, ref: string): Promise<string | 
   return result.ok && result.stdout !== '' ? result.stdout : undefined;
 }
 
-// The files changed between two commits. `--no-renames` and `-z` give simple
-// paths to read even with spaces or odd characters.
 async function changedPaths(root: string, from: string, to: string): Promise<string[] | undefined> {
   const result = await git(root, ['diff', '--name-only', '--no-renames', '-z', from, to]);
 
@@ -338,7 +311,6 @@ async function changedPaths(root: string, from: string, to: string): Promise<str
   return result.stdout.split('\0').filter((path) => path !== '');
 }
 
-// The hash of every path in the commit, `:` for a file that is not there.
 async function treeHashes(
   root: string,
   commit: string,
@@ -370,8 +342,6 @@ async function treeHashes(
   return hashes;
 }
 
-// The hash of the file on disk, `-` when it is missing. One missing file would
-// make a single `hash-object` fail, so every path is asked on its own.
 async function worktreeHashes(
   root: string,
   paths: string[],
@@ -401,11 +371,6 @@ async function worktreeHashes(
   return hashes;
 }
 
-// Are the changes of commit `to` already in the files? For every path changed
-// between `from` and `to` the disk must differ from what it was in `from`: a new
-// file must be there, a deleted one must be gone. That way a file the agent
-// modified again after the commit does not block, while a commit that arrived
-// from outside and was not delivered by the sync yet does block.
 export async function filesArrived(root: string, from: string, to: string): Promise<boolean> {
   if (from === '' || to === '') {
     return false;
@@ -433,9 +398,6 @@ export async function filesArrived(root: string, from: string, to: string): Prom
   return paths.every((path) => (before.get(path) ?? ':') !== (now.get(path) ?? '-'));
 }
 
-// The first stderr lines on a single line: in a rejected fetch or push the
-// first line is the remote address, and the reason is in the ones after. The
-// progress lines of a clone repaint themselves, and are not the reason.
 function failureDetail(stderr: string, fallback: string): string {
   const lines = stderr
     .split(/[\r\n]/)

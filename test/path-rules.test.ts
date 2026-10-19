@@ -22,16 +22,12 @@ describe('classifyPath', () => {
   const cases: Array<[string, ReturnType<typeof classifyPath>]> = [
     ['src/index.ts', 'synced'],
     ['README.md', 'synced'],
-    // Nothing about a name makes a file special: a key and an env file travel
-    // like any other file.
     ['.env', 'synced'],
     ['.env.local', 'synced'],
     ['upload.jks', 'synced'],
     ['android/app/upload.jks', 'synced'],
     ['android/key.properties', 'synced'],
     ['signing/certificate.p12', 'synced'],
-    // A path alone says nothing about being a folder: the callers that walk
-    // the tree pass `isDirectory` for the folders they list.
     ['node_modules', 'synced'],
     ['node_modules/left-pad/index.js', 'regenerable'],
     ['packages/web/node_modules/left-pad/index.js', 'regenerable'],
@@ -273,8 +269,6 @@ describe('the archive of an import', () => {
 
     expect(readlinkSync(join(unpacked, 'index.ts'))).toBe('src/index.ts');
     expect(() => lstatSync(join(unpacked, 'pub-cache'))).toThrow();
-    // The folder of this machine and the folder that regenerates are not in
-    // the archive: the copy of this machine keeps them.
     expect(() => lstatSync(join(unpacked, 'apps', 'demo', 'ios', '.symlinks'))).toThrow();
     expect(() => lstatSync(join(unpacked, 'node_modules'))).toThrow();
 

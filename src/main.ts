@@ -5,8 +5,6 @@ import { reportError, resolveOutputOptions } from '@/cli/output.ts';
 import { parseArgs } from '@/cli/parser.ts';
 import { runRouter } from '@/cli/router.ts';
 
-// The arguments are read once, before the command is known: a flag takes the
-// next word as its value when any command or action declares it with one.
 export function valueFlags(): string[] {
   const names = new Set<string>();
 

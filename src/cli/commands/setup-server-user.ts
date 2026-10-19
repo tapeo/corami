@@ -7,17 +7,8 @@ import { isValidServerUser, ownerBinary, type ServerStep } from '@/core/server-u
 import { homeDirectoryForUser, userId } from '@/integrations/systemd.ts';
 import { setOperator } from '@/integrations/tailscale.ts';
 
-// The steps of `corami setup server` that belong to the owner account: the
-// setup runs as root, creates the account, then runs these as the account
-// itself, so that the homes, the user services and the paths of `paths()` are
-// the ones of the account. The decisions are in `src/core/server-user.ts`.
-
 const RUNTIME_DIR_POLLS = 20;
 
-/**
- * The step `user` of the server setup: the account that owns the projects and
- * runs the services, created when it is missing and prepared to take over.
- */
 export async function stepServerUser(context: StepContext): Promise<StepResult> {
   const user = context.serverUser;
   const done = (summary: string, detail?: string): StepResult => ({
@@ -95,8 +86,6 @@ export async function stepServerUser(context: StepContext): Promise<StepResult> 
     return { step: 'user', status: 'failed', summary: failed };
   }
 
-  // The account runs `tailscale serve` for the previews, so it is the operator
-  // of the node; the control of the node itself stays with root.
   const operator = (await setOperator(user)).ok ? ', operator of tailscale' : '';
 
   return done(
@@ -105,11 +94,6 @@ export async function stepServerUser(context: StepContext): Promise<StepResult> 
   );
 }
 
-/**
- * The step of the account to run again as the account itself, with its own
- * binary, its home and its runtime directory in the environment, and the
- * result read from the JSON envelope of the new process.
- */
 export async function runStepAsOwner(context: StepContext, step: ServerStep): Promise<StepResult> {
   const user = context.serverUser;
   const home = (await homeDirectoryForUser(user)) ?? defaultHome(user);
@@ -136,8 +120,6 @@ export async function runStepAsOwner(context: StepContext, step: ServerStep): Pr
     args.push('--owner', context.ownerLogin);
   }
 
-  // From the home of the account: the setup usually starts in the one of root,
-  // which the account cannot enter.
   const result = await run('runuser', args, {
     cwd: home,
     env: {
@@ -237,9 +219,6 @@ async function waitForRuntimeDir(user: string): Promise<string | undefined> {
   return `The runtime directory of ${user} does not exist yet: is systemd running?`;
 }
 
-// The binary of the account: the one of the setup, so that the daemon runs the
-// same version. Root never runs the binary of the account, and the account
-// never runs the one of root.
 async function copyBinary(home: string): Promise<string | undefined> {
   const source = process.execPath;
   const target = ownerBinary(home);
@@ -307,7 +286,6 @@ async function groupOf(home: string): Promise<string> {
   return result.ok && result.stdout.trim() !== '' ? result.stdout.trim() : '0';
 }
 
-// `/home/<user>`, where `useradd` puts the home of a created account.
 function defaultHome(user: string): string {
   const parent = userInfo().homedir.replace(/\/[^/]+\/?$/, '');
   return join(parent === '' ? '/home' : parent, user);

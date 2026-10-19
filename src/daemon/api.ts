@@ -90,8 +90,6 @@ async function handleProjects(
 
   const name = rest[0] ?? '';
 
-  // The name keys the folder of the project on the server: it is checked
-  // before any route, so no route can turn it into a path.
   if (!validProjectName(name)) {
     throw new CoramiError({
       code: 'usage',
@@ -245,9 +243,6 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
   const name = typeof body.name === 'string' ? body.name : undefined;
   const path = typeof body.path === 'string' ? body.path : undefined;
   const staging = typeof body.staging === 'string' ? body.staging : undefined;
-  // Whether the folder is one Corami made or is making here: the import moves
-  // a folder of a client onto the server and says so. A folder only registered
-  // keeps its `false`, and a removal leaves it on disk.
   const owned = body.owned === true || url !== undefined;
 
   if (name === undefined || (url === undefined && path === undefined)) {
@@ -265,8 +260,6 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
     });
   }
 
-  // `git clone` reads a url that starts with a dash as an option, and one of
-  // its options runs a command.
   if (url !== undefined && (url.startsWith('-') || url.trim() === '')) {
     throw new CoramiError({
       code: 'usage',
@@ -301,8 +294,6 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
   const home = homeDirectory();
   const underHome = path?.startsWith('~/') === true;
 
-  // `~/` is the home of the account that owns the projects: without one the
-  // path would land somewhere of the daemon.
   if (underHome && !posix.isAbsolute(home)) {
     throw new CoramiError({
       code: 'config_invalid',
@@ -330,8 +321,6 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
     });
   }
 
-  // Two projects whose folders sit inside each other would sync the same
-  // files: the folder of one project is not part of another one.
   const others = listProjects().map((project) => project.path);
 
   if (serverFolderOverlaps(target, others)) {
@@ -391,14 +380,9 @@ async function removeProject(name: string): Promise<ApiResult> {
 
   await removeProjectPreviews(name);
 
-  // The folder of a project that was only registered is not ours: it leaves
-  // the registry and stays where it is.
   const removal = row.owned ? 'delete' : 'keep';
 
   if (removal === 'delete') {
-    // The folder goes away first: a removal that fails keeps the project in
-    // the registry, so the command can be run again instead of leaving a
-    // folder no project names.
     const removed = await run('rm', ['-rf', row.path]);
 
     if (!removed.ok) {
@@ -448,7 +432,6 @@ function methodNotAllowed(): ApiResult {
   };
 }
 
-/** A path segment, decoded once: the client encodes names on the way out. */
 function decodeSegment(segment: string): string {
   try {
     return decodeURIComponent(segment);

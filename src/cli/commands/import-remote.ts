@@ -9,7 +9,6 @@ import {
 } from '@/core/project-add.ts';
 import { type RemoteHome, remoteFolderState, remoteGitFacts } from '@/core/transfer.ts';
 
-/** The home directory of the account of the server, and what ssh said. */
 export async function remoteHome(user: string, host: string): Promise<RemoteHome> {
   const result = await run(
     'ssh',
@@ -32,22 +31,12 @@ export async function remoteHome(user: string, host: string): Promise<RemoteHome
 export interface ServerFolderCheck {
   host: string;
   user: string;
-  /** The folder of the project on the server: the import never writes into it. */
   serverPath: string;
-  /** The folder of the import before the registration, next to the project. */
   staging: string;
-  /** The folder of this machine, as the command was given it. */
   folder: string;
-  /** The HEAD of the folder of this machine. */
   localHead: string;
 }
 
-/**
- * Refuses a folder of the server the import does not make: one that is already
- * there with something in it, one that overlaps another project, and one the
- * check cannot read. The command writes into the staging folder alone, and the
- * registration is what gives it the name of the project.
- */
 export async function checkServerFolder(state: ServerFolderCheck): Promise<void> {
   const projects = await listProjects().catch((error: unknown) => {
     throw new CoramiError({
@@ -118,11 +107,6 @@ function overlappingProject(
   return projects.find((entry) => serverFolderOverlaps(serverPath, [entry.path]))?.name;
 }
 
-/**
- * Takes the staging folder away again, with what it holds: only for a folder
- * the import names, which the check before the transfer guaranteed. The result
- * says whether it is gone, so the step can say where the import stopped.
- */
 export async function removeStaging(
   user: string,
   host: string,
@@ -159,20 +143,10 @@ export async function removeStaging(
       };
 }
 
-/**
- * The command the server runs to receive the archive: unpack it into the
- * staging folder of the import. The sync never carries the paths of one
- * machine, and the archive leaves them out too, so there is nothing to protect.
- */
 export function remoteExtractCommand(folder: string): string {
   return `mkdir -p ${shellQuote(folder)} && tar -xzf - --no-same-owner -C ${shellQuote(folder)}`;
 }
 
-/**
- * The bytes of the archive counted, then compressed: the count is of the
- * stream `tar` writes, the wire carries gzip. The server runs the same `tar -xzf`
- * it always ran, whatever the transport accepts for `ssh -C`.
- */
 export function countingStream(
   source: ReadableStream<Uint8Array>,
   onBytes?: (bytes: number) => void,
@@ -196,15 +170,6 @@ export function gzipStream(source: ReadableStream<Uint8Array>): ReadableStream<U
   );
 }
 
-/**
- * The archive reaches the server through a pipe: `tar` writes it, this process
- * counts it and compresses it, `ssh` carries it. All are started with their
- * arguments, never through a shell, and both exit codes are checked: a failure
- * of `tar` would otherwise show as the exit code of `ssh` alone. Counting here
- * is what the progress line knows against the bytes of the files: `ssh -C`
- * depends on what the server accepts, gzip does not, and the server still
- * receives the archive it always received.
- */
 export async function transfer(
   source: string,
   user: string,
@@ -214,9 +179,6 @@ export async function transfer(
   onBytes?: (bytes: number) => void,
 ): Promise<{ ok: boolean; detail: string }> {
   const remote = remoteExtractCommand(folder);
-  // The list decides what the archive holds: `tar` follows no folder and
-  // matches no pattern, so a link is carried as a link and nothing the
-  // inventory left out can slip in.
   const reader = Bun.spawn(
     ['tar', '-cf', '-', '-C', source, '--null', '--no-recursion', '-T', '-'],
     {
@@ -245,9 +207,6 @@ export async function transfer(
     writer.kill();
   }, 1_800_000);
 
-  // The archive flows through this process: an `ssh` that exits early would
-  // leave `tar` blocked on a full pipe until the timeout. Its exit is the
-  // signal that nobody is reading any more.
   void writer.exited.then((code) => {
     if (code !== 0) {
       reader.kill();

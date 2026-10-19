@@ -1,8 +1,3 @@
-// Installs the local build (`dist/corami`) in place of the official binary in
-// `~/.corami/bin` and restarts the services already active on this machine. It
-// does not install services: `corami setup server` or `corami setup client` do that.
-// Usage: `bun run dev:install`. Details in `docs/development.md`.
-
 import { chmodSync, copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -62,8 +57,6 @@ for (const service of services) {
   }
 }
 
-// On Windows a running executable is locked: the scheduled task is stopped
-// before replacing the binary, and starts again with the restart below.
 if (windows) {
   for (const spec of active) {
     await run('schtasks', ['/end', '/tn', spec.name]);

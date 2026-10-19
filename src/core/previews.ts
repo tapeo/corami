@@ -46,7 +46,6 @@ export function validateTargetPort(port: number): void {
   }
 }
 
-// The public port is stable per preview: an existing record keeps its port.
 export function allocatePublicPort(taken: number[]): number {
   const used = new Set(taken);
 
@@ -76,12 +75,6 @@ export interface ServeRule {
   target: string;
 }
 
-/**
- * The serve rules of the preview range that must be applied and removed to
- * match the registry. A rule with the right port but another target is applied
- * again: `tailscale serve` moves the proxy of a port. Rules outside the range
- * belong to the user and are never touched.
- */
 export function planServeRules(
   desired: ServeRule[],
   current: ServeRule[],
@@ -113,8 +106,6 @@ export interface ProjectPath {
   path: string;
 }
 
-// The project a folder belongs to: the longest project path that contains it.
-// The daemon and the CLI use it instead of a configuration file in the repo.
 export function projectForPath(cwd: string, projects: ProjectPath[]): string | undefined {
   const target = resolve(cwd);
   let best: { name: string; length: number } | undefined;

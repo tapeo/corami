@@ -10,15 +10,12 @@ export interface PinnedTool {
   version: string;
   asset: (platform: NodeJS.Platform, arch: string) => string;
   url: (asset: string) => string;
-  /** The sha256 of every asset, from the `SHA256SUMS` of the release. */
   checksums: (asset: string) => string | undefined;
   binaryInArchive: string;
 }
 
 const MUTAGEN_VERSION = 'v0.18.1';
 
-// The sums of the release, written down: the file of the release is not
-// fetched, so a missing or changed one cannot take the check away.
 const MUTAGEN_CHECKSUMS: Record<string, string> = {
   [`mutagen_darwin_amd64_${MUTAGEN_VERSION}.tar.gz`]:
     '7d06f7d8fcfe90bc7e55cc834a2f2f20c2e0af9ea9bc35911fc4341ad56a9bbf',

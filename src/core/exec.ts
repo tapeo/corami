@@ -5,15 +5,10 @@ export interface ExecResult {
   exitCode: number;
 }
 
-/** A value as one word of a POSIX shell command. */
 export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-/**
- * A url without the credentials it may carry: `https://token@host/path` is
- * printed as `https://host/path`, so a token never reaches a summary or a log.
- */
 export function redactUrl(url: string): string {
   const scheme = /^([a-z][a-z0-9+.-]*:\/\/)([^/]*)(.*)$/i.exec(url);
 
@@ -36,7 +31,6 @@ export interface RunOptions {
   env?: Record<string, string | undefined>;
   stdin?: 'ignore' | 'inherit' | 'pipe';
   timeoutMs?: number;
-  /** Read from stderr while the command runs, as with the progress of a clone. */
   onStderr?: (chunk: string) => void;
 }
 
@@ -110,9 +104,6 @@ export async function run(
   return { ok: exitCode === 0, stdout, stderr, exitCode };
 }
 
-// The whole text of a stream, handed to `onChunk` as it arrives: a command
-// that reports progress on stderr can be followed while it runs, and the
-// result is still the complete text.
 async function readText(
   stream: ReadableStream<Uint8Array>,
   onChunk: ((chunk: string) => void) | undefined,

@@ -64,6 +64,7 @@ Early: it works end to end on a real VPS with a macOS client. Binaries and updat
 - [Builds](docs/builds.md): on the server, or on a client over SSH
 - [Backup](docs/backup.md): what to save and how
 - [Architecture](docs/architecture.md): how it is built
+- [Internals](docs/internals.md): invariants the code relies on
 - [Development](docs/development.md)
 - [Ideas for v2](docs/v2/README.md)
 

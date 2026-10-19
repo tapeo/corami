@@ -57,11 +57,6 @@ export interface Semver {
   prerelease: string | undefined;
 }
 
-/**
- * A version as a release names it: `0.7.1`, `v0.7.1`, `1.0.0-rc1`. A part that
- * is not a number, `dev` from a build of the source tree for example, counts
- * as zero: it is older than any release.
- */
 export function parseSemver(value: string): Semver {
   const [core = '', ...rest] = parseVersion(value).trim().split('-');
   const parts = core.split('.');
@@ -74,10 +69,6 @@ export function parseSemver(value: string): Semver {
   return { numbers: [numberAt(0), numberAt(1), numberAt(2)], prerelease };
 }
 
-/**
- * Whether `candidate` comes after `current`. A release comes after its own
- * prereleases, `1.0.0` after `1.0.0-rc1`; two prereleases compare as text.
- */
 export function isNewer(candidate: string, current: string): boolean {
   const left = parseSemver(candidate);
   const right = parseSemver(current);
@@ -163,10 +154,6 @@ export async function latestRelease(
   return release === undefined ? { reason: 'no_releases' } : { release };
 }
 
-/**
- * The release of one tag, for `corami update --version`: the command installs
- * the version that was asked for, not the latest.
- */
 export async function releaseByTag(
   tag: string,
   repo = REPO,
@@ -231,7 +218,6 @@ export async function fetchChecksums(release: ReleaseInfo): Promise<Map<string, 
   return checksums;
 }
 
-/** The sha256 of one asset, from the output of `sha256sum`. */
 export function checksumFor(text: string, asset: string): string | undefined {
   for (const line of text.split('\n')) {
     const parts = line.trim().split(/\s+/);
@@ -341,10 +327,7 @@ export function replaceBinary(currentBinary: string, downloaded: string): void {
     rmSync(backup, { force: true });
     renameSync(currentBinary, backup);
     moved = true;
-  } catch {
-    // The binary may be running from a path that cannot be renamed (on Windows
-    // a running executable is locked): the direct replace below reports why.
-  }
+  } catch {}
 
   try {
     renameSync(downloaded, currentBinary);
@@ -368,7 +351,6 @@ export function replaceBinary(currentBinary: string, downloaded: string): void {
     });
   }
 
-  // A leftover backup is not a failure: the new binary is already in place.
   try {
     rmSync(backup, { force: true });
   } catch {}

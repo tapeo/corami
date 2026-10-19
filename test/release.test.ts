@@ -64,8 +64,6 @@ describe('replacing the binary', () => {
     const downloaded = join(root, 'corami.new');
     writeFileSync(current, 'old');
 
-    // The downloaded binary was removed between the checks: the rename fails,
-    // and what was there must come back.
     expect(() => replaceBinary(current, downloaded)).toThrow();
     expect(readFileSync(current, 'utf8')).toBe('old');
   });

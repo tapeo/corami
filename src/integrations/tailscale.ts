@@ -59,7 +59,6 @@ export async function status(): Promise<TailscaleStatus> {
   };
 }
 
-/** The other machines of the tailnet, from `tailscale status --json`. */
 export async function peers(): Promise<TailnetPeer[]> {
   const result = await run('tailscale', ['status', '--json']);
 
@@ -81,8 +80,6 @@ export function readPeers(status: Record<string, unknown> | undefined): TailnetP
   }));
 }
 
-// The login of the account that signed this machine in: `Self.UserID` points
-// into the `User` map.
 export function readSelfLogin(status: Record<string, unknown> | undefined): string | undefined {
   const self = status?.Self;
   const users = status?.User;
@@ -100,7 +97,6 @@ export function readSelfLogin(status: Record<string, unknown> | undefined): stri
   return readString(users[String(id)], 'LoginName');
 }
 
-/** Whether Tailscale SSH is on for this machine; undefined when it cannot be read. */
 export async function sshEnabled(): Promise<boolean | undefined> {
   const result = await run('tailscale', ['debug', 'prefs']);
 
@@ -118,10 +114,6 @@ export interface SshState {
   exposure: SshExposure;
 }
 
-/**
- * How Tailscale SSH treats `user`, root and the other accounts of this machine,
- * from the netmap of the daemon. Undefined when the netmap cannot be read.
- */
 export async function sshState(user: string): Promise<SshState | undefined> {
   if ((await sshEnabled()) !== true) {
     return undefined;
@@ -147,9 +139,6 @@ export async function sshState(user: string): Promise<SshState | undefined> {
   };
 }
 
-// The accounts someone can log in as on this machine, with the groups that let
-// each of them become root. Only Linux has `/etc/passwd`: elsewhere the list is
-// empty and the exposure never names an account.
 async function serverAccounts(): Promise<SshAccount[]> {
   const passwd = await readFile('/etc/passwd', 'utf8').catch(() => undefined);
 
@@ -166,7 +155,6 @@ async function serverAccounts(): Promise<SshAccount[]> {
   );
 }
 
-/** Every login in `tailscale status --json`, tagged devices included. */
 export async function tailnetLogins(): Promise<string[]> {
   const result = await run('tailscale', ['status', '--json']);
 
@@ -199,7 +187,6 @@ export async function up(options: { hostname?: string; ssh?: boolean } = {}): Pr
   await run('tailscale', args);
 }
 
-/** Makes `user` the operator of this node, so that it can run `tailscale serve`. */
 export async function setOperator(user: string): Promise<{ ok: boolean; detail: string }> {
   const result = await run('tailscale', ['set', `--operator=${user}`]);
   const output = `${result.stderr}${result.stdout}`.trim();
@@ -251,10 +238,6 @@ export interface ServeTarget {
   target: string;
 }
 
-/**
- * The HTTPS rules of this machine, from `tailscale serve status --json`: the
- * public port and the local address it forwards to.
- */
 export function servedTargets(status: Record<string, unknown> | undefined): ServeTarget[] {
   if (status === undefined) {
     return [];

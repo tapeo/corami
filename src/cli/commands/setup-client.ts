@@ -42,7 +42,6 @@ type ClientStep = (typeof CLIENT_STEPS)[number];
 
 interface ClientContext {
   server: string;
-  /** The account that owns the projects on the server, resolved along the way. */
   user?: string | undefined;
   dryRun: boolean;
   skipMutagen: boolean;
@@ -59,7 +58,6 @@ const STEP_RUNNERS: Record<ClientStep, (context: ClientContext) => Promise<StepR
   'git-watch': stepGitWatch,
 };
 
-// What each step is doing, shown in a terminal while it runs.
 const STEP_ACTIVITIES: Record<ClientStep, string> = {
   tailscale: 'Checking Tailscale on this machine',
   daemon: 'Reaching the daemon on the server',
@@ -70,11 +68,6 @@ const STEP_ACTIVITIES: Record<ClientStep, string> = {
   'git-watch': 'Restarting the git alignment service',
 };
 
-/**
- * Connects this machine to the server as a client: `corami setup client
- * <server>`. `server` is the first positional of `context`; with `prompter`,
- * in a terminal, it can be left out and is looked for in the tailnet.
- */
 export async function runClientSetup(
   context: CommandContext,
   prompter?: Prompter,
@@ -118,7 +111,6 @@ export async function runClientSetup(
       : runStepInTerminal(prompter, { name: kind, activity: STEP_ACTIVITIES[kind] }, step);
   };
 
-  // Without a server the tailnet is searched, which needs Tailscale first.
   if (given === undefined && prompter !== undefined) {
     const tailscale = await runStep('tailscale');
     steps.push(tailscale);
@@ -163,11 +155,6 @@ export async function runClientSetup(
   return { text: render(steps, !failed && !partial, prompter === undefined) };
 }
 
-// The account that owns the projects on the server: `--user`, then the one
-// the daemon announces in its health answer, then the one saved by an earlier
-// setup, then root for a server that announces nothing. The SSH of the sync
-// and the step `ssh` use it; a server whose account changed is followed
-// without running the setup again.
 async function resolveUser(context: ClientContext, flag: string | undefined): Promise<string> {
   const health =
     context.health ?? (await fetchHealth(`https://${context.server}:7420`).catch(() => undefined));
@@ -177,8 +164,6 @@ async function resolveUser(context: ClientContext, flag: string | undefined): Pr
   return serverUser({ flag, configured: announced ?? configured }) ?? 'root';
 }
 
-// The server already configured comes first, then the machines of the tailnet
-// where a Corami daemon answers, then a name typed by hand.
 async function chooseServer(prompter: Prompter): Promise<string> {
   const configured = (await readGlobalConfig().catch(() => undefined))?.server_host;
 
@@ -470,9 +455,6 @@ async function fetchHealth(
   return body.data;
 }
 
-// `withSteps` is false in a terminal, where every step was printed as it
-// ended: only the next step is left. `withNext` is false after a failure, a
-// dry run or a single step.
 function render(steps: StepResult[], withNext: boolean, withSteps: boolean): string {
   const lines: string[] = [];
 

@@ -49,8 +49,6 @@ describe('cli', () => {
     const result = await corami(['update', '--version', 'v9.9.9', '--check']);
     const parsed = JSON.parse(result.stdout);
 
-    // The global flag answers with the name and version envelope; the update
-    // command answers with its own data or its own error.
     expect(parsed.data?.name).toBeUndefined();
   });
 
@@ -172,8 +170,6 @@ describe('cli', () => {
     expect(names(add)).toContain('server-path');
     expect(names(add)).not.toContain('path');
     expect(names(add)).not.toContain('local-path');
-    // A folder of this machine is the source without a flag: a second name for
-    // it would be one form too many.
     expect(names(add)).not.toContain('from-local');
     expect(names(rm)).not.toContain('local-path');
 
@@ -273,8 +269,6 @@ describe('cli', () => {
       join(home, '.corami', 'config.json'),
       JSON.stringify({ role: 'client', server_host: 'corami.example.ts.net' }),
     );
-    // An engine that is there and does not answer: the session list is not
-    // an empty list, it is an answer that never came.
     const bin = await mkdtemp(join(tmpdir(), 'corami-bin-'));
     const fake = join(bin, 'mutagen');
     writeFileSync(fake, '#!/bin/sh\necho "connection refused" >&2\nexit 1\n');
@@ -339,8 +333,6 @@ describe('cli', () => {
     const result = await corami(['setup']);
     const parsed = JSON.parse(result.stdout);
 
-    // A bare `corami setup` used to mean the server: on a Mac it would have
-    // started the server setup.
     expect(result.exitCode).toBe(2);
     expect(parsed.error.code).toBe('usage');
     expect(parsed.error.fix).toContain('corami setup server');
@@ -380,8 +372,6 @@ describe('cli', () => {
   });
 
   test('fails the setup when a step fails', async () => {
-    // Nothing listens for TLS on the loopback preview of this machine, and no
-    // Corami server answers: the step daemon fails.
     const home = await mkdtemp(join(tmpdir(), 'corami-home-'));
     const result = await corami(
       ['setup', 'client', '127.0.0.1', '--user', 'root', '--step', 'daemon', '--dry-run'],
@@ -459,10 +449,6 @@ describe('cli', () => {
   test('reports the daemon as unreachable when there is none', async () => {
     const home = await mkdtemp(join(tmpdir(), 'corami-test-'));
 
-    // An address where nobody listens on any machine: on the test one
-    // 127.0.0.1:7420 is the real daemon, and 127.0.0.2 on macOS does not
-    // refuse the connection, it lets it expire. ::1 refuses right away, on
-    // both macOS and Linux, and nobody uses it.
     mkdirSync(join(home, '.corami'), { recursive: true });
     writeFileSync(
       join(home, '.corami', 'config.json'),

@@ -9,11 +9,6 @@ export interface ProjectRow {
   path: string;
   repo_url: string | null;
   created_at: string;
-  /**
-   * Whether Corami created the folder of the project: a clone, or the import
-   * of a folder. A folder registered where it was is not ours, and a removal
-   * leaves it on disk.
-   */
   owned: boolean;
 }
 
@@ -52,8 +47,6 @@ export function migrate(target: Database): void {
     );
   `);
 
-  // A database written before `owned` existed: the column arrives with the
-  // rule of the day, the folder under the projects root was one Corami made.
   const columns = target
     .query<{ name: string }, []>("SELECT name FROM pragma_table_info('projects')")
     .all();

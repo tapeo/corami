@@ -23,7 +23,6 @@ export interface SyncSession {
   beta: string;
   conflicts: string[];
   lastError: string | undefined;
-  /** Links Mutagen leaves on this machine, one by one: they are not an error. */
   localLinks: string[];
 }
 
@@ -44,25 +43,12 @@ export interface CreateOptions {
   ignore: string[];
 }
 
-/**
- * A path rule as Mutagen reads it. A pattern with a slash matches at any
- * depth, like a name rule does in Mutagen, and the doublestar prefix also
- * matches the pattern at the root: `ios/.symlinks` becomes a doublestar
- * prefix followed by `ios/.symlinks/`, which covers the app at the root and
- * the one under `apps/demo`, as `classifyPath` does. A folder rule keeps its
- * trailing slash: a file with the same name travels.
- */
 export function mutagenPattern(rule: PathRule): string {
   const base = rule.pattern.includes('/') ? `**/${rule.pattern}` : rule.pattern;
 
   return rule.directories === true ? `${base}/` : base;
 }
 
-// `.git` and `._*` are not here: the first is the `--ignore-vcs` of the
-// session, the second is an AppleDouble artifact the import already leaves
-// out. The rest comes from the path rules, so the sync, the import and the
-// removal checks agree on what a copy never carries: what is regenerable, and
-// what belongs to one machine. Everything else travels, keys included.
 export const DEFAULT_IGNORES = PATH_RULES.filter(
   (rule) => rule.class !== 'synced' && rule.pattern !== '.git' && rule.pattern !== '._*',
 ).map(mutagenPattern);
@@ -128,11 +114,6 @@ export class MutagenEngine implements SyncEngine {
     return (await this.sessions()) ?? [];
   }
 
-  /**
-   * The sessions of the engine, undefined when it did not answer: no binary,
-   * no daemon, or output that is not JSON. `list` reads that as no session at
-   * all; a command that reports them says it instead.
-   */
   async sessions(): Promise<SyncSession[] | undefined> {
     const binary = await this.path().catch(() => undefined);
 
@@ -154,10 +135,6 @@ export class MutagenEngine implements SyncEngine {
     return sessions.find((session) => session.project === project);
   }
 
-  /**
-   * The first cycle of a session, undefined when Mutagen does not answer the
-   * one session it was asked. A session that is not there is none of the two.
-   */
   async progress(project: string): Promise<SyncProgress | undefined> {
     const binary = await this.path().catch(() => undefined);
 
@@ -190,9 +167,6 @@ export class MutagenEngine implements SyncEngine {
 
     const output = `${result.stdout}${result.stderr}`;
 
-    // The session of a project that is gone from the registry is the one case
-    // where there is nothing to flush: every other failure is real, and the
-    // caller of `flush` decides on it.
     if (/did not match any sessions|no sessions/i.test(output)) {
       return;
     }
@@ -282,17 +256,12 @@ function describeEndpoint(value: unknown): string {
   return path;
 }
 
-/** What the first cycle of a session is doing, as the progress line says it. */
 export interface SyncProgress {
   state: 'waiting' | 'count' | 'done' | 'halted';
-  /** What to say while it works, or why it stopped. */
   activity: string;
-  /** `count`: how much is done and the total, in `unit`. */
   received?: number | undefined;
   total?: number | undefined;
-  /** `count`: bytes when the two sides know the size, files otherwise. */
   unit?: 'bytes' | 'files' | undefined;
-  /** `done`: the files the copy holds. */
   files?: number | undefined;
 }
 
@@ -320,7 +289,6 @@ function asCount(value: unknown): number {
     return value;
   }
 
-  // The JSON of Mutagen has numbers, but an older build may quote them.
   if (typeof value === 'string' && /^\d+$/.test(value)) {
     return Number(value);
   }
@@ -328,13 +296,6 @@ function asCount(value: unknown): number {
   return 0;
 }
 
-/**
- * The state of the first cycle of a session, read from the JSON Mutagen gives
- * for it. Mutagen counts the files, never the total of the bytes, so the
- * progress of a copy is in files. `successfulCycles` alone is not the end: it
- * counts a cycle before the files of the copy are all written, so the session
- * is done only when it is back to `watching`.
- */
 export function syncProgress(raw: string, project: string): SyncProgress | undefined {
   let parsed: unknown;
 
@@ -374,8 +335,6 @@ export function syncProgress(raw: string, project: string): SyncProgress | undef
   const expected = asCount(staging?.expectedFiles);
 
   if (staging !== undefined && expected > 0) {
-    // The bytes of the whole project are the smoothest count there is: a
-    // single big file would leave the files at 0 for the whole transfer.
     const totalBytes = asCount(asRecord(record.alpha)?.totalFileSize);
 
     if (totalBytes > 0) {
@@ -431,12 +390,6 @@ export function collectConflicts(record: Record<string, unknown>): string[] {
   });
 }
 
-/**
- * The reason Mutagen gives for an entry it leaves alone. Only the ones about a
- * link are read: Corami keeps such a link on this machine on purpose, so the
- * session says it instead of showing a problem of the transport. The texts are
- * the errors of `normalizeSymbolicLinkAndEnsurePortable` in Mutagen v0.18.1.
- */
 const LINK_PROBLEMS = [
   'target empty',
   'target too long',
@@ -513,11 +466,6 @@ function describeProblemEntry(item: unknown): { text: string; path: string; link
   };
 }
 
-// The Mutagen daemon carries the sync sessions. Started on demand by the CLI it
-// does not come back after a reboot, and the sessions stay paused until the
-// next mutagen command: on a client it runs as a service. On macOS and Windows
-// Mutagen registers itself with the system (`mutagen daemon register`); on
-// Linux it has no such command, and a user systemd unit runs `daemon run`.
 export function mutagenDaemonSpec(binary: string): ServiceSpec {
   return {
     name: 'corami-mutagen',
@@ -538,8 +486,6 @@ export async function installDaemonService(binary: string): Promise<ServiceResul
   if (platform === 'linux') {
     const spec = mutagenDaemonSpec(binary);
 
-    // A daemon started on demand holds the lock, and the unit could not start
-    // next to it.
     if (!(await serviceActive(spec))) {
       await run(binary, ['daemon', 'stop']);
     }
@@ -582,9 +528,6 @@ async function registerDaemon(
 ): Promise<ServiceResult> {
   const plist = platform === 'macos' ? mutagenLaunchAgentPath() : '';
 
-  // A registration left by another Mutagen binary (an older install, Homebrew)
-  // would start that one at login: Mutagen keeps an existing registration as
-  // it is, so it is removed first.
   if (
     plist !== '' &&
     existsSync(plist) &&
@@ -596,9 +539,6 @@ async function registerDaemon(
 
   let registered = await run(binary, ['daemon', 'register']);
 
-  // Registering needs the daemon lock, held by a daemon started on demand. A
-  // launchd job whose plist is already gone keeps that daemon alive and cannot
-  // be unregistered; bootout removes the job, then the lock is free.
   if (!registered.ok) {
     await run(binary, ['daemon', 'stop']);
 

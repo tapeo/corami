@@ -203,8 +203,6 @@ function countEndpoints(value: unknown): number {
   return Object.keys(value).length;
 }
 
-// The Tailscale IPs of this machine: `tailscale serve` publishes on them by
-// design, so they are not an exposure. Without Tailscale the list is empty.
 async function tailnetAddresses(): Promise<string[]> {
   const result = await run('tailscale', ['status', '--json']);
 
@@ -226,9 +224,6 @@ async function tailnetAddresses(): Promise<string[]> {
   }
 }
 
-// Splits `Address:Port` from `ss -ltnp`, with the shapes ss really prints:
-// `127.0.0.1:4101`, `[::1]:7420`, `100.64.0.1%tailscale0:7420` and
-// `[fd7a::1]%tailscale0:4100`. The zone suffix and the brackets are dropped.
 function splitAddress(local: string): { address: string; port: string } | undefined {
   const match = local.match(/^(.*):(\d+)$/);
 

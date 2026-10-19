@@ -1,12 +1,3 @@
-# Installs corami on Windows: downloads the binary from the GitHub release,
-# checks the sum and puts it in %USERPROFILE%\.corami\bin. Then it runs the
-# client setup, which asks for the server when -Client does not give it.
-#
-# Usage:
-#   irm https://github.com/tapeo/corami/releases/latest/download/install.ps1 | iex
-#   .\install.ps1 -Client corami.tail1a2b3c.ts.net
-#   .\install.ps1 -Version v0.1.0
-
 [CmdletBinding()]
 param(
     [string]$Version = 'latest',
@@ -88,7 +79,6 @@ if ($SkipSetup) {
     return
 }
 
-# -Join is the older name of -Client.
 if (-not $Client) {
     $Client = $Join
 }

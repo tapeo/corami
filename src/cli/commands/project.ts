@@ -138,7 +138,6 @@ function renderDetail(detail: Record<string, unknown>): string {
   return lines.join('\n');
 }
 
-/** The source flag given on the command line, when there is at most one. */
 function sourceOf(url: string | undefined, server: boolean): AddFrom {
   if (url !== undefined && server) {
     throw new CoramiError({
@@ -159,7 +158,6 @@ function sourceOf(url: string | undefined, server: boolean): AddFrom {
   return 'local';
 }
 
-/** The form of `project add` for a source: the folder of this machine, then the source. */
 function addForm(from: AddFrom, folder: string, url: string | undefined): string {
   if (from === 'git') {
     return `corami project add ${folder} --from-git ${url ?? '<url>'}`;
@@ -185,8 +183,6 @@ async function add(context: CommandContext): Promise<CommandResult> {
   const nameFlag = stringFlag(context.args, 'name');
   const folderArg = context.args.positionals[0];
 
-  // The folder of this machine is not guessed and not asked: every source
-  // needs it, because it is where the copy lives.
   if (folderArg === undefined) {
     throw new CoramiError({
       code: 'usage',
@@ -196,13 +192,8 @@ async function add(context: CommandContext): Promise<CommandResult> {
   }
 
   const localPath = givenPath(folderArg);
-  // A folder of this machine is the default: it is the only source the flags
-  // do not carry, so a command with no source at all reads as this folder.
   const from = sourceOf(urlFlag, booleanFlag(context.args, 'from-server'));
 
-  // The flag is about the import, which is the only source that carries the
-  // .git of the folder: it is refused before a dry run answers, so the plan
-  // does not describe a command that would fail.
   if (from === 'local' && noGit) {
     throw new CoramiError({
       code: 'usage',
@@ -229,8 +220,6 @@ async function add(context: CommandContext): Promise<CommandResult> {
     }
   }
 
-  // The repository this command runs in: the clone the check compares with the
-  // url of `--from-git`.
   let cwdRepository: CwdRepository | undefined;
 
   if (from === 'git') {
@@ -244,10 +233,6 @@ async function add(context: CommandContext): Promise<CommandResult> {
     localPath,
   });
 
-  // An import needs a folder that is here: a path that is not is a typo or a
-  // project the server already has, and the fix says which command takes it.
-  // The check comes before the name is asked: a folder that is not there has
-  // nothing to name.
   if (from === 'local' && !existsSync(localPath)) {
     const project = name ?? suggested;
     const registered = project === undefined ? undefined : (await findProject(project))?.path;
@@ -279,15 +264,9 @@ async function add(context: CommandContext): Promise<CommandResult> {
     });
   }
 
-  // Whether the name is taken on the server, for every source: the name of a
-  // registered project is not free, and an import would stop at its `name`
-  // step after the folder has moved. Only `--from-server` also uses the path.
-  // The daemon that does not answer throws, and no answer is ever guessed.
   const registeredPath = (await findProject(name))?.path;
 
   const serverDefault = defaultServerPath(name);
-  // A registered project is where the server says it is: there is nothing to
-  // ask, and a different path would be refused later anyway.
   let serverArg =
     serverFlag ?? (from === 'server' && registeredPath !== undefined ? registeredPath : undefined);
 
@@ -335,13 +314,9 @@ async function add(context: CommandContext): Promise<CommandResult> {
     cwdRepository,
   });
 
-  // The folder of the copy: with the import it is the folder that moves,
-  // anywhere else it is created. An empty folder is fine, the session takes it.
   const place = await progress.wait('name', 'Choosing the folder of the copy', () =>
     copyPlace(engine, name, localPath, from === 'local'),
   );
-  // The project is where the server says it is: a registered one knows its
-  // folder, and no path typed here overrides it.
   const target = from === 'server' && registeredPath !== undefined ? registeredPath : serverArg;
 
   if (dryRun) {
@@ -404,8 +379,6 @@ async function add(context: CommandContext): Promise<CommandResult> {
     throw await copyFailure({ error, name, target, registered, localPath: place.local });
   }
 
-  // The copy fills after the session exists: only a person watching waits for
-  // it. Ctrl+C leaves the session running, and `corami sync status` follows it.
   const firstSync = progress.interactive
     ? await progress.count('first-sync', 'Waiting for the first sync', 'files', (update) =>
         waitFirstSync(engine, name, (state) => update(syncUpdate(state))),
@@ -451,7 +424,6 @@ async function add(context: CommandContext): Promise<CommandResult> {
   return { text: lines.join('\n') };
 }
 
-/** The line of the first cycle: complete, stopped, or not readable. */
 function describeFirstSync(progress: SyncProgress): string {
   if (progress.state === 'done') {
     const files = progress.files ?? 0;
@@ -466,7 +438,6 @@ function describeFirstSync(progress: SyncProgress): string {
   return 'First sync still running: corami sync status shows it.';
 }
 
-/** The line of the clone of `.git`: a count only while git gives one. */
 function gitUpdate(progress: GitProgress): ProgressUpdate {
   if (progress.done !== undefined && progress.total !== undefined && progress.total > 0) {
     return { done: progress.done, total: progress.total, activity: progress.phase };
@@ -519,11 +490,6 @@ function planAdd(input: PlanInput): CommandResult {
   return { text: lines.join('\n') };
 }
 
-/**
- * A copy that failed after the server was already given the project: the
- * project goes away again, because a project without its copy is what this
- * command never leaves behind.
- */
 async function copyFailure(input: {
   error: unknown;
   name: string;
@@ -597,8 +563,6 @@ async function rm(context: CommandContext): Promise<CommandResult> {
   }
 
   if (on === 'client') {
-    // The folder of the copy goes away: a dry run is the only way to see the
-    // plan without saying it, as for the project on the server.
     if (!booleanFlag(context.args, 'dry-run') && !booleanFlag(context.args, 'yes')) {
       throw new CoramiError({
         code: 'usage',
@@ -618,9 +582,6 @@ async function rm(context: CommandContext): Promise<CommandResult> {
     });
   }
 
-  // The session of this client goes first: the server deletes the folder of
-  // the project, and the copy should not be there when it happens. The
-  // sessions of the other clients stay where they are.
   const role = (await readGlobalConfig().catch(() => undefined))?.role;
   const engine = new MutagenEngine();
   const session =
@@ -641,8 +602,6 @@ async function rm(context: CommandContext): Promise<CommandResult> {
       throw error;
     }
 
-    // The project is still on the server, the copy of this machine is closed:
-    // say both, and how to reopen it.
     const message = error instanceof Error ? error.message : String(error);
 
     throw new CoramiError({

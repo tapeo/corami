@@ -47,7 +47,6 @@ export function parseArgs(argv: string[], options: ParseOptions = {}): ParsedArg
   while (index < argv.length) {
     const token = argv[index] ?? '';
 
-    // After `--` every word is an argument, also one that starts with `-`.
     if (token === '--') {
       positionals.push(...argv.slice(index + 1));
       break;
@@ -91,7 +90,6 @@ export function parseArgs(argv: string[], options: ParseOptions = {}): ParsedArg
         setBoolean(values, SHORT_ALIASES[letter] ?? letter, true);
       }
 
-      // Only the last letter of a group can take a value, as in `-yp folder`.
       const name = SHORT_ALIASES[last] ?? last;
 
       if (valueFlags.has(name) && next !== undefined && !next.startsWith('-')) {

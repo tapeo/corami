@@ -8,7 +8,6 @@ import { projectForPath, validatePreviewName, validateTargetPort } from '@/core/
 
 const DEFAULT_NAME = 'web';
 
-// The project a folder belongs to, from the paths the server knows.
 async function projectFromCwd(): Promise<string> {
   const projects = await listProjects();
   const found = projectForPath(process.cwd(), projects);

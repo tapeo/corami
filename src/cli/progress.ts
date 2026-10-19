@@ -1,29 +1,21 @@
 import { progressLine } from '@/cli/commands/setup-steps.ts';
 import type { OutputOptions } from '@/cli/output.ts';
 
-/**
- * The unit a phase counts, or `bytes` when a phase only knows the time: the
- * bar appears only with a real counter, never with an estimate.
- */
 export type ProgressUnit = 'bytes' | 'files' | 'objects';
 
 export interface BarOptions {
   step: string;
-  /** What the phase is doing, shown when there is no bar. */
   activity: string;
-  /** How much is done, and the total when one is known. */
   done: number;
   total: number | undefined;
   unit: ProgressUnit;
   elapsedMs: number;
-  /** The terminal columns: 0 or nothing counts as 80. */
   width?: number | undefined;
 }
 
 const BAR_CELLS = 16;
 const MIN_BAR_CELLS = 5;
 
-/** Bytes with a decimal when they stay under 100 of their unit. */
 export function formatBytes(bytes: number): string {
   const value = Math.max(0, bytes);
 
@@ -55,13 +47,6 @@ function bar(cells: number, percent: number): string {
   return `[${'█'.repeat(filled)}${'░'.repeat(cells - filled)}]`;
 }
 
-/**
- * One line of a phase that counts: the same prefix as `progressLine`, then a
- * bar, the percentage, the amount and the seconds. It never shows 100: the
- * line disappears when the phase ends, and 100 would say it already did. The
- * line stays shorter than the terminal, because a wrapped line cannot be
- * erased: first the bar shrinks, then it goes, never the percentage.
- */
 export function barLine(options: BarOptions): string {
   const width = options.width === undefined || options.width <= 0 ? 80 : options.width;
   const total = options.total ?? 0;
@@ -93,24 +78,16 @@ export function barLine(options: BarOptions): string {
     }
   }
 
-  // A terminal too narrow for the value: the line is cut, never wrapped.
   return `${prefix}${percentText}`.slice(0, width - 1);
 }
 
-/** What a running phase tells the reporter: done, total when known, and what it is doing. */
 export interface ProgressUpdate {
   done: number;
   total: number | undefined;
-  /** The unit of this update, for a phase that can change it, as the sync does. */
   unit?: ProgressUnit | undefined;
   activity?: string | undefined;
 }
 
-/**
- * The progress of one phase. `wait` is for a phase that only takes time,
- * `count` for one that has a real counter. Both clear the line when the phase
- * ends, whether it succeeded or threw.
- */
 export interface ProgressReporter {
   readonly interactive: boolean;
   wait<T>(step: string, activity: string, work: () => Promise<T>): Promise<T>;
@@ -126,7 +103,6 @@ export function progressFor(output: OutputOptions): ProgressReporter {
   return output.json ? silentProgress : terminalProgress();
 }
 
-/** Without a terminal the line is not drawn: the work runs as it is. */
 export const silentProgress: ProgressReporter = {
   interactive: false,
 

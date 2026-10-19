@@ -1,7 +1,3 @@
-// The cycle that keeps the two sides aligned with `origin`: one on the server,
-// one on every local copy. The same code on both, because they are peers. Only
-// the sync moves the files, here the refs are moved.
-
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { booleanFlag } from '@/cli/parser.ts';
 import { projectGitOrigin } from '@/cli/server-client.ts';
@@ -27,12 +23,9 @@ export interface GitSides {
   project: string;
   client: GitOriginStatus;
   server: GitOriginStatus | undefined;
-  // The state of the local side, handy for the `sync status` line.
   status: GitRelationStatus;
 }
 
-// The state of the two sides, read without network: the server is told by the
-// daemon, the local side is read on this machine. Only the cycle does a fetch.
 export async function gitSides(project: string, local: string): Promise<GitSides> {
   const client = await gitOriginState(local);
   const server = await projectGitOrigin(project).catch(() => undefined);
@@ -40,8 +33,6 @@ export async function gitSides(project: string, local: string): Promise<GitSides
   return { project, local, client, server, status: client.status };
 }
 
-// The summary of one side for a text line: branch, commit and work in
-// progress. Used by `sync status` and the tests.
 export function summarizeSide(state: GitRepoState | undefined): string {
   if (state === undefined || state.commit === '') {
     return 'n/a';
@@ -70,7 +61,6 @@ interface WatchedRoot {
   root: string;
 }
 
-// The repositories to watch: local copies on a client, projects on the server.
 async function rootsToWatch(single: string | undefined): Promise<WatchedRoot[]> {
   const config = await readGlobalConfig().catch(() => undefined);
 
@@ -132,8 +122,6 @@ async function watch(context: CommandContext): Promise<{ data?: unknown; text?: 
   const failing = new Map<string, boolean>();
   let empty = false;
 
-  // One cycle at once, then one a minute. The list is read again at every
-  // cycle, so projects born after startup are picked up.
   while (!abort.signal.aborted) {
     const roots = await rootsToWatch(single).catch(() => []);
 
@@ -141,8 +129,6 @@ async function watch(context: CommandContext): Promise<{ data?: unknown; text?: 
       if (!known.has(item.project)) {
         known.add(item.project);
 
-        // In JSON mode startup does not dirty the output: the service journal
-        // collects the state change lines, which are JSON.
         if (!context.output.json) {
           process.stdout.write(`corami git watch: ${item.project}\n`);
         }
@@ -166,8 +152,6 @@ async function watch(context: CommandContext): Promise<{ data?: unknown; text?: 
         continue;
       }
 
-      // Only sides with an `origin` to follow can have a failed fetch: a
-      // project without a repository is not a fault.
       const nowFailing = fetchFailed(status);
       const wasFailing = failing.get(item.project) === true;
       failing.set(item.project, nowFailing);
@@ -177,8 +161,6 @@ async function watch(context: CommandContext): Promise<{ data?: unknown; text?: 
       }
 
       if (context.output.json) {
-        // One JSON object per line on stderr: stdout stays the only envelope
-        // of the command, and the service finds it in the journal.
         const line = originChangeJson(item.project, status, before?.state.commit);
         process.stderr.write(`${JSON.stringify(line)}\n`);
         continue;
@@ -200,8 +182,6 @@ async function watch(context: CommandContext): Promise<{ data?: unknown; text?: 
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
-    // A signal already aborted never fires `abort` again: a SIGTERM received
-    // during the cycle would otherwise wait the whole minute.
     if (signal.aborted) {
       resolve();
       return;

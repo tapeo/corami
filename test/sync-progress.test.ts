@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { syncProgress } from '@/integrations/mutagen.ts';
 
-/** A session as v0.18.1 writes it, with the fields this file reads. */
 function session(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify([
     {
@@ -82,7 +81,6 @@ describe('syncProgress', () => {
   });
 
   test('a counted cycle is not a complete copy while the files are still written', () => {
-    // Seen on a real import: the count goes up while beta is still staging.
     const raw = session({
       status: 'staging-beta',
       successfulCycles: 1,
@@ -98,8 +96,6 @@ describe('syncProgress', () => {
       },
     });
 
-    // A single big file leaves the files at 0 for the whole transfer: the
-    // bytes received are what moves, and they are real.
     expect(syncProgress(raw, 'app')).toEqual({
       state: 'count',
       activity: 'Writing the files here',

@@ -48,7 +48,6 @@ export interface StepResult {
   step: string;
   status: 'done' | 'skipped' | 'failed' | 'waiting';
   summary: string;
-  /** The error code a step that failed answers with, when it has one. */
   code?: ErrorCode | undefined;
   detail?: string | undefined;
   scope?: 'user' | 'system' | undefined;
@@ -58,11 +57,6 @@ export function isRoot(): boolean {
   return (process.getuid?.() ?? 1) === 0;
 }
 
-/**
- * A setup that stopped at a step is an error, not a run that went through: a
- * script that reads the exit code would otherwise take a machine with a broken
- * service for a machine that is ready. The steps travel in `details.steps`.
- */
 export function failSteps(steps: StepResult[], command: string): void {
   const failed = steps.find((step) => step.status === 'failed');
 
@@ -193,8 +187,6 @@ export async function stepTailscale(context: StepContext): Promise<StepResult> {
       };
     }
 
-    // The output is kept off the terminal, where the setup shows its progress
-    // line: only its last lines are reported, when it fails.
     const installer = Bun.spawn(['sh'], {
       stdin: new Blob([script.stdout]),
       stdout: 'pipe',
@@ -396,9 +388,6 @@ export async function stepDaemon(context: StepContext): Promise<StepResult> {
   };
 }
 
-// The service that keeps the side aligned with `origin`: it runs on the server
-// as on the client, and it is the same installer the client uses (`corami
-// setup client`), with the systemd scope decided as for the daemon.
 export async function stepGitWatch(context: StepContext): Promise<StepResult> {
   if (context.dryRun) {
     return {
@@ -470,10 +459,6 @@ export async function stepServe(context: StepContext): Promise<StepResult> {
 }
 
 export async function stepSummary(context: StepContext): Promise<StepResult> {
-  // The scope of the daemon is set by the step that installed it, in a run of
-  // the whole setup. A single `--step summary`, where that step did not run,
-  // asks both: the daemon runs as a user unit unless the account has no user
-  // services, and a summary that looks only at one of them lies.
   const active =
     context.daemonScope === undefined
       ? (await isUnitActive('corami-daemon', 'user')) ||
@@ -519,8 +504,6 @@ async function writeConfig(context: StepContext): Promise<void> {
   const existing = await readGlobalConfig().catch(() => undefined);
   const serverHost = context.fqdn ?? existing?.server_host;
   const ownerLogin = context.ownerLogin ?? existing?.owner_login;
-  // Written from scratch: keys left behind by older versions (the backup
-  // settings, for example) disappear.
   const config: GlobalConfig = { role: 'server' };
 
   if (serverHost !== undefined) {
@@ -547,8 +530,6 @@ export async function ensureDirectories(): Promise<void> {
   }
 }
 
-// The Corami binary: `process.execPath` when already running `corami`,
-// otherwise the one installed in `~/.corami/bin`.
 function coramiBinary(): string {
   try {
     const real = realpathSync(process.execPath);
@@ -561,19 +542,12 @@ function coramiBinary(): string {
   return join(paths().bin, 'corami');
 }
 
-// One line per step, printed as the step ends when the setup runs in a
-// terminal. The detail goes on the next line, under the summary.
 export function stepLine(result: StepResult): string {
   const line = `${result.status.padEnd(8)} ${result.step.padEnd(15)} ${result.summary}`;
 
   return result.detail === undefined ? line : `${line}\n${' '.repeat(25)}${result.detail}`;
 }
 
-// The line shown while a step runs, replaced by `stepLine` when it ends. The
-// seconds appear after the first ones, when the wait starts to be noticed. It
-// stays shorter than `width`, the terminal columns: a wrapped line could not
-// be erased. The activity is the part that gets cut, never the seconds. A
-// width of 0 (a pseudo terminal that reports none) counts as 80.
 export function progressLine(
   step: string,
   activity: string,
@@ -590,10 +564,6 @@ export function progressLine(
   return `${prefix}${text}${suffix}`;
 }
 
-/**
- * Runs a step in a terminal: shows what it is doing while it runs, prints its
- * result and, when it fails, offers to run it again once the cause is fixed.
- */
 export async function runStepInTerminal(
   prompter: Prompter,
   step: { name: string; activity: string },
@@ -612,7 +582,6 @@ export async function runStepInTerminal(
     try {
       result = await runStep();
     } catch (error) {
-      // The error is printed by the command: the line only closes the step.
       prompter.say(stepLine({ step: step.name, status: 'failed', summary: step.activity }));
       throw error;
     } finally {
@@ -627,7 +596,6 @@ export async function runStepInTerminal(
   }
 }
 
-/** True when the firewall of `--firewall` is already in place. */
 export async function firewallClosed(): Promise<boolean> {
   const result = await run('ufw', ['status']);
 

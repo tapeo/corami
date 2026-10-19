@@ -2,9 +2,6 @@ import type { CommandContext, CommandSpec } from '@/cli/command.ts';
 import { readGlobalConfig } from '@/core/config.ts';
 import { startDaemon } from '@/daemon/server.ts';
 
-// The daemon listens on the loopback port the documentation promises: the
-// HTTPS address of `tailscale serve` is the only way in, local processes
-// included.
 const HOSTNAME = '127.0.0.1';
 const PORT = 7420;
 
@@ -15,8 +12,6 @@ async function run(context: CommandContext): Promise<{ data?: unknown; text?: st
     port: PORT,
     ownerLogin: config?.owner_login,
     fqdn: config?.server_host,
-    // The account the daemon runs as is the one that owns the projects: the
-    // clients read it here instead of being told.
     user: config?.server_user,
   });
 

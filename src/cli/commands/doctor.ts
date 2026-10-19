@@ -78,9 +78,6 @@ async function collectChecks(): Promise<CheckResult[]> {
   return groups.flat();
 }
 
-// Both roles: the daemon answers, from the server on the loopback, from a
-// client through `tailscale serve`. A service that did not come back after a
-// reboot shows here, before a command fails on it.
 async function checkDaemon(): Promise<CheckResult[]> {
   const role = (await readGlobalConfig().catch(() => undefined))?.role;
 
@@ -107,9 +104,6 @@ async function checkDaemon(): Promise<CheckResult[]> {
   return [{ id: 'server.daemon', status: 'ok', summary: 'Corami daemon answers' }];
 }
 
-// Both roles: the server reads the netmap, a client the fields the daemon
-// reports. The account of the projects is the one the commands use; root and
-// the other accounts are what the policy does with the rest of the machine.
 async function checkSsh(): Promise<CheckResult[]> {
   const config = await readGlobalConfig().catch(() => undefined);
   const checks: CheckResult[] = [];
@@ -155,8 +149,6 @@ async function checkSsh(): Promise<CheckResult[]> {
   return checks;
 }
 
-// Warns when the tailnet holds people who are not the owner: they reach every
-// preview and agent published with `tailscale serve`.
 async function checkPeople(): Promise<CheckResult[]> {
   const logins = await tailnetLogins().catch(() => []);
 
@@ -231,8 +223,6 @@ interface ServerAccount {
   home: string;
 }
 
-// Servers only, and only when this process is not the account: the home, the
-// projects and the user units of the account are then somewhere else.
 async function serverAccount(): Promise<ServerAccount | undefined> {
   const config = await readGlobalConfig().catch(() => undefined);
   const user = ownerOfServer(config);
@@ -245,10 +235,6 @@ async function serverAccount(): Promise<ServerAccount | undefined> {
   return home === undefined ? undefined : { user, home };
 }
 
-// Servers only: the account that owns the projects. Root would work, but a
-// wrong agent or dependency would then take the whole machine, so it is worth
-// a warning rather than nothing. The paths are the ones of the account, which
-// are not the ones of the home of this process when doctor runs as root.
 async function checkServerAccount(): Promise<CheckResult[]> {
   const config = await readGlobalConfig().catch(() => undefined);
 
@@ -330,7 +316,6 @@ async function checkServerAccount(): Promise<CheckResult[]> {
   return checks;
 }
 
-/** The projects root of the account that owns the projects, not of this process. */
 async function projectsFolderForServer(): Promise<string> {
   const config = await readGlobalConfig().catch(() => undefined);
   const user = config?.server_user;
@@ -344,10 +329,6 @@ async function projectsFolderForServer(): Promise<string> {
   return home === undefined ? projectRoot() : projectsRootFor(home);
 }
 
-// Servers only: a folder of the projects root that no project names is a
-// leftover, the one an import that stopped leaves included. The import writes
-// into a staging folder next to the project, so a stopped one never takes the
-// name of a project, but it stays on disk until someone removes it.
 async function checkOrphanFolders(): Promise<CheckResult[]> {
   const config = await readGlobalConfig().catch(() => undefined);
 
@@ -446,8 +427,6 @@ async function checkGitService(): Promise<CheckResult[]> {
   ];
 }
 
-// Clients only: without the Mutagen daemon as a service, the sync sessions stay
-// paused after a reboot until the next mutagen command.
 async function checkSyncDaemon(): Promise<CheckResult[]> {
   const role = (await readGlobalConfig().catch(() => undefined))?.role;
   const binary = await findTool(MUTAGEN);

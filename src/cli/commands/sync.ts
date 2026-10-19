@@ -48,11 +48,6 @@ async function engineAndServer(
   return { engine: existing ?? new MutagenEngine(), host, user };
 }
 
-/**
- * The sessions of this machine. A sync engine that does not answer is an
- * error, not an empty list: only its answer tells which folder is the copy of
- * which project.
- */
 export async function syncSessions(engine: MutagenEngine): Promise<SyncSession[]> {
   const sessions = await engine.sessions();
 
@@ -67,8 +62,6 @@ export async function syncSessions(engine: MutagenEngine): Promise<SyncSession[]
   return sessions;
 }
 
-// The project of the folder we are in: the local copy that contains it, from
-// the sessions of the sync engine. No file in the repository is needed.
 async function projectFromCwd(): Promise<string | undefined> {
   const sessions = await syncSessions(new MutagenEngine());
 
@@ -96,11 +89,6 @@ async function projectNameOf(explicit?: string): Promise<string> {
   return found;
 }
 
-/**
- * A path given on the command line, resolved against the working directory.
- * A `~` the shell did not expand is refused rather than turned into a folder
- * named `~`.
- */
 export function givenPath(path: string): string {
   if (unexpandedHome(path)) {
     throw new CoramiError({
@@ -113,13 +101,6 @@ export function givenPath(path: string): string {
   return resolve(path);
 }
 
-/**
- * The form paths are compared in, never the one a folder is created with:
- * absolute, with the symbolic links of the part that exists resolved, so that
- * `/tmp` and `/private/tmp` are one folder, and in lower case on macOS and
- * Windows, whose disks ignore case. Two folders that differ only in case are
- * then one: the checks refuse more, never less.
- */
 export function canonicalPath(path: string): string {
   const real = realPath(path);
 
@@ -147,12 +128,6 @@ function realPath(path: string): string {
   }
 }
 
-/**
- * The folder of the local copy of a project: the one of its session, or the
- * folder given as the argument. Nothing guesses it. `importing` is the folder
- * of an import, moved away before the copy takes its place: it does not count
- * as full, and a session already there is one the import cannot reuse.
- */
 export async function copyPlace(
   engine: MutagenEngine,
   project: string,
@@ -228,17 +203,12 @@ export async function copyPlace(
 
 export interface CreateSyncOptions {
   project: string;
-  /** The folder of the copy, the argument of the command: required unless a session already has one. */
   localPath?: string | undefined;
   serverPath?: string | undefined;
-  /** The account on the server, `--user`: default the one of the configuration. */
   user?: string | undefined;
-  /** The engine already at hand, so the caller can follow the same session. */
   engine?: MutagenEngine | undefined;
 }
 
-// The folder the server keeps the project in: `--server-path` leaves it where
-// it was.
 function serverFolder(
   project: string,
   detail: Record<string, unknown>,
@@ -250,8 +220,6 @@ function serverFolder(
 }
 
 async function projectOnServerOrFail(project: string): Promise<Record<string, unknown>> {
-  // A daemon that does not answer says nothing about the project: its error
-  // goes out as it is, and only a server that answered "no" stops here.
   const known = await findProject(project);
 
   if (known === undefined) {
@@ -300,17 +268,10 @@ export async function createSyncFor(options: CreateSyncOptions): Promise<{
 }
 
 export interface CreateLocalCopyOptions extends CreateSyncOptions {
-  /** false with `--no-git`: the copy stays without a repository of its own. */
   git?: boolean;
-  /** The phases of the clone of `.git`, while it runs. */
   onGitProgress?: (progress: GitProgress) => void;
 }
 
-/**
- * The local copy with its `.git`: what `project add` runs on a client. The
- * import stays on `createSyncFor`, because the `.git` of its copy comes from
- * the folder it renames.
- */
 export async function createLocalCopy(options: CreateLocalCopyOptions): Promise<{
   session: SyncSession | undefined;
   local: string;
@@ -326,8 +287,6 @@ export async function createLocalCopy(options: CreateLocalCopyOptions): Promise<
   return { ...result, git };
 }
 
-// The local copy gets its own `.git`, cloned from the `origin` of the server
-// and on its branch. A copy that already has one is left alone.
 async function copyGit(
   project: string,
   local: string,
@@ -343,7 +302,6 @@ async function copyGit(
     };
   }
 
-  // An older daemon answers with the state but without the url.
   if (server.originUrl === undefined && server.origin?.upstream !== undefined) {
     return {
       status: 'skipped',
@@ -360,12 +318,6 @@ async function copyGit(
   });
 }
 
-/**
- * Waits for the first cycle of a session: the copy is complete when Mutagen
- * says so. A session that is not there gives nothing, and the caller says it
- * instead of waiting. A session that retries keeps waiting: Ctrl+C is the way
- * out, and the sync goes on without the command.
- */
 export async function waitFirstSync(
   engine: MutagenEngine,
   project: string,
@@ -388,7 +340,6 @@ export async function waitFirstSync(
   }
 }
 
-/** The same progress for the line: bytes when Mutagen knows the size, files otherwise. */
 export function syncUpdate(progress: SyncProgress): ProgressUpdate {
   if (progress.state === 'count') {
     return {
@@ -405,8 +356,6 @@ export function syncUpdate(progress: SyncProgress): ProgressUpdate {
 async function status(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
   const project = context.args.positionals[0];
   const engine = new MutagenEngine();
-  // The sessions, from the one command that treats an engine that does not
-  // answer as an error: "no sessions" is an answer, and a silent one is not.
   const all = await syncSessions(engine);
   const filled = project === undefined ? all : all.filter((session) => session.project === project);
   const git = await gitStatesFor(filled);
@@ -549,12 +498,6 @@ async function control(context: CommandContext): Promise<{ data?: unknown; text?
   return { text: `flush done on ${project}.` };
 }
 
-/**
- * Removes the local copy of a project: what `corami project rm --on client`
- * runs. The folder to delete is the one of the session, never a path typed
- * here: a copy without a session is a folder of the user, Corami leaves it
- * alone.
- */
 export async function removeLocalCopy(
   project: string,
   context: CommandContext,
@@ -576,8 +519,6 @@ export async function removeLocalCopy(
   const localPath = session.beta;
   const dryRun = booleanFlag(context.args, 'dry-run');
   const plan = await planRemoval({ project, localPath });
-  // The folder of the project is gone on the server and the files are still
-  // here: removing them removes the last copy there is.
   const lastCopy = (plan.session?.conflicts.includes('') ?? false) && existsSync(localPath);
 
   if (dryRun) {
@@ -605,8 +546,6 @@ export async function removeLocalCopy(
     };
   }
 
-  // Without a session nothing here says whether the project still exists: ask
-  // the daemon, briefly, before promising that it waits on the server.
   if ((await projectOnServer(project)) === false) {
     return {
       text: [
@@ -625,12 +564,6 @@ export async function removeLocalCopy(
   };
 }
 
-/**
- * Stops the sync of this machine and keeps the files: the way out of a copy
- * whose project is gone from the server, where the session holds a root
- * deletion and `corami project rm --on client` would be deleting the last
- * copy of the work.
- */
 async function stop(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
   const project = await projectNameOf(context.args.positionals[0]);
   const { engine } = await engineAndServer();
@@ -650,8 +583,6 @@ async function stop(context: CommandContext): Promise<{ data?: unknown; text?: s
     return { data: { project, local: session.beta, stopped: true } };
   }
 
-  // The folder goes back on the server with the project, when it is still
-  // there, or with the import when the project is gone.
   const onServer = await projectOnServer(project);
   const again =
     onServer === false

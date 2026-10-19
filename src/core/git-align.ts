@@ -1,7 +1,3 @@
-// Git state of one side and its relation with `origin`. The files are already
-// the ones of the commit to reach, delivered by the sync: only the refs are
-// decided here.
-
 export interface GitRepoState {
   commit: string;
   branch: string;
@@ -14,17 +10,13 @@ export type GitRelationStatus = 'unknown' | 'aligned' | 'behind' | 'ahead' | 'di
 
 export interface GitRelation {
   status: GitRelationStatus;
-  // True when the side is behind and can move: `aligned` and `ahead` leave
-  // things alone, and `ahead` means commits to publish.
   move: boolean;
   reason: string | undefined;
 }
 
 export interface OriginRelationInput {
   state: GitRepoState;
-  // The branch of `origin` that is followed: `origin/<branch>`, or nothing.
   upstream: string | undefined;
-  // The upstream commit already exists locally: without it, nothing is read.
   upstreamHere: boolean;
   aligned: boolean;
   headInUpstream: boolean;
@@ -85,10 +77,6 @@ export function isRelationStatus(value: unknown): value is GitRelationStatus {
   );
 }
 
-// The relation of one side with `origin`. `aligned` and `ahead` never move
-// anything: whoever is ahead has commits to publish, and the push stays a human
-// act. `behind` moves the HEAD only when there is no staged work and no
-// operation in progress; whether the files arrived is checked by the caller.
 export function originRelation(input: OriginRelationInput): GitRelation {
   const { state } = input;
 

@@ -95,20 +95,14 @@ describe('origin summary', () => {
     const failing = origin({ fetched: false });
     const moved = origin({ state: { ...aligned.state, commit: 'd'.repeat(40) } });
 
-    // Nothing new: the same line does not repeat.
     expect(originChanged(aligned, same, false)).toBe(false);
-    // A move, and a relation that changes.
     expect(originChanged(aligned, moved, false)).toBe(true);
     expect(originChanged(aligned, origin({ status: 'ahead' }), false)).toBe(true);
-    // The first cycle always tells.
     expect(originChanged(undefined, aligned, false)).toBe(true);
-    // The fetch that stops working and the one that comes back.
     expect(originChanged(aligned, failing, false)).toBe(true);
     expect(originChanged(failing, failing, true)).toBe(false);
     expect(originChanged(failing, aligned, true)).toBe(true);
 
-    // A project without a repository has no fetch to fail: no line at the
-    // first cycle, and none at every cycle.
     const missingRepo = origin({ status: 'unknown', upstream: undefined, fetched: false });
 
     expect(fetchFailed(missingRepo)).toBe(false);
@@ -120,24 +114,18 @@ describe('service files', () => {
   const spec = gitWatchSpec('/usr/local/bin/corami');
 
   test('the git alignment service is the same on server and clients', () => {
-    // Same name on both roles, and the same way to install it: `corami setup client`
-    // and `corami setup server` use `installService`.
     expect(spec.name).toBe('corami-git-watch');
     expect(gitWatchSpec('/usr/local/bin/corami', 'system').systemdScope).toBe('system');
     expect(gitWatchSpec('/usr/local/bin/corami').systemdScope).toBeUndefined();
   });
 
   test('the log of the service goes to the home of the account it runs as', () => {
-    // Installed by root for the account that owns the projects, the path is
-    // the one of the account, not the one of root.
     expect(gitWatchSpec('/usr/local/bin/corami', 'user', '/home/corami').logFile).toBe(
       '/home/corami/.corami/logs/git-watch.log',
     );
   });
 
   test('the Mutagen daemon runs in the foreground under its service', () => {
-    // On Linux the unit runs `mutagen daemon run` and restarts it: the sync
-    // sessions come back after a reboot without a mutagen command.
     const mutagen = mutagenDaemonSpec('/home/me/.corami/bin/mutagen');
 
     expect(mutagen.name).toBe('corami-mutagen');
@@ -162,8 +150,6 @@ describe('service files', () => {
   });
 
   test('launch agent keeps what the service prints in a log file', () => {
-    // launchd throws away the output of the service: without these lines the
-    // JSON lines of the cycle would not show up anywhere on the Mac.
     const plist = renderLaunchAgent(spec);
 
     expect(plist).toContain('<key>StandardOutPath</key>');
@@ -182,8 +168,6 @@ describe('service files', () => {
   });
 
   test('the systemd unit of the server runs as its user', () => {
-    // On a server without linger the service is a system one and must say who
-    // runs it, like the daemon unit.
     const unit = renderUnit(
       {
         name: spec.name,

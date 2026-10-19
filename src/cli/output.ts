@@ -106,7 +106,6 @@ export function renderTable<T>(rows: T[], columns: TableColumn<T>[]): string {
   return [header, ...body].join('\n');
 }
 
-/** A step of a setup or an import, as the commands report it. */
 export interface StepRow {
   step: string;
   status: string;
@@ -114,7 +113,6 @@ export interface StepRow {
   detail?: string | undefined;
 }
 
-/** The table of the steps, then the detail of each step that has one. */
 export function renderSteps(steps: StepRow[]): string[] {
   const lines = [
     renderTable(steps, [
@@ -133,7 +131,6 @@ export function renderSteps(steps: StepRow[]): string[] {
   return lines;
 }
 
-/** The closing lines that say what to run next, after an empty line. */
 export function renderNextSteps(steps: string[]): string[] {
   if (steps.length === 0) {
     return [];
@@ -146,7 +143,6 @@ export function renderNextSteps(steps: string[]): string[] {
   return ['', 'Next steps:', ...steps.map((step) => `  ${step}`)];
 }
 
-/** The copies whose project is not on the server, one line each. */
 export function renderOrphanCopies(orphans: Array<{ project: string; local: string }>): string[] {
   return orphans.map(
     (orphan) =>

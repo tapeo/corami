@@ -5,31 +5,15 @@ import { join, relative, sep } from 'node:path';
 import { run, shellQuote } from '@/core/exec.ts';
 import { copyInventory, type Inventory } from '@/core/local-copy.ts';
 
-/**
- * The list the archive carries, in the order `tar` writes it: the entries the
- * inventory says travel, plus the history of the folder. `.git` does not go
- * through the path rules, which would leave it out as regenerable: every copy
- * has one, but the project on the server is a clone of this one, with the
- * branches and the uncommitted work of the folder it came from. Parent folders
- * always come before their content, and `tar` runs with `--no-recursion`: the
- * list decides what the archive holds, never a pattern.
- */
 export function archiveList(root: string, inventory: Inventory = copyInventory(root)): string[] {
   return archivePlan(root, inventory).entries;
 }
 
 export interface ArchivePlan {
-  /** The entries the archive carries, in the order `tar` writes them. */
   entries: string[];
-  /** The bytes of the files it carries: what the progress line counts against. */
   bytes: number;
 }
 
-/**
- * What the archive carries and how many bytes of files it holds. The bytes are
- * the content of the files, without the headers and the padding of the archive:
- * the `tar` stream is a little longer, so the progress line stays under 100.
- */
 export function archivePlan(root: string, inventory: Inventory = copyInventory(root)): ArchivePlan {
   const git = gitEntries(root);
 
@@ -102,7 +86,6 @@ function gitEntries(root: string): { entries: string[]; bytes: number } {
   return { entries: entries.sort((left, right) => comparePaths(left, right)), bytes };
 }
 
-/** Parents before content, so `tar` finds the folder of an entry already made. */
 function comparePaths(left: string, right: string): number {
   const leftParts = left.split('/');
   const rightParts = right.split('/');
@@ -130,16 +113,9 @@ export interface Manifest {
   dirs: number;
   bytes: number;
   hash: string;
-  /** One line per entry, sorted: what the two sides compare and report. */
   entries: string[];
 }
 
-/**
- * The manifest of the entries the import carries: everything the sync carries,
- * keys and env files included, minus the regenerable folders and the paths of
- * this machine. One line per entry, with the type first, so a link and a file
- * of the same name cannot pass for each other.
- */
 export function manifestOf(inventory: Inventory): Manifest {
   return manifestFromLines(
     inventory.synced.map((entry) => {
@@ -190,7 +166,6 @@ function manifestFromLines(unsorted: string[]): Manifest {
   };
 }
 
-/** How a remote manifest is read: over ssh, or locally in a test. */
 export type ManifestRunner = (script: string) => Promise<{ ok: boolean; stdout: string }>;
 
 export function sshManifestRunner(host: string, user: string): ManifestRunner {
@@ -214,12 +189,6 @@ export interface RemoteHome {
 
 export type RemoteFolderState = 'missing' | 'empty' | 'taken';
 
-/**
- * The command that tells whether the folder of the project is free on the
- * server: not there, there and empty, and there with something in it. It
- * answers one word, the two parts separated by a `|`. A folder the command
- * cannot read answers nothing, which is none of the three.
- */
 export function remoteFolderStateCommand(path: string): string {
   const folder = shellQuote(path);
 
@@ -229,12 +198,6 @@ export function remoteFolderStateCommand(path: string): string {
   ].join('; ');
 }
 
-/**
- * The state of the folder of the project on the server, read before anything
- * is copied: the import writes only into a folder it makes. Undefined when the
- * command did not answer, which the caller treats as a stop: a folder that
- * cannot be read is not a folder to write into.
- */
 export async function remoteFolderState(
   host: string,
   user: string,
@@ -258,15 +221,8 @@ export async function remoteFolderState(
   return content === 'empty' ? 'empty' : content === 'taken' ? 'taken' : undefined;
 }
 
-/** The path of a found entry without the `./` `find` puts in front of it. */
 const STRIPPED_PATH = '$' + '{f#./}';
 
-/**
- * The four fields of one entry for the fallback script, which runs where
- * `find` has no `-printf`: the type, the path, the size and the target, each
- * one ending with a NUL, exactly as the `-printf` command writes them. A path
- * with a tab or a newline is still one field, and no name can hold a NUL.
- */
 const REMOTE_MANIFEST_FALLBACK = [
   'for f do',
   `if [ -L "$f" ]; then printf "l\\000%s\\000\\000%s\\000" "${STRIPPED_PATH}" "$(readlink "$f")";`,
@@ -276,13 +232,6 @@ const REMOTE_MANIFEST_FALLBACK = [
   'done',
 ].join(' ');
 
-/**
- * The command of the remote manifest: every entry the folder holds, with its
- * type, its path and, for a file, its size or, for a link, its target. `.git`
- * is left out: the history is compared on its own, ref by ref. The folder of
- * an import is made by the import and written only by the archive, so there is
- * nothing here to leave out but the history.
- */
 export function remoteManifestCommand(path: string, printf = true): string {
   const folder = shellQuote(path);
   const fallback = `find . -mindepth 1 -path ./.git -prune -o -exec sh -c '${REMOTE_MANIFEST_FALLBACK}' sh {} +`;
@@ -296,7 +245,6 @@ export function remoteManifestCommand(path: string, printf = true): string {
   return `cd ${folder} || exit 1; ${primary} 2>/dev/null || ${fallback}`;
 }
 
-/** The manifest of a remote folder, undefined when the command did not answer. */
 export async function remoteManifest(
   host: string,
   user: string,
@@ -316,11 +264,6 @@ export async function remoteManifest(
   return parseManifest(result.stdout);
 }
 
-/**
- * The fields of the remote command into a manifest: four per entry, a folder
- * saying `d`, a file `f` with its size, a link `l` with its target. The same
- * three lines the local side writes, so the hash of the two can be compared.
- */
 export function parseManifest(raw: string): Manifest {
   const fields = raw.split('\0');
 
@@ -361,11 +304,6 @@ export function manifestsMatch(left: Manifest, right: Manifest): boolean {
   );
 }
 
-/**
- * The paths that make two manifests differ, at most `limit` of them: what the
- * error of an import says when the copies do not match, so the cause is read
- * without going into either machine. Undefined when they match.
- */
 export function manifestDiff(left: Manifest, right: Manifest, limit = 3): string | undefined {
   if (manifestsMatch(left, right)) {
     return undefined;

@@ -31,7 +31,6 @@ import {
 } from '@/core/transfer.ts';
 import { DEFAULT_IGNORES } from '@/integrations/mutagen.ts';
 
-/** A git command of a test fixture: it throws when git refuses. */
 function git(root: string, args: string[]): void {
   const result = Bun.spawnSync(['git', '-C', root, ...args], { stderr: 'pipe' });
 
@@ -69,8 +68,6 @@ describe('the archive', () => {
 
     const inventory = copyInventory(root);
     const list = archiveList(root, inventory);
-    // The same command the import runs, fed the same way: the list goes
-    // through the pipe of the process, not through a buffer handed to it.
     const packed = Bun.spawn(
       ['tar', '-czf', '-', '-C', root, '--null', '--no-recursion', '-T', '-'],
       { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' },
@@ -99,8 +96,6 @@ describe('the archive', () => {
     expect(paths).toContain('src/index.ts');
     expect(paths.some((path) => path.startsWith('node_modules/'))).toBe(false);
 
-    // The manifest leaves the history out on both sides: git is compared on
-    // its own, so counting its files would make the two sides disagree.
     expect(localManifest(root).files).toBe(1);
   });
 
@@ -123,8 +118,6 @@ describe('the archive', () => {
     writeFileSync(join(root, 'src', 'index.ts'), 'x'.repeat(1200));
     writeFileSync(join(root, 'notes.txt'), 'y'.repeat(300));
 
-    // The total the progress line counts against: the content of the files,
-    // without the headers and padding of the archive itself.
     expect(archiveBytes(root, copyInventory(root))).toBe(1500);
     expect(archivePlan(root).entries).toEqual(archiveList(root));
 
@@ -154,8 +147,6 @@ describe('the archive', () => {
     expect(code).toBe(0);
 
     const raw = Bun.gunzipSync(new Uint8Array(data));
-    // The count is of what `tar` wrote, the wire carried gzip: the server
-    // unpacks the archive it always unpacked.
     expect(raw.length).toBe(counted);
     expect(raw.length % 512).toBe(0);
     expect(Buffer.from(raw).includes('notes.txt')).toBe(true);
@@ -199,7 +190,6 @@ describe('manifests', () => {
     writeFileSync(join(root, 'app', 'node_modules', 'deep.js'), 'y'.repeat(1000));
     writeFileSync(join(root, 'android.jks'), 'y'.repeat(1000));
 
-    // page.tsx and android.jks: a key is a file of the project like the others.
     const manifest = localManifest(root);
     expect(manifest.files).toBe(2);
     expect(manifest.dirs).toBe(1);
@@ -246,7 +236,6 @@ describe('the folder of the import on the server', () => {
     expect(await remoteFolderState('host', 'user', empty, runner)).toBe('empty');
     expect(await remoteFolderState('host', 'user', taken, runner)).toBe('taken');
     expect(await remoteFolderState('host', 'user', missing, runner)).toBe('missing');
-    // A check that cannot answer is not a free folder.
     expect(
       await remoteFolderState('host', 'user', empty, async () => ({ ok: false, stdout: '' })),
     ).toBeUndefined();
@@ -376,8 +365,6 @@ describe('an import that stops', () => {
     process.env.HOME = home;
 
     try {
-      // The git step is the first one, so no daemon and no sync engine are
-      // asked: the command stops here with the step that failed.
       const error = await runImport({
         project: 'probe',
         localPath: folder,

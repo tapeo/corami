@@ -216,8 +216,6 @@ describe('valueFlags', () => {
     }
   });
 
-  // The arguments are read once for every command: a name that takes a value
-  // somewhere and none elsewhere would eat the next argument of the second.
   test('gives each flag name one meaning across commands and actions', () => {
     const takesValue = new Map<string, boolean>();
 

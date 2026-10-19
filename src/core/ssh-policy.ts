@@ -11,20 +11,16 @@ export interface SshPolicyText {
   fix?: string | undefined;
 }
 
-/** An account of the server that Tailscale SSH lets in without a check. */
 export interface SshAccount {
   name: string;
-  /** The groups through which the account can become root, if any. */
   rootThrough: string[];
 }
 
-/** What the SSH policy of the tailnet does with root and the other accounts. */
 export interface SshExposure {
   root: SshPolicy | undefined;
   accounts: SshAccount[];
 }
 
-/** The line the setup adds when one of the protections is off. */
 export const PROTECTIONS_OFF = 'Some protections are off: corami doctor says which';
 
 function policyFix(user: string): string {
@@ -60,10 +56,6 @@ export function sshPolicyFromHealth(health: unknown): SshPolicy | undefined {
   return undefined;
 }
 
-/**
- * What the policy does with root and with the accounts of the machine, through
- * the same decision `sshPolicyFor` makes for the account of the projects.
- */
 export function sshExposure(
   netmap: unknown,
   user: string,
@@ -77,7 +69,6 @@ export function sshExposure(
   return { root: sshPolicyFor(netmap, 'root', now), accounts: reached };
 }
 
-/** The exposure of the daemon, from `/v1/health`. Undefined with an older daemon. */
 export function sshExposureFromHealth(health: unknown): SshExposure | undefined {
   const tailscale = isRecord(health) ? health.tailscale : undefined;
 
@@ -139,11 +130,6 @@ export function peopleText(others: string[]): SshPolicyText {
   };
 }
 
-/**
- * The logins of people who are not the owner, from the `User` map of
- * `tailscale status --json`. Tagged devices belong to no person and stay out.
- * Without the owner login, one login is not enough to tell there are others.
- */
 export function otherPeople(logins: string[], owner: string | undefined): string[] {
   const people = new Set(logins.filter((login) => login !== '' && login !== 'tagged-devices'));
 
@@ -156,7 +142,6 @@ export function otherPeople(logins: string[], owner: string | undefined): string
   return [...people].sort();
 }
 
-/** True when a protection the user has to keep is off, so that the setup says it once. */
 export function protectionsOff(input: {
   root?: SshPolicy | undefined;
   accounts?: SshAccount[] | undefined;

@@ -395,8 +395,6 @@ describe('sameRepository', () => {
 
     expect(sameRepository(ssh, 'git@github.com:me/other.git')).toBe(false);
     expect(sameRepository(ssh, 'git@gitlab.com:me/myapp.git')).toBe(false);
-    // Two paths of a git server can differ by case: a false positive would
-    // stop the command on a folder that is not the project.
     expect(sameRepository(ssh, 'git@github.com:me/MyApp.git')).toBe(false);
   });
 
@@ -417,7 +415,6 @@ describe('repositoryAt', () => {
     const sub = join(root, 'apps', 'web');
     mkdirSync(sub, { recursive: true });
 
-    // git answers with the physical path: a temporary folder can be a link.
     expect(await repositoryAt(sub)).toEqual({
       root: realpathSync(root),
       origin: 'git@github.com:me/myapp.git',
@@ -459,8 +456,6 @@ describe('planProjectAdd', () => {
     } catch (error) {
       const fix = (error as CoramiError).fix ?? '';
 
-      // The folder is likely full of the work that prompted the command:
-      // `--from-server` needs it empty, and the fix has to say so.
       expect(fix).toContain('Move /Users/me/dev/myapp away if it has files');
       expect(fix).toContain('corami project add /Users/me/dev/myapp --from-server --name myapp');
     }
@@ -686,8 +681,6 @@ describe('the paths of an added project', () => {
     expect(suggestedProjectName({ url: 'git@github.com:me/myapp.git' })).toBe('myapp');
     expect(suggestedProjectName({ serverPath: '~/projects/other' })).toBe('other');
     expect(suggestedProjectName({ localPath: '/Users/me/dev/site/' })).toBe('site');
-    // The session of the sync engine is named after the project: a folder
-    // with a dot or an underscore is suggested with a name the engine takes.
     expect(suggestedProjectName({ localPath: '/Users/me/dev/my_app' })).toBe('my-app');
     expect(suggestedProjectName({ url: 'git@github.com:me/app.v2.git' })).toBe('app-v2');
     expect(suggestedProjectName({ name: 'chosen', url: 'git@github.com:me/myapp.git' })).toBe(
@@ -712,8 +705,6 @@ describe('the staging folder of an import', () => {
     const staging = '/home/corami/projects/.corami-import-app-20261018-232001';
 
     expect(isImportStagingFor(project, staging)).toBe(true);
-    // Another folder of the same parent, another prefix, another parent, and
-    // the project itself are not staging folders.
     expect(isImportStagingFor(project, '/home/corami/projects/other')).toBe(false);
     expect(isImportStagingFor(project, '/home/corami/projects/.backup-app-1')).toBe(false);
     expect(isImportStagingFor(project, '/srv/code/.corami-import-app-1')).toBe(false);

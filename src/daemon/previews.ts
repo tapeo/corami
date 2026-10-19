@@ -15,10 +15,6 @@ export interface PreviewOptions {
   tailscaleAvailable: boolean;
 }
 
-// `tailscale serve` holds the whole serve configuration: two runs at the same
-// time fail one of them with "another client is changing the serve config".
-// Every change of a rule goes through this queue, and the transient failure is
-// tried once more.
 let serveChain: Promise<unknown> = Promise.resolve();
 
 const SERVE_BUSY = /another client is changing the serve config|etag mismatch/i;
@@ -56,12 +52,6 @@ async function dropRule(port: number): Promise<void> {
   });
 }
 
-/**
- * Registers a preview: a stable public port pointing at the port the dev
- * server listens on. The record is written before the serve rule is created,
- * so two registrations arriving together cannot pick the same port; a rule
- * that cannot be created leaves no record behind.
- */
 export async function applyPreview(
   project: string,
   name: string,
@@ -104,7 +94,6 @@ export async function applyPreview(
   return toView(row, options.fqdn, await isPortResponding(targetPort));
 }
 
-/** The address of a dev server on the server itself, as `tailscale serve` takes it. */
 export function localTarget(targetPort: number): string {
   return `http://127.0.0.1:${targetPort}`;
 }
@@ -139,12 +128,6 @@ export async function listPreviewViews(options: PreviewOptions): Promise<Preview
   return rows.map((row, index) => toView(row, options.fqdn, responding[index] === true));
 }
 
-/**
- * At startup the daemon aligns the serve rules of the preview range with the
- * registry: a rule missing or pointing at another port is applied again, a
- * rule without a record is removed (it may come from an older version). Rules
- * outside the range are the user's and are never touched.
- */
 export async function reconcileServeRules(): Promise<{ apply: number[]; remove: number[] }> {
   const status = await serveStatus().catch(() => undefined);
 

@@ -4,13 +4,6 @@ import { CoramiError } from '@/core/errors.ts';
 import { isImportStagingFor } from '@/core/project-add.ts';
 import { isFolderEmpty } from '@/core/projects.ts';
 
-/**
- * Gives the staging folder of an import the name of the project and registers
- * it, in one step of the server: the folder takes the name only when the
- * registry takes the project, and a registration that fails puts it back. A
- * client that stops in the middle leaves the staging or a registered project,
- * never a folder that no project names.
- */
 export function moveStagingIntoPlace(staging: string, target: string, register: () => void): void {
   if (!isImportStagingFor(target, staging)) {
     throw new CoramiError({

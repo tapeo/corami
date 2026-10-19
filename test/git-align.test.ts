@@ -46,9 +46,6 @@ async function commit(root: string, message: string): Promise<string> {
   return head.stdout;
 }
 
-// A bare `origin` and two clones, like the two sides of a project: the files
-// between the two sides are carried by the sync, and in the tests we copy
-// them by hand.
 async function originAndClones(): Promise<{
   origin: string;
   server: string;
@@ -83,14 +80,12 @@ async function pushFrom(root: string): Promise<string> {
   return (await git(root, ['rev-parse', 'HEAD'])).stdout;
 }
 
-// A commit on the side, like an agent or the IDE would do, and the push.
 async function changeAndPush(root: string, content: string): Promise<string> {
   writeFileSync(join(root, 'app.ts'), content);
   await commit(root, content.trim());
   return pushFrom(root);
 }
 
-// The sync: the files of one side become those of the other.
 function syncFiles(from: string, to: string): void {
   copyFileSync(join(from, 'app.ts'), join(to, 'app.ts'));
 }
@@ -310,7 +305,6 @@ describe('git helpers on a real repository', () => {
     const moved = await gitCompareAndSwap(root, 'refs/heads/main', first, second);
     expect(moved.ok).toBe(true);
     expect((await readGitState(root)).commit).toBe(first);
-    // The reset is mixed: the files did not change.
     expect(await Bun.file(join(root, 'app.ts')).text()).toBe('second\n');
 
     rmSync(root, { recursive: true, force: true });
@@ -380,8 +374,6 @@ describe('filesArrived', () => {
     const first = await commit(root, 'first');
     writeFileSync(join(root, 'app.ts'), 'second\n');
     const second = await commit(root, 'second');
-    // The agent keeps working: the file is not the one of the commit, but the
-    // changes of the commit arrived anyway.
     writeFileSync(join(root, 'app.ts'), 'third\n');
 
     expect(await filesArrived(root, first, second)).toBe(true);
@@ -403,7 +395,6 @@ describe('filesArrived', () => {
 
     expect(await filesArrived(root, second, third)).toBe(true);
 
-    // The deleted file is back: the changes did not arrive.
     writeFileSync(join(root, 'app.ts'), 'first\n');
 
     expect(await filesArrived(root, second, third)).toBe(false);
@@ -428,7 +419,6 @@ describe('followOrigin', () => {
     const { origin, server, client } = await originAndClones();
     const second = await changeAndPush(server, 'second\n');
 
-    // The files are not here yet: it waits without moving the HEAD.
     const waiting = await followOrigin(client);
 
     expect(waiting.status).toBe('behind');
@@ -436,14 +426,12 @@ describe('followOrigin', () => {
     expect(waiting.move).toBe(false);
     expect((await readGitState(client)).commit).not.toBe(second);
 
-    // The sync arrives, and the next cycle moves.
     syncFiles(server, client);
     const aligned = await followOrigin(client);
 
     expect(aligned.status).toBe('aligned');
     expect(aligned.move).toBe(false);
     expect((await readGitState(client)).commit).toBe(second);
-    // The reset is mixed and the files stay the ones delivered by the sync.
     expect(await Bun.file(join(client, 'app.ts')).text()).toBe('second\n');
 
     rmSync(origin, { recursive: true, force: true });
@@ -509,8 +497,6 @@ describe('followOrigin', () => {
     const second = await changeAndPush(server, 'second\n');
     syncFiles(server, client);
 
-    // The compare-and-swap: with a commit newer than the expected one nothing
-    // happens.
     writeFileSync(join(client, 'client.ts'), 'client\n');
     const clientCommit = await commit(client, 'client');
     const stale = await gitCompareAndSwap(client, 'refs/heads/main', second, 'c'.repeat(40));
@@ -638,8 +624,6 @@ describe('giveCopyGit', () => {
 
     const result = await giveCopyGit({
       local: copy,
-      // Through the transport, as a clone from `origin` on the network is: a
-      // clone from a local path copies the files and reports no phase.
       originUrl: `file://${origin}`,
       branch: 'main',
       onProgress: (progress) => phases.push(progress.phase),

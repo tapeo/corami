@@ -51,15 +51,11 @@ import { MutagenEngine } from '@/integrations/mutagen.ts';
 
 export interface ImportOptions {
   project: string;
-  /** The folder of this machine: it is copied to the server and stays here as the copy. */
   localPath: string;
-  /** The folder on the server: absolute, or starting with `~/`. */
   serverPath?: string | undefined;
-  /** The account of the server, `--user`: default the one of the configuration. */
   user?: string | undefined;
   dryRun: boolean;
   output: OutputOptions;
-  /** The line of the phases: the silent one when the command has no terminal. */
   progress?: ProgressReporter | undefined;
 }
 
@@ -107,9 +103,6 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     detail: facts.head.slice(0, 12),
   });
 
-  // The name is asked of the daemon before anything moves, and a daemon that
-  // does not answer is an error: its "no" is the only answer that lets an
-  // import go on.
   const known = await progress.wait('name', 'Asking the server', () => findProject(projectName));
 
   if (known !== undefined) {
@@ -122,8 +115,6 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     return finish(options, steps, projectName, target, undefined);
   }
 
-  // The folder becomes the copy: the session of the name and the copies of the
-  // other projects are checked before anything moves.
   try {
     await progress.wait('name', 'Checking the copies of this machine', () =>
       copyPlace(engine, projectName, target, true),
@@ -145,8 +136,6 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     summary: `Name ${projectName} is free on the server`,
   });
 
-  // One walk decides what travels and what stays: the archive and the manifest
-  // read the same inventory, so they cannot count different things.
   const inventory = await progress.wait('inventory', 'Listing the files', async () =>
     copyInventory(target),
   );
@@ -194,9 +183,6 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
       ? serverProjectPath(home, projectName)
       : serverPathFrom(home, options.serverPath);
 
-  // The daemon of a server that is not updated yet cannot move the staging
-  // folder into the name of the project. Nothing is written before it says it
-  // can: no half folder, no folder of the export to clean up.
   if (
     !(await progress.wait('server', 'Checking the daemon', () => serverSupports('import_staging')))
   ) {
@@ -214,9 +200,6 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   const moment = stamp();
   const staging = importStagingPath(serverPath, projectName, moment);
 
-  // The import writes into a folder of its own, next to the project, so the
-  // name of the project stays free until the registration gives it to the
-  // copy. The check runs before the transfer, so a refusal changes nothing.
   await progress.wait('server', 'Checking the folder on the server', () =>
     checkServerFolder({
       host,
@@ -299,16 +282,10 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   });
 
   try {
-    // The daemon moves the staging folder into the name of the project while
-    // it registers it: one step on the server, so a client that stops in the
-    // middle leaves either the staging or a registered project, never a
-    // folder that no project names.
     await progress.wait('register', 'Registering the project', () =>
       addProject({ name: projectName, path: serverPath, owned: true, staging }),
     );
   } catch (error) {
-    // The folder was copied here by this command: a registration that fails
-    // leaves the staging behind, and this machine keeps everything.
     const cleanup = await removeStaging(user, host, serverPath, staging);
 
     steps.push({
@@ -332,9 +309,6 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   try {
     renameSync(target, backup);
   } catch (error) {
-    // The folder did not move: the project it just registered has no copy
-    // here, and the one thing the command never leaves behind is a project
-    // without its copy.
     const taken = await removeProject(projectName).then(
       () => true,
       () => false,
@@ -361,14 +335,10 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     );
     localCopy = sync.local;
   } catch (error) {
-    // The project is on the server without its copy, the one thing the
-    // command never leaves behind.
     const taken = await removeProject(projectName).then(
       () => true,
       () => false,
     );
-    // With the project gone, the folder of this machine goes back where it
-    // was, so the command can be run again as it was.
     const restored = taken && restoreBackup(backup, target);
 
     steps.push({
@@ -424,11 +394,6 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
   return finish(options, steps, projectName, target, serverPath);
 }
 
-/**
- * Waits for the copy to be complete: only where a person is watching. A
- * command without a terminal answers as it always did, as soon as the session
- * exists, and the sync fills the copy on its own.
- */
 async function firstSyncStep(
   progress: ProgressReporter,
   engine: MutagenEngine,
@@ -469,11 +434,6 @@ function asMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * Puts the folder of this machine back where it was, from the backup the
- * import moved it to. Only an empty or absent folder is taken over: anything
- * else is work the sync may already have brought.
- */
 function restoreBackup(backup: string, target: string): boolean {
   if (existsSync(target)) {
     if (!isFolderEmpty(target)) {
@@ -507,10 +467,6 @@ async function restoreGitDirectory(backup: string, target: string): Promise<bool
   return copied.ok;
 }
 
-/**
- * Puts back into the new copy what the server never carries: the files of this
- * machine, which are the ones the backup kept and the sync would not bring.
- */
 export function restoreLocalFiles(backup: string, target: string, files: InventoryEntry[]): number {
   let restored = 0;
 
@@ -525,13 +481,9 @@ export function restoreLocalFiles(backup: string, target: string, files: Invento
     mkdirSync(join(to, '..'), { recursive: true });
 
     if (file.kind === 'link') {
-      // The target goes back as it was written: resolving it would turn a link
-      // of this machine into a file of another.
       const link = readlinkSync(from);
 
       if (existsSync(to)) {
-        // A folder on the server at the same path is real content: the link of
-        // this machine does not replace it.
         if (lstatSync(to).isDirectory()) {
           continue;
         }
@@ -577,7 +529,6 @@ function stamp(): string {
   return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
 
-/** The error code of a step that failed before any call to the daemon. */
 const FAILED_STEP_CODES: Record<string, ErrorCode> = {
   git: 'usage',
   name: 'usage',
@@ -587,12 +538,6 @@ const FAILED_STEP_CODES: Record<string, ErrorCode> = {
   sync: 'generic',
 };
 
-/**
- * The result of an import: the steps, as the envelope of a run that went
- * through. A step that failed is an error: `corami project add` either leaves
- * the project on the server with its copy here, or it fails. The steps are
- * what the caller reads to know where it stopped.
- */
 function finish(
   options: ImportOptions,
   steps: StepResult[],

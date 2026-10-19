@@ -8,27 +8,14 @@ export interface Choice<T> {
   value: T;
 }
 
-/** Questions asked in a terminal. Without one, commands take their flags only. */
 export interface Prompter {
   say(line?: string): void;
-  /**
-   * A line that stays until the next one: what a step is doing right now. It
-   * must fit the terminal width, or it cannot be erased.
-   */
   progress(line: string): void;
-  /**
-   * A line of text, with a value the person can change already written in the
-   * line. An empty answer takes it as it stands.
-   */
   ask(question: string, initial?: string): Promise<string>;
   confirm(question: string, fallback: boolean): Promise<boolean>;
   choose<T>(question: string, choices: Choice<T>[], fallback?: number): Promise<T>;
 }
 
-/**
- * Questions are asked only to a person: a terminal on both stdin and stdout,
- * and no `--json`. Agents and scripts get the same behavior as before.
- */
 export function canPrompt(output: OutputOptions): boolean {
   return !output.json && process.stdin.isTTY === true && process.stdout.isTTY === true;
 }
@@ -36,7 +23,6 @@ export function canPrompt(output: OutputOptions): boolean {
 export function terminalPrompter(): Prompter {
   let pending = false;
 
-  // The progress line is erased before anything else is written over it.
   const clear = () => {
     if (pending) {
       process.stdout.write('\r\x1b[2K');
@@ -99,9 +85,6 @@ export function terminalPrompter(): Prompter {
   };
 }
 
-// One reader per question: between questions the setup runs installers that
-// write to the same terminal. The value suggested is written after the
-// question, so it stays in the line and the person can change it.
 async function readLine(prompt: string, initial = ''): Promise<string> {
   const reader = createInterface({ input: process.stdin, output: process.stdout });
 
@@ -118,7 +101,6 @@ async function readLine(prompt: string, initial = ''): Promise<string> {
 
     return given === '' ? initial : given;
   } catch {
-    // Ctrl+D closes the input: the person is leaving the setup.
     return stop(reader);
   } finally {
     reader.close();

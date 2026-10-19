@@ -33,7 +33,6 @@ describe('barLine', () => {
     expect(line).toContain(' 48%');
     expect(line).toContain('48.1 MB/100 MB');
     expect(line).toContain('12s');
-    // A wrapped line cannot be erased, so the line never fills the terminal.
     expect(line.length).toBeLessThan(80);
   });
 

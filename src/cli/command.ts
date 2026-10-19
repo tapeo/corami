@@ -21,33 +21,24 @@ export interface FlagSpec {
 
 export type RunCommand = (context: CommandContext) => Promise<CommandResult> | CommandResult;
 
-/** One of the things a command does, called by name: `corami sync prune`. */
 export interface ActionSpec {
   name: string;
   summary: string;
   usage: string;
   flags?: FlagSpec[];
-  /** The arguments it takes at most: none when left out. */
   arguments?: number;
   examples?: string[];
   run: RunCommand;
 }
 
-/**
- * A command. Its own flags, usage and `run` apply when no action is named, as
- * in `corami serve 3000`; a command whose actions cover everything it does has
- * no `run`, and called alone asks for an action.
- */
 export interface CommandSpec {
   name: string;
   summary: string;
   usage: string;
   flags?: FlagSpec[];
-  /** The arguments it takes at most: none when left out. */
   arguments?: number;
   examples?: string[];
   actions?: ActionSpec[];
-  /** Left out of the list of commands: an entry point of a service. */
   hidden?: boolean;
   run?: RunCommand;
 }
@@ -65,10 +56,6 @@ export function resolveCommand(
   return commands.find((command) => command.name === first);
 }
 
-/**
- * The action named by the first argument after the command, undefined when
- * that argument names none: the command itself runs then.
- */
 export function resolveAction(command: CommandSpec, rest: string[]): ActionSpec | undefined {
   const first = rest[0];
 
@@ -79,7 +66,6 @@ export function resolveAction(command: CommandSpec, rest: string[]): ActionSpec 
   return command.actions?.find((action) => action.name === first);
 }
 
-/** The usage error of a command that needs an action and got none it knows. */
 export function missingAction(command: CommandSpec, given: string | undefined): CoramiError {
   const names = (command.actions ?? []).map((action) => action.name);
   const last = names.at(-1);
@@ -95,23 +81,16 @@ export function missingAction(command: CommandSpec, given: string | undefined): 
   });
 }
 
-/** Every command and action, for what is read across all of them. */
 export function allSpecs(commands: CommandSpec[]): Array<CommandSpec | ActionSpec> {
   return commands.flatMap((command) => [command, ...(command.actions ?? [])]);
 }
 
-// The flags every command accepts: the router reads them before the command.
 export const GLOBAL_FLAGS: FlagSpec[] = [
   { name: 'json', description: 'JSON output, the default without a terminal' },
   { name: 'help', description: 'This help, also corami help <command> [<action>]' },
   { name: 'version', description: 'Version of corami' },
 ];
 
-/**
- * Refuses a flag the command or the action does not declare, and a declared
- * flag that needs a value and has none, so that a typo or a lost value is
- * never ignored. `path` names it in the error, as in `sync prune`.
- */
 export function checkFlags(
   spec: CommandSpec | ActionSpec,
   values: Record<string, FlagValue>,
@@ -120,7 +99,6 @@ export function checkFlags(
   const flags = spec.flags ?? [];
 
   for (const [key, value] of Object.entries(values)) {
-    // `--no-git` is parsed as `git` set to false.
     const flag = flags.find((item) => item.name === key || item.name === `no-${key}`);
 
     if (flag === undefined) {
@@ -145,12 +123,6 @@ export function checkFlags(
   }
 }
 
-/**
- * Refuses the arguments the command or the action does not read: it takes
- * `arguments` of them at most, none when it declares none. An argument that is
- * dropped in silence is a typo or a lost word, like a flag the command does
- * not know.
- */
 export function checkArguments(
   spec: CommandSpec | ActionSpec,
   positionals: string[],
@@ -179,7 +151,6 @@ export interface HelpData {
   global_flags: FlagSpec[];
 }
 
-/** The help of a command or an action, as data. `path` names it: `sync prune`. */
 export function helpData(spec: CommandSpec | ActionSpec, path: string): HelpData {
   const actions = 'actions' in spec ? (spec.actions ?? []) : [];
 

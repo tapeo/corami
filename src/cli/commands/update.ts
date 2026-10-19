@@ -48,8 +48,6 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
     };
   }
 
-  // A version asked for is installed as it is, an older one included: it was
-  // named on purpose.
   if (requested === undefined && !newer && !booleanFlag(context.args, 'force')) {
     if (context.output.json) {
       return { data: { current: VERSION, latest: release.version, updated: false } };
@@ -97,10 +95,6 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
   };
 }
 
-/**
- * The release to install: the one of `--version` when it is given, the latest
- * otherwise.
- */
 async function wantedRelease(requested: string | undefined): Promise<ReleaseInfo> {
   if (requested !== undefined) {
     const tag = requested.startsWith('v') ? requested : `v${requested}`;
@@ -150,12 +144,6 @@ export function resolveBinary(): string {
   }
 }
 
-/**
- * `corami update` replaces the binary it is running from. When the setup ran
- * as root on a server, that is the binary of root: the one of the account runs
- * the services, so it is replaced too, and the services are restarted as the
- * account.
- */
 async function copyToOwner(): Promise<boolean> {
   if (process.platform !== 'linux' || userInfo().username !== 'root') {
     return false;
@@ -179,9 +167,6 @@ async function copyToOwner(): Promise<boolean> {
     return false;
   }
 
-  // A plain `cp` over the file of the account leaves it owned by root, and the
-  // account could not run it. The copy is written next to it, given back to the
-  // account, and only then put in place.
   const temporary = `${target}.new`;
   rmSync(temporary, { force: true });
 
@@ -206,15 +191,10 @@ async function copyToOwner(): Promise<boolean> {
   return true;
 }
 
-/** The account that owns the projects on this server, when one is configured. */
 async function configuredServerUser(): Promise<string | undefined> {
   return ownerOfServer(await readGlobalConfig().catch(() => undefined));
 }
 
-// The daemon runs as the account that owns the projects: started as root the
-// restart goes through `runuser` with the binary of the account, as the setup
-// does for its steps. Started as the account itself it restarts its own
-// service, because `runuser` may only be used by root.
 async function restartDaemon(): Promise<boolean> {
   const config = await readGlobalConfig().catch(() => undefined);
 
@@ -267,17 +247,9 @@ async function restartDaemon(): Promise<boolean> {
     return (await run('systemctl', ['--user', 'restart', 'corami-daemon'], { env })).ok;
   }
 
-  // The setup falls back to a system unit when the account has no user
-  // services, and the daemon runs there: as root this restart works, as the
-  // account it does not, and the summary says so instead of claiming a restart
-  // that did not happen.
   return (await run('systemctl', ['restart', 'corami-daemon'])).ok;
 }
 
-// The git service runs on both roles, so the role is not checked: when the
-// service is there it is restarted; when it is not there is nothing to do. As
-// root on a server whose projects belong to another account, the service is
-// the user unit of that account, and root reaches it through `runuser`.
 async function restartGitWatch(): Promise<boolean> {
   const spec = gitWatchSpec(resolveBinary());
   const owner = await configuredServerUser();

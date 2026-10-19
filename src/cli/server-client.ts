@@ -7,8 +7,6 @@ import { isRelationStatus, parseGitState } from '@/core/git-align.ts';
 import type { GitOriginStatus } from '@/core/git-follow.ts';
 import type { PreviewView } from '@/core/previews.ts';
 
-// The state of the server towards `origin`, as the daemon sends it: without a
-// fetch, it is the reading of the last service cycle.
 function parseOriginStatus(value: unknown): GitOriginStatus | undefined {
   if (typeof value !== 'object' || value === null) {
     return undefined;
@@ -47,17 +45,11 @@ export interface ProjectSummary {
   previews: PreviewView[];
 }
 
-// The daemon can fail to answer without refusing the connection: a network
-// that filters packets, or a stuck daemon. Without a cap the command hangs on
-// the system timeout, which on macOS is over a minute.
 const REQUEST_TIMEOUT_MS = 20_000;
 
 const GATEWAY_ERRORS = new Set([502, 503, 504]);
 
 export async function baseUrl(): Promise<string> {
-  // A configuration that cannot be read is an error of its own: without it
-  // the command would speak to the loopback daemon of this machine and call
-  // the server unreachable.
   const config = await readGlobalConfig();
 
   if (config?.role === 'client') {
@@ -75,11 +67,6 @@ export async function baseUrl(): Promise<string> {
   return 'http://127.0.0.1:7420';
 }
 
-/**
- * The token of the daemon of this machine, when the request goes to it: the
- * file the daemon writes is in the home of the account that owns `~/.corami`,
- * which for a command run as root is the account of `server_user`.
- */
 async function localToken(): Promise<string | undefined> {
   const config = await readGlobalConfig();
   const home = config?.server_user !== undefined ? await homeFor(config.server_user) : undefined;
@@ -136,8 +123,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     envelope = JSON.parse(text) as Envelope<T>;
   } catch {
-    // `tailscale serve` answers on its own, with an empty body, when the
-    // daemon behind it is down: the server is reached, the daemon is not.
     if (GATEWAY_ERRORS.has(response.status)) {
       throw new CoramiError({
         code: 'server_unreachable',
@@ -167,8 +152,6 @@ export async function projectGitOrigin(project: string): Promise<GitOriginStatus
   return (await projectGit(project)).origin;
 }
 
-// The git side of a project on the server: its relation with `origin`, and the
-// url of `origin` a new local copy clones from.
 export async function projectGit(
   project: string,
 ): Promise<{ origin: GitOriginStatus | undefined; originUrl: string | undefined }> {
@@ -186,22 +169,12 @@ export async function health(): Promise<Record<string, unknown>> {
   return request('/v1/health');
 }
 
-/**
- * Whether the daemon of the server announces a capability of this client, the
- * import's staging folder for example: a daemon that does not announce it is
- * older than the client that asks. A daemon that does not answer throws.
- */
 export async function serverSupports(capability: string): Promise<boolean> {
   const announced = (await health()).capabilities;
 
   return Array.isArray(announced) && announced.includes(capability);
 }
 
-/**
- * The account that owns the projects on the server, for the SSH of the sync
- * and of the import: the one saved at the setup, then the one the daemon
- * announces, then root for a server that announces nothing.
- */
 export async function serverUserForSync(): Promise<string> {
   const config = await readGlobalConfig().catch(() => undefined);
 
@@ -224,11 +197,6 @@ export async function listProjects(
   return data.projects;
 }
 
-/**
- * Whether the server still has a project with this name, undefined when the
- * daemon does not answer within a couple of seconds. For the closing line of a
- * command that works on a local copy: it must not wait on a server that is away.
- */
 export async function projectOnServer(name: string): Promise<boolean | undefined> {
   try {
     const projects = await listProjects({ timeoutMs: 2_000 });
@@ -239,11 +207,6 @@ export async function projectOnServer(name: string): Promise<boolean | undefined
   }
 }
 
-/**
- * Whether the server has a project with this name. Only "no" is undefined: a
- * daemon that does not answer is an error, because the caller would otherwise
- * treat a server that is away as a name that is free, and write over it.
- */
 export async function findProject(name: string): Promise<ProjectSummary | undefined> {
   const projects = await listProjects();
 
@@ -258,9 +221,7 @@ export async function addProject(input: {
   name: string;
   url?: string;
   path?: string;
-  /** The import made the folder on the server: a removal may delete it. */
   owned?: boolean;
-  /** The folder of an import before it takes the name of the project: the daemon moves it in. */
   staging?: string;
 }): Promise<Record<string, unknown>> {
   return request('/v1/projects', {

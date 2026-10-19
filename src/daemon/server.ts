@@ -16,14 +16,12 @@ export interface DaemonOptions {
   port: number;
   ownerLogin?: string | undefined;
   fqdn?: string | undefined;
-  /** The account that owns the projects on this server. */
   user?: string | undefined;
 }
 
 export interface DaemonHandle {
   server: ReturnType<typeof Bun.serve>;
   previews: PreviewOptions;
-  /** The token local processes present, at the path of `paths()`. */
   token: string;
 }
 
@@ -162,7 +160,6 @@ function rejectNonOwner(
   );
 }
 
-/** Whether a request declares a body: a length, or a chunked transfer. */
 function hasBody(request: Request): boolean {
   const length = request.headers.get('content-length');
 
@@ -173,12 +170,6 @@ function hasBody(request: Request): boolean {
   return request.headers.get('transfer-encoding') !== null;
 }
 
-/**
- * The status of an answer, from the error code: what was asked for is not
- * there (404), it clashes with what is there (409), the daemon could not reach
- * something else (502), the request was wrong (400), anything else is a
- * failure of the daemon (500).
- */
 function statusForError(code: ErrorCode): number {
   if (code === 'usage') {
     return 400;
@@ -221,7 +212,6 @@ async function cachedSshState(user: string | undefined): Promise<SshState | unde
   return state;
 }
 
-/** What this daemon can do for a client that is newer than the server: the import asks for the staging folder. */
 export const CAPABILITIES = ['import_staging'] as const;
 
 async function healthData(options: DaemonOptions, startedAt: number) {

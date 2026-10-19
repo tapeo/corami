@@ -11,14 +11,9 @@ export interface ServiceSpec {
   binary: string;
   args: string[];
   restart?: boolean | undefined;
-  // Linux only: 'user' (default, as on the clients) or 'system' when user
-  // services are not available. `systemdUser` becomes `User=` in the system
-  // unit, `systemdHome` is the home a user unit belongs to.
   systemdScope?: 'user' | 'system' | undefined;
   systemdUser?: string | undefined;
   systemdHome?: string | undefined;
-  // macOS only: where launchd writes what the service prints. On Linux the
-  // output goes to the journal on its own.
   logFile?: string | undefined;
 }
 
@@ -33,11 +28,6 @@ export type ServicePlatform = 'macos' | 'linux' | 'windows' | 'other';
 const PRODUCT_PREFIX = 'corami-';
 const LAUNCHD_LABEL_PREFIX = 'dev.corami';
 
-/**
- * The short service name, without the product prefix: `corami-git-watch`
- * becomes `git-watch`. Used for the launchd label, where the product already
- * shows in the reverse domain, and for the windows task name.
- */
 function serviceShortName(name: string): string {
   return name.startsWith(PRODUCT_PREFIX) ? name.slice(PRODUCT_PREFIX.length) : name;
 }
@@ -302,10 +292,6 @@ async function installScheduledTask(spec: ServiceSpec): Promise<ServiceResult> {
   return { installed: true, path, detail: 'scheduled task at logon' };
 }
 
-// The git alignment service. It runs on the server and on every client, and
-// it is the same on both: a single way to install it, with the systemd scope
-// decided by the caller. `home` is the home of the account it runs as, when
-// that is not the home of the process installing it.
 export function gitWatchSpec(
   binary: string,
   scope?: 'user' | 'system',
@@ -317,9 +303,6 @@ export function gitWatchSpec(
     binary,
     args: ['git', 'watch'],
     restart: true,
-    // Without these lines launchd throws away the output of the service: the
-    // JSON lines of the cycle go to a file, as on the server they go to the
-    // journal.
     logFile: join(home ?? homedir(), '.corami', 'logs', 'git-watch.log'),
     ...(scope === undefined ? {} : { systemdScope: scope }),
   };

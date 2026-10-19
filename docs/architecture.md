@@ -1,6 +1,6 @@
 # Architecture
 
-Implementation details of v1.
+Implementation details of v1. The invariants of the code, the reasons a name cannot show, are in [internals.md](internals.md).
 
 ## Index
 

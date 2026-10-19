@@ -54,8 +54,6 @@ main() {
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
 
-  # A release comes from GitHub over HTTPS. A base given by hand (`CORAMI_INSTALL_BASE`,
-  # for a test of the script itself) is taken as it is.
   if [ -n "${CORAMI_INSTALL_BASE:-}" ]; then
     fetch() { curl -fsSL "$1" -o "$2"; }
   else
@@ -96,10 +94,6 @@ main() {
     *) die "unknown role: $1 (use server or client)" ;;
   esac
 
-  # With `curl | sh` stdin is the script itself: the setup reads its answers
-  # from the terminal. Without a role it asks which one this machine takes.
-  # The terminal comes from stdout, not /dev/tty: macOS kqueue rejects
-  # /dev/tty with EINVAL, and the setup crashes at the first question.
   if [ -t 1 ]; then
     "$PREFIX/corami" setup "$@" <&1
     return
@@ -125,8 +119,6 @@ has_terminal() {
   (: < /dev/tty) 2>/dev/null
 }
 
-# Puts the install folder in the PATH of new shells, once. The line goes in the
-# profile of the login shell; with another shell it says what to add.
 add_to_path() {
   case ":$PATH:" in
     *":$PREFIX:"*) return ;;

@@ -50,7 +50,6 @@ const STEP_KINDS = [
 
 type StepKind = ServerStep;
 
-// What each step is doing, shown in a terminal while it runs.
 const STEP_ACTIVITIES: Record<StepKind, string> = {
   preflight: 'Checking the system',
   packages: 'Checking and installing packages',
@@ -83,7 +82,6 @@ function prompterFor(context: CommandContext): Prompter | undefined {
   return canPrompt(context.output) ? terminalPrompter() : undefined;
 }
 
-// `corami setup` without a role: in a terminal it asks what the machine is.
 async function run(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
   const prompter = prompterFor(context);
   const given = context.args.positionals[0];
@@ -123,8 +121,6 @@ async function runServerSetup(
   let stepContext = base;
 
   for (const kind of steps) {
-    // The firewall runs on request: `--firewall`, `--step firewall`, or a yes
-    // to the question asked in a terminal.
     if (
       kind === 'firewall' &&
       only === undefined &&
@@ -134,9 +130,6 @@ async function runServerSetup(
       continue;
     }
 
-    // The steps of the account are handed to it: run as root they would leave
-    // their files and their services in the home of root. A dry run executes
-    // nothing, and the account may not exist yet.
     const handoff = base.root && !dryRun && stepIdentity(kind) === 'owner';
     const runStep = () =>
       handoff ? runStepAsOwner(stepContext, kind) : STEP_RUNNERS[kind](stepContext);
@@ -209,8 +202,6 @@ async function chooseRole(prompter: Prompter): Promise<string> {
   );
 }
 
-// The login link of Tailscale stays valid after `tailscale up` returns: the
-// setup waits for the approval and then runs the step again.
 async function waitForLogin(
   prompter: Prompter,
   loginUrl: string,
@@ -251,8 +242,6 @@ async function waitForLogin(
   };
 }
 
-// The owner proposed is the account that signed the server in. A login
-// already given with `--owner`, or saved by an earlier setup, is kept.
 async function confirmOwner(prompter: Prompter, context: StepContext): Promise<StepContext> {
   if (context.ownerLogin !== undefined || context.dryRun) {
     return context;
@@ -275,8 +264,6 @@ async function confirmOwner(prompter: Prompter, context: StepContext): Promise<S
   return { ...context, ownerLogin: other === '' ? undefined : other };
 }
 
-// Asked only when closing public SSH cannot lock the user out: root, Tailscale
-// SSH on, and the firewall not in place yet.
 async function offerFirewall(prompter: Prompter, context: StepContext): Promise<boolean> {
   if (!context.root || context.dryRun) {
     return false;
@@ -312,8 +299,6 @@ async function buildStepContext(context: CommandContext, dryRun: boolean): Promi
     dryRun,
   };
 
-  // Root keeps in its own configuration the account that owns the projects,
-  // so that every later command run as root knows where they belong.
   if (!dryRun && built.root && serverUser !== existing?.server_user) {
     await writeGlobalConfig({
       role: 'server',
@@ -326,7 +311,6 @@ async function buildStepContext(context: CommandContext, dryRun: boolean): Promi
   return built;
 }
 
-/** The account that owns the projects: `--user`, then the one saved before. */
 function resolveServerUser(context: CommandContext, configured: string | undefined): string {
   const user = stringFlag(context.args, 'user') ?? configured ?? DEFAULT_SERVER_USER;
 
@@ -356,10 +340,6 @@ async function withUpdatedContext(context: StepContext, result: StepResult): Pro
   return { ...context, fqdn: current.dnsName, ownerLogin: context.ownerLogin };
 }
 
-// `withSteps` is false in a terminal, where every step was printed as it
-// ended: only the closing notes are left.
-// `withSteps` is false in a terminal, where every step was printed as it
-// ended. `partial` is a dry run or a single step: no next steps then.
 function render(
   results: StepResult[],
   context: StepContext,
@@ -393,7 +373,6 @@ function render(
 
     if (!options.partial) {
       const user = context.serverUser;
-      // Run as root for another account: the next commands go as that account.
       const switchUser =
         context.root && user !== 'root' ? [`Work as ${user} from now on: ssh ${user}@${fqdn}`] : [];
 
