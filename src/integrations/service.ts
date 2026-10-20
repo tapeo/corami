@@ -304,7 +304,7 @@ async function serviceRunning(spec: ServiceSpec): Promise<boolean> {
 
 export async function refreshService(
   spec: ServiceSpec,
-  timeoutMs = 10_000,
+  timeoutMs = 30_000,
 ): Promise<ServiceRefresh> {
   if (servicePlatform() !== 'macos') {
     const restarted = await restartService(spec);
@@ -340,18 +340,33 @@ export async function refreshService(
   ]);
 
   const deadline = Date.now() + timeoutMs;
+  let last = await launchdState(spec);
+  let failedOnce = false;
 
   while (Date.now() < deadline) {
-    const health = await serviceHealth(spec);
+    last = await launchdState(spec);
 
-    if (health.status === 'running') {
+    if (last?.running === true) {
       return { ok: true, detail: 'registered again and running' };
+    }
+
+    if (last !== undefined && last.exitCode !== undefined && last.exitCode !== 0) {
+      if (failedOnce) {
+        return { ok: false, detail: `registered again, but ${describeLaunchdState(last)}` };
+      }
+
+      failedOnce = true;
+    } else {
+      failedOnce = false;
     }
 
     await Bun.sleep(250);
   }
 
-  return { ok: false, detail: `registered again, but ${(await serviceHealth(spec)).detail}` };
+  return {
+    ok: false,
+    detail: `registered again, but ${last === undefined ? 'not loaded' : describeLaunchdState(last)}`,
+  };
 }
 
 async function launchdState(spec: ServiceSpec): Promise<LaunchdState | undefined> {
