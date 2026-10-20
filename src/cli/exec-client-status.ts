@@ -6,8 +6,10 @@ import {
   listRunning,
   type RunningCommand,
   readExecState,
+  readGrants,
   readRules,
 } from '@/cli/exec-files.ts';
+import { activeGrants, type ExecGrant, grantMinutesLeft } from '@/core/exec-grants.ts';
 import { execLineAddresses, findExecLine } from '@/core/exec-ssh-keys.ts';
 import { sshdAcceptsPasswords } from '@/core/exec-sshd.ts';
 
@@ -20,6 +22,7 @@ export async function clientStatus(context: CommandContext): Promise<CommandResu
   const list = await readRules();
   const pending = await listPending();
   const running = await listRunning();
+  const grants = activeGrants(await readGrants());
   const addresses = execLineAddresses(line);
 
   if (context.output.json) {
@@ -32,6 +35,7 @@ export async function clientStatus(context: CommandContext): Promise<CommandResu
         sshd: keysOnly ? 'keys only' : 'accepts passwords',
         addresses,
         rules: list.length,
+        grants,
         waiting: pending.length,
         running: running.map((entry) => ({
           program: entry.program,
@@ -48,12 +52,21 @@ export async function clientStatus(context: CommandContext): Promise<CommandResu
     `Server        ${server}${addresses.length === 0 ? '' : `, from ${addresses.join(', ')}`}`,
     `sshd          ${keysOnly ? 'keys only' : 'accepts passwords'}`,
     `Rules         ${list.length}${list.length === 0 ? '' : ' (corami exec rules)'}`,
+    `Everything    ${describeGrants(grants)}`,
     `Waiting       ${pending.length === 0 ? 'none' : `${pending.length} (answer in the dialog, or with corami exec approve)`}`,
     `Running       ${describeRunning(running)}`,
     'Last commands ~/.corami/logs/exec.log',
   ];
 
   return { text: lines.join('\n') };
+}
+
+function describeGrants(grants: ExecGrant[]): string {
+  if (grants.length === 0) {
+    return 'none';
+  }
+
+  return grants.map((grant) => `${grant.project}, ${grantMinutesLeft(grant)} min left`).join('; ');
 }
 
 function describeRunning(running: RunningCommand[]): string {

@@ -21,6 +21,7 @@ import {
   listPending,
   listRunning,
   removeExecState,
+  removeGrants,
   removePending,
   writeExecState,
 } from '@/cli/exec-files.ts';
@@ -194,6 +195,7 @@ export async function deny(context: CommandContext): Promise<CommandResult> {
 
   await writeAuthorizedKeys(withoutExecLine(existing, server));
   await removeExecState();
+  await removeGrants();
 
   for (const command of running) {
     if (stopGroup(command)) {

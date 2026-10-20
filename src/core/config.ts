@@ -26,6 +26,7 @@ export interface CoramiPaths {
   daemonToken: string;
   exec: string;
   execRules: string;
+  execGrants: string;
   execPending: string;
   execRunning: string;
   execLog: string;
@@ -63,6 +64,7 @@ export function paths(): CoramiPaths {
     daemonToken: join(root, 'daemon-token'),
     exec,
     execRules: join(exec, 'rules.json'),
+    execGrants: join(exec, 'grants.json'),
     execPending: join(exec, 'pending'),
     execRunning: join(exec, 'running'),
     execLog: join(logs, 'exec.log'),

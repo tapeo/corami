@@ -6,6 +6,7 @@ import {
   isPending,
   newExecId,
   readDecision,
+  readGrants,
   readRules,
   removePending,
   removeRunning,
@@ -21,10 +22,13 @@ import {
   gatePayload,
   parseGateRequest,
 } from '@/core/exec-gate.ts';
-import { decide, ruleText } from '@/core/exec-rules.ts';
+import { activeGrant } from '@/core/exec-grants.ts';
+import { decide, type ExecChoice, ruleText } from '@/core/exec-rules.ts';
 import { MutagenEngine } from '@/integrations/mutagen.ts';
 
 const POLL_MS = 500;
+
+type Approval = 'answer' | 'grant';
 
 export async function runGate(context: CommandContext): Promise<CommandResult> {
   try {
@@ -84,8 +88,10 @@ async function runCommand(request: GateCommand): Promise<CommandResult> {
     });
   }
 
+  let approval: Approval | undefined;
+
   if (choice.decision === 'ask') {
-    await waitForApproval(request, identity.name);
+    approval = await waitForApproval(request, identity.name);
   }
 
   const engine = new MutagenEngine();
@@ -130,7 +136,7 @@ async function runCommand(request: GateCommand): Promise<CommandResult> {
     request,
     session?.beta ?? process.cwd(),
     choice.decision,
-    choice.rule?.decision,
+    loggedRule(choice, approval),
   );
 
   await engine.flush(request.project).catch(() => undefined);
@@ -138,7 +144,11 @@ async function runCommand(request: GateCommand): Promise<CommandResult> {
   return result;
 }
 
-async function waitForApproval(request: GateCommand, client: string): Promise<void> {
+async function waitForApproval(request: GateCommand, client: string): Promise<Approval> {
+  if (await granted(request.project)) {
+    return 'grant';
+  }
+
   const id = newExecId();
   const command = request.argv.join(' ');
   const started = Date.now();
@@ -161,13 +171,17 @@ async function waitForApproval(request: GateCommand, client: string): Promise<vo
       const decision = await readDecision(id);
 
       if (decision?.decision === 'allow') {
-        return;
+        return 'answer';
       }
 
       if (decision?.decision === 'deny') {
         logDecision(request, 'deny', 'ask', started, 1);
 
         throw new CoramiError({ code: 'generic', message: `Denied on ${client}: ${command}` });
+      }
+
+      if (await granted(request.project)) {
+        return 'grant';
       }
 
       if (!isPending(id)) {
@@ -198,6 +212,18 @@ async function waitForApproval(request: GateCommand, client: string): Promise<vo
     stopWatching();
     await removePending(id);
   }
+}
+
+async function granted(project: string): Promise<boolean> {
+  return activeGrant(await readGrants(), project) !== undefined;
+}
+
+function loggedRule(choice: ExecChoice, approval: Approval | undefined): string | undefined {
+  if (approval === 'grant') {
+    return 'grant';
+  }
+
+  return choice.rule?.decision;
 }
 
 function watchConnection(onLost: () => void): () => void {

@@ -3,8 +3,10 @@ import {
   isPending,
   listPending,
   type PendingRequest,
+  readGrants,
   readRules,
   writeDecision,
+  writeGrants,
   writeRules,
 } from '@/cli/exec-files.ts';
 import { canPrompt, type Prompter, terminalPrompter } from '@/cli/prompt.ts';
@@ -21,6 +23,7 @@ import {
   hasDisplay,
   ruleArgv,
 } from '@/core/exec-approval.ts';
+import { addGrant, GRANT_MINUTES, newGrant } from '@/core/exec-grants.ts';
 import { addRule, newRule } from '@/core/exec-rules.ts';
 
 const POLL_MS = 500;
@@ -129,6 +132,12 @@ async function answerRequest(request: PendingRequest, choice: ApprovalChoice): P
     return `✓ Allowed once: ${command}`;
   }
 
+  if (choice === 'grant') {
+    await writeGrants(addGrant(await readGrants(), newGrant(request.project)));
+
+    return `✓ Allowed everything in ${request.project} for ${GRANT_MINUTES} minutes`;
+  }
+
   const argv = ruleArgv(request.argv, choice);
 
   await writeRules(addRule(await readRules(), newRule('allow', argv, request.project)));
@@ -148,12 +157,7 @@ function terminalPresenter(prompter: Prompter): Presenter {
       prompter.say();
 
       try {
-        return await prompter.choose(
-          'What do you allow?',
-          approvalOptions(request.argv),
-          0,
-          signal,
-        );
+        return await prompter.choose('What do you allow?', approvalOptions(request), 0, signal);
       } catch {
         return undefined;
       }
@@ -170,7 +174,7 @@ function dialogPresenter(report: Report): Presenter {
         return undefined;
       }
 
-      const options = approvalOptions(request.argv);
+      const options = approvalOptions(request);
       const child = Bun.spawn({
         cmd: dialogCommand(setup.tool, request, options),
         env: setup.env,

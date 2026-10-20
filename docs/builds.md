@@ -33,7 +33,7 @@ Setup, once:
 2. On the Mac: `corami setup client <server>`, then `corami exec allow` in its terminal.
 3. On the server: `corami exec status` lists the client as allowed and online.
 
-`exec allow` offers to close sshd to passwords, adds the key of the server to `authorized_keys` limited to the gate, registers the host key of the Mac on the server, checks the path from the server and installs the approval dialog. The rules and the approval are on the Mac: a new command opens a dialog with *Allow once*, *Always allow* on the subcommand (`flutter build *`) or on the program (`flutter *`), and *Deny*, `corami exec approve` answers the same requests from a terminal, also over ssh from a phone, and `corami exec rule` adds rules in advance. A command not answered within 60 seconds fails with a Corami error, and the agent can run it again.
+`exec allow` offers to close sshd to passwords, adds the key of the server to `authorized_keys` limited to the gate, registers the host key of the Mac on the server, checks the path from the server and installs the approval dialog. The rules and the approval are on the Mac: a new command opens a dialog with *Allow once*, *Always allow* on the subcommand (`flutter build *`) or on the program (`flutter *`), *Allow everything* in the project for 15 minutes, and *Deny*, `corami exec approve` answers the same requests from a terminal, also over ssh from a phone, and `corami exec rule` adds rules in advance. A command not answered within 60 seconds fails with a Corami error, and the agent can run it again.
 
 The rest of the notes stay:
 

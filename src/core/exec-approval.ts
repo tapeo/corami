@@ -1,8 +1,9 @@
+import { GRANT_MINUTES } from '@/core/exec-grants.ts';
 import { allowPrefix, allowSubcommand, newRule, runsArbitraryCode } from '@/core/exec-rules.ts';
 
 export const APPROVAL_WAIT_MS = 60_000;
 
-export type ApprovalChoice = 'once' | 'subcommand' | 'always' | 'deny';
+export type ApprovalChoice = 'once' | 'subcommand' | 'always' | 'grant' | 'deny';
 
 export type DialogTool = 'osascript' | 'zenity';
 
@@ -54,15 +55,19 @@ export function ruleArgv(argv: string[], choice: 'subcommand' | 'always'): strin
   return allowPrefix(argv);
 }
 
-export function approvalOptions(argv: string[]): ApprovalOption[] {
+export function approvalOptions(request: ApprovalRequest): ApprovalOption[] {
   const options: ApprovalOption[] = [{ label: 'Allow once', value: 'once' }];
-  const subcommand = subcommandArgv(argv);
+  const subcommand = subcommandArgv(request.argv);
 
   if (subcommand !== undefined) {
     options.push({ label: `Always allow: ${subcommand.join(' ')}`, value: 'subcommand' });
   }
 
-  options.push({ label: alwaysLabel(argv), value: 'always' }, { label: 'Deny', value: 'deny' });
+  options.push(
+    { label: alwaysLabel(request.argv), value: 'always' },
+    { label: grantLabel(request.project), value: 'grant' },
+    { label: 'Deny', value: 'deny' },
+  );
 
   return options;
 }
@@ -96,7 +101,7 @@ export function dialogCommand(
   }
 
   const extraButtons = options
-    .filter((option) => option.value === 'subcommand' || option.value === 'always')
+    .filter((option) => option.value !== 'once' && option.value !== 'deny')
     .map((option) => `--extra-button=${option.label}`);
 
   return [
@@ -164,6 +169,10 @@ function alwaysLabel(argv: string[]): string {
   }
 
   return `Always allow: ${allowPrefix(argv).join(' ')}`;
+}
+
+function grantLabel(project: string): string {
+  return `Allow everything in ${project} for ${GRANT_MINUTES} minutes`;
 }
 
 function askLine(request: ApprovalRequest): string {

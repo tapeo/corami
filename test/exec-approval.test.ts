@@ -10,30 +10,32 @@ import {
   ruleArgv,
 } from '@/core/exec-approval.ts';
 
-const options = approvalOptions(['flutter', 'build', 'ios']);
+const options = approvalOptions({ project: 'myapp', argv: ['flutter', 'build', 'ios'] });
 
 describe('approvalOptions', () => {
-  test('offers once, always on the subcommand, always on the program, and deny', () => {
+  test('offers once, always on the subcommand, always on the program, everything for a while, and deny', () => {
     expect(options).toEqual([
       { label: 'Allow once', value: 'once' },
       { label: 'Always allow: flutter build *', value: 'subcommand' },
       { label: 'Always allow: flutter *', value: 'always' },
+      { label: 'Allow everything in myapp for 15 minutes', value: 'grant' },
       { label: 'Deny', value: 'deny' },
     ]);
   });
 
   test('offers no subcommand for a single token', () => {
-    expect(approvalOptions(['xcodebuild']).map((option) => option.value)).toEqual([
-      'once',
-      'always',
-      'deny',
-    ]);
+    const values = approvalOptions({ project: 'myapp', argv: ['xcodebuild'] }).map(
+      (option) => option.value,
+    );
+
+    expect(values).toEqual(['once', 'always', 'grant', 'deny']);
   });
 
   test('offers only the exact command for a program that runs arbitrary code', () => {
-    expect(approvalOptions(['npx', 'something'])).toEqual([
+    expect(approvalOptions({ project: 'myapp', argv: ['npx', 'something'] })).toEqual([
       { label: 'Allow once', value: 'once' },
       { label: 'Always allow this command', value: 'always' },
+      { label: 'Allow everything in myapp for 15 minutes', value: 'grant' },
       { label: 'Deny', value: 'deny' },
     ]);
   });
@@ -86,6 +88,7 @@ describe('dialogCommand', () => {
       'Allow once',
       'Always allow: flutter build *',
       'Always allow: flutter *',
+      'Allow everything in myapp for 15 minutes',
       'Deny',
     ]);
     expect(script).not.toContain('flutter');
@@ -93,7 +96,8 @@ describe('dialogCommand', () => {
 
   test('puts the command of osascript in a read-only field, with no default button', () => {
     const argv = ['bash', '-c', 'echo a\necho b'];
-    const command = dialogCommand('osascript', { project: 'myapp', argv }, approvalOptions(argv));
+    const request = { project: 'myapp', argv };
+    const command = dialogCommand('osascript', request, approvalOptions(request));
 
     expect(command[4]).toContain('setEditable(false)');
     expect(command[4]).toContain("setKeyEquivalent('')");
@@ -110,9 +114,10 @@ describe('dialogCommand', () => {
     expect(command).toContain('--text=The server asks to run, in myapp:\n  <b>x</b>');
     expect(command).toContain('--ok-label=Allow once');
     expect(command).toContain('--cancel-label=Deny');
-    expect(command.slice(-2)).toEqual([
+    expect(command.slice(-3)).toEqual([
       '--extra-button=Always allow: flutter build *',
       '--extra-button=Always allow: flutter *',
+      '--extra-button=Allow everything in myapp for 15 minutes',
     ]);
   });
 });
@@ -124,6 +129,9 @@ describe('dialogChoice', () => {
       'subcommand',
     );
     expect(dialogChoice('osascript', 0, 'Always allow: flutter *\n', options)).toBe('always');
+    expect(
+      dialogChoice('osascript', 0, 'Allow everything in myapp for 15 minutes\n', options),
+    ).toBe('grant');
     expect(dialogChoice('osascript', 0, 'Deny\n', options)).toBe('deny');
   });
 
@@ -138,6 +146,9 @@ describe('dialogChoice', () => {
       'subcommand',
     );
     expect(dialogChoice('zenity', 1, 'Always allow: flutter *\n', options)).toBe('always');
+    expect(dialogChoice('zenity', 1, 'Allow everything in myapp for 15 minutes\n', options)).toBe(
+      'grant',
+    );
     expect(dialogChoice('zenity', 1, '', options)).toBe('deny');
     expect(dialogChoice('zenity', 255, '', options)).toBeUndefined();
   });

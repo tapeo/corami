@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } fro
 
 import { paths } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
+import { type ExecGrant, grantsFromJson, grantsJson } from '@/core/exec-grants.ts';
 import { type ExecRule, rulesFromJson, rulesJson } from '@/core/exec-rules.ts';
 
 export interface PendingRequest {
@@ -74,6 +75,25 @@ export async function readRules(): Promise<ExecRule[]> {
 export async function writeRules(rules: ExecRule[]): Promise<void> {
   ensureExecDirs();
   await Bun.write(paths().execRules, rulesJson(rules));
+}
+
+export async function readGrants(): Promise<ExecGrant[]> {
+  const path = paths().execGrants;
+
+  if (!(await Bun.file(path).exists())) {
+    return [];
+  }
+
+  return grantsFromJson(await Bun.file(path).text());
+}
+
+export async function writeGrants(grants: ExecGrant[]): Promise<void> {
+  ensureExecDirs();
+  await Bun.write(paths().execGrants, grantsJson(grants));
+}
+
+export async function removeGrants(): Promise<void> {
+  await removeFile(paths().execGrants);
 }
 
 export async function writePending(request: PendingRequest): Promise<void> {
