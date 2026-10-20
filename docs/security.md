@@ -63,6 +63,8 @@ Remove the device from the tailnet in the [Tailscale console](https://login.tail
 
 The rules and the approval are on the client. `ask` is the default, `deny` wins, and the agent on the server cannot read or change them: every payload passes through the gate, and the file of the rules is not reachable from the server. A new command is answered in a dialog on the client or in `corami exec approve`; the command is shown as text, never run as a script or read as markup. A rule limits the command, not what it does: `flutter run` runs code of the project, and `allow npx *` allows everything. `exec rule allow` says so when a rule covers a program that runs arbitrary code.
 
+The gate protects the client from an agent that goes wrong, not from whoever controls the server. A command outside the rules, such as reading `~/.ssh` or the keychain, is denied or asked, and every run is in `~/.corami/logs/exec.log`. But the project comes from the server through the sync, and a build runs the files of the project: an Xcode build phase, a Podfile, a Gradle script, a build hook. Allowing a build of a synced project means trusting the server with the account of the client that runs it. Keep the channel on only while a client needs it, and turn it off with `corami exec deny`.
+
 Checks: `exec.allowed`, `exec.sshd` and `exec.approver` on a client; `exec.clients` on the server.
 
 ## Keys and env files
