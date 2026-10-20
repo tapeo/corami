@@ -99,6 +99,24 @@ describe('the archive', () => {
     expect(localManifest(root).files).toBe(1);
   });
 
+  test('leaves the files that git creates and deletes on its own out', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'corami-archive-locks-'));
+    mkdirSync(join(root, '.git', 'objects', 'pack'), { recursive: true });
+    writeFileSync(join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    writeFileSync(join(root, '.git', 'objects', 'maintenance.lock'), '');
+    writeFileSync(join(root, '.git', 'gc.pid'), '1234');
+    writeFileSync(join(root, '.git', 'objects', 'pack', 'tmp_pack_abc'), '');
+    writeFileSync(join(root, '.git', 'objects', 'pack', 'pack-abc.pack'), 'pack');
+
+    const paths = archiveList(root);
+
+    expect(paths).toContain('.git/HEAD');
+    expect(paths).toContain('.git/objects/pack/pack-abc.pack');
+    expect(paths).not.toContain('.git/objects/maintenance.lock');
+    expect(paths).not.toContain('.git/gc.pid');
+    expect(paths).not.toContain('.git/objects/pack/tmp_pack_abc');
+  });
+
   test('carry keys and env files: they are files of the project', async () => {
     const root = await mkdtemp(join(tmpdir(), 'corami-archive-keys-'));
     writeFileSync(join(root, 'upload.jks'), 'key');

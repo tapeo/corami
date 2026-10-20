@@ -60,6 +60,10 @@ function gitEntries(root: string): { entries: string[]; bytes: number } {
     const found: string[] = [];
 
     for (const name of names) {
+      if (transientGitFile(name)) {
+        continue;
+      }
+
       const full = join(current, name);
       const path = toPosix(relative(root, full));
 
@@ -84,6 +88,17 @@ function gitEntries(root: string): { entries: string[]; bytes: number } {
   }
 
   return { entries: entries.sort((left, right) => comparePaths(left, right)), bytes };
+}
+
+function transientGitFile(name: string): boolean {
+  return (
+    name.endsWith('.lock') ||
+    name === 'gc.pid' ||
+    name.startsWith('tmp_pack_') ||
+    name.startsWith('tmp_idx_') ||
+    name.startsWith('tmp_rev_') ||
+    name.startsWith('tmp_midx_')
+  );
 }
 
 function comparePaths(left: string, right: string): number {
