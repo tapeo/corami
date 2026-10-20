@@ -469,17 +469,6 @@ export function gitWatchSpec(
   };
 }
 
-export function execApproverSpec(binary: string): ServiceSpec {
-  return {
-    name: 'corami-exec-approver',
-    description: 'Corami exec approval dialog',
-    binary,
-    args: ['exec', 'approver'],
-    restart: true,
-    logFile: join(homedir(), '.corami', 'logs', 'exec-approver.log'),
-  };
-}
-
 export async function removeService(spec: ServiceSpec): Promise<boolean> {
   const platform = servicePlatform();
   const short = serviceShortName(spec.name);

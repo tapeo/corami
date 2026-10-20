@@ -38,15 +38,7 @@ export async function remote(context: CommandContext): Promise<CommandResult> {
     throw new CoramiError({
       code: 'config_invalid',
       message: `${clientName} is not registered on this server`,
-      fix: `On ${clientName}, run corami exec allow`,
-    });
-  }
-
-  if (!client.allowed) {
-    throw new CoramiError({
-      code: 'generic',
-      message: `${clientName} does not allow commands from this server`,
-      fix: `On ${clientName}, run corami exec allow`,
+      fix: `On ${clientName}, run corami exec setup`,
     });
   }
 
@@ -123,7 +115,6 @@ export async function serverStatus(context: CommandContext): Promise<CommandResu
 
     return {
       name: client.name,
-      allowed: client.allowed,
       online: peer === undefined ? '?' : peer.online ? 'yes' : 'no',
       os: client.os,
     };
@@ -134,13 +125,12 @@ export async function serverStatus(context: CommandContext): Promise<CommandResu
   }
 
   if (rows.length === 0) {
-    return { text: 'No clients. On a client, run corami exec allow.' };
+    return { text: 'No clients. On a client, run corami exec setup.' };
   }
 
   return {
     text: renderTable(rows, [
       { header: 'Client', value: (row) => row.name },
-      { header: 'Allowed', value: (row) => (row.allowed ? 'yes' : 'no') },
       { header: 'Online', value: (row) => row.online },
       { header: 'OS', value: (row) => row.os },
     ]),

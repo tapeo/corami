@@ -2,7 +2,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { basename, join } from 'node:path';
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
-import { readSshdConfig, shortName } from '@/cli/exec-client-system.ts';
+import { shortName } from '@/cli/exec-client-system.ts';
 import { health, listClients, listProjects } from '@/cli/server-client.ts';
 import { projectRoot, projectsRootFor, readGlobalConfig } from '@/core/config.ts';
 import {
@@ -14,9 +14,8 @@ import {
   checkTailscale,
 } from '@/core/doctor.ts';
 import { toCoramiError } from '@/core/errors.ts';
-import { commandPath, run as runCommand } from '@/core/exec.ts';
+import { run as runCommand } from '@/core/exec.ts';
 import { findExecLine } from '@/core/exec-ssh-keys.ts';
-import { sshdAcceptsPasswords } from '@/core/exec-sshd.ts';
 import { findTool, MUTAGEN } from '@/core/pinned-tools.ts';
 import { orphanServerFolders, serverPathsOf } from '@/core/project-add.ts';
 import { canSudo, ownerOfServer, privilegedGroups } from '@/core/server-user.ts';
@@ -33,7 +32,6 @@ import {
 } from '@/core/ssh-policy.ts';
 import { daemonServiceActive } from '@/integrations/mutagen.ts';
 import {
-  execApproverSpec,
   gitWatchSpec,
   launchAgentPath,
   type ServiceHealth,
@@ -173,72 +171,25 @@ async function checkExec(): Promise<CheckResult[]> {
 
 async function checkExecClient(serverHost: string): Promise<CheckResult[]> {
   const server = shortName(serverHost);
-  const checks: CheckResult[] = [];
-  const authorized = await authorizedKeysText();
-  const line = findExecLine(authorized, server);
+  const line = findExecLine(await authorizedKeysText(), server);
 
   if (line === undefined) {
-    checks.push({
-      id: 'exec.allowed',
-      status: 'ok',
-      summary: `The channel is off: ${server} cannot run commands here`,
-    });
-  } else {
-    checks.push({
-      id: 'exec.allowed',
-      status: 'ok',
-      summary: `The channel is on: ${server} can ask to run commands here`,
-    });
-  }
-
-  if (line !== undefined) {
-    const keysOnly = !sshdAcceptsPasswords(await readSshdConfig());
-
-    if (keysOnly) {
-      checks.push({
-        id: 'exec.sshd',
+    return [
+      {
+        id: 'exec.setup',
         status: 'ok',
-        summary: 'sshd accepts keys only',
-      });
-    } else {
-      checks.push({
-        id: 'exec.sshd',
-        status: 'warn',
-        summary: 'The channel is on while sshd accepts passwords',
-        fix: 'Write /etc/ssh/sshd_config.d/100-corami.conf with PasswordAuthentication no and KbdInteractiveAuthentication no',
-      });
-    }
-
-    checks.push(await checkApprovalDialog());
+        summary: `${server} cannot run commands here: run corami exec setup to connect`,
+      },
+    ];
   }
 
-  return checks;
-}
-
-async function checkApprovalDialog(): Promise<CheckResult> {
-  const health = await serviceHealth(execApproverSpec(process.execPath)).catch(() => undefined);
-
-  if (health?.status !== 'running') {
-    return {
-      id: 'exec.approver',
-      status: 'warn',
-      summary:
-        'The approval dialog does not run: new commands are answered only with corami exec approve',
-      ...(health === undefined ? {} : { detail: `The service is ${health.detail}` }),
-      fix: 'Run corami exec allow again',
-    };
-  }
-
-  if (process.platform === 'linux' && (await commandPath('zenity')) === undefined) {
-    return {
-      id: 'exec.approver',
-      status: 'warn',
-      summary: 'zenity is missing: the approval dialog cannot open',
-      fix: 'Answer with corami exec approve, or install zenity',
-    };
-  }
-
-  return { id: 'exec.approver', status: 'ok', summary: 'The approval dialog runs' };
+  return [
+    {
+      id: 'exec.setup',
+      status: 'ok',
+      summary: `${server} can run commands here, in the copies of the projects`,
+    },
+  ];
 }
 
 async function authorizedKeysText(): Promise<string> {
@@ -257,7 +208,7 @@ async function checkExecServer(): Promise<CheckResult[]> {
       (entry) => entry.hostName === client.name || entry.dnsName.split('.')[0] === client.name,
     );
 
-    return client.allowed && (peer === undefined || !peer.online);
+    return peer === undefined || !peer.online;
   });
 
   if (clients.length === 0) {
@@ -284,7 +235,7 @@ async function checkExecServer(): Promise<CheckResult[]> {
     {
       id: 'exec.clients',
       status: 'warn',
-      summary: `Clients that allow commands but are unreachable: ${unreachable.map((client) => client.name).join(', ')}`,
+      summary: `Clients that are unreachable: ${unreachable.map((client) => client.name).join(', ')}`,
       fix: 'Wake them, or check Tailscale on both machines',
     },
   ];

@@ -51,7 +51,7 @@ The command (`scripts/dev-install.ts`):
 
 1. compiles `dist/corami` with `bun run bin`;
 2. installs it in place of `~/.corami/bin/corami`, where both the `corami` command in the PATH and the services point;
-3. restarts the services installed on this machine, `corami-daemon`, `corami-git-watch` and `corami-exec-approver`, in the systemd scope they are installed in (user or system). On macOS it registers the launch agents again with `bootout` and `bootstrap`, because a restart after a change of binary can fail on the launch constraint of the previous one;
+3. restarts the services installed on this machine, `corami-daemon` and `corami-git-watch`, in the systemd scope they are installed in (user or system). On macOS it registers the launch agents again with `bootout` and `bootstrap`, because a restart after a change of binary can fail on the launch constraint of the previous one;
 4. lists the expected services that are not installed, with the command to install them.
 
 Example on a server:

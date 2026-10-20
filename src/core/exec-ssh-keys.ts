@@ -2,7 +2,6 @@ export interface AuthorizedKeyInput {
   gateCommand: string;
   publicKey: string;
   server: string;
-  addresses: string[];
 }
 
 export function execComment(server: string): string {
@@ -19,15 +18,7 @@ function escapeOption(value: string): string {
 }
 
 export function authorizedKeyLine(input: AuthorizedKeyInput): string {
-  const options = [`restrict`];
-
-  if (input.addresses.length > 0) {
-    options.push(`from="${input.addresses.join(',')}"`);
-  }
-
-  options.push(`command="${escapeOption(input.gateCommand)}"`);
-
-  return `${options.join(',')} ${keyBody(input.publicKey)} ${execComment(input.server)}`;
+  return `command="${escapeOption(input.gateCommand)}" ${keyBody(input.publicKey)} ${execComment(input.server)}`;
 }
 
 export function findExecLine(text: string, server: string): string | undefined {
@@ -43,20 +34,6 @@ export function withoutExecLine(text: string, server: string): string {
   const joined = lines.join('\n').replace(/\n+$/, '');
 
   return joined === '' ? '' : `${joined}\n`;
-}
-
-export function execLineAddresses(line: string | undefined): string[] {
-  if (line === undefined) {
-    return [];
-  }
-
-  const match = /from="([^"]*)"/.exec(line);
-  const value = match?.[1] ?? '';
-
-  return value
-    .split(',')
-    .map((address) => address.trim())
-    .filter((address) => address !== '');
 }
 
 export function knownHostsLine(host: string, publicKey: string): string {

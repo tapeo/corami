@@ -183,9 +183,8 @@ corami/
 | State | `~/.corami/state.db` | |
 | Daemon token | `~/.corami/daemon-token` (0600) | |
 | Service logs | `~/.corami/logs/` (git watch) | `~/.corami/logs/` |
-| Exec channel | `~/.corami/exec/` (key of the clients, `known_hosts`) | `~/.corami/exec/` (rules, pending, running, state) |
+| Exec channel | `~/.corami/exec/` (`known_hosts`) | |
 | Exec key | `~/.ssh/id_ed25519_corami_exec` | |
-| Exec log | | `~/.corami/logs/exec.log` |
 | Projects | `~/projects/<project>`, or the folder chosen with `--server-path` | the folder given as the argument of `project add` and kept by the session. Never guessed |
 
 Every service listens on `127.0.0.1:<port>`. `tailscale serve` exposes the same port number over HTTPS on the tailnet (see "Network and security").
@@ -301,17 +300,13 @@ Nothing in Corami runs a build or a project command. The details, including buil
 
 `corami exec` runs a command of the server inside the synced copy of a client. The agent lives on the server; a simulator, `xcodebuild` or a device plugged into a Mac need the Mac.
 
-- The client turns the channel on with `corami exec allow`, in its terminal. Before it, sshd must accept keys only: `exec allow` reads the effective configuration and offers the drop-in `/etc/ssh/sshd_config.d/100-corami.conf`.
-- The permission is a line of `~/.ssh/authorized_keys` on the client: `restrict,from="<tailnet IPs of the server>",command="<corami> exec gate"`. `restrict` removes pty, forwarding and X11; `from=` limits the key to the server.
-- The rules live on the client, in `~/.corami/exec/rules.json`: `allow`, `ask` and `deny` on `argv`, matched token by token, `*` only as the last token, `deny` wins, default `ask`. The agent cannot read or change them: the server reaches the client only through the gate.
-- A time-limited approval lives next to them, in `~/.corami/exec/grants.json`: `{ project, until }`, 15 minutes from the answer, pure functions in `exec-grants.ts`. It turns an `ask` into an allow for every command of the project, `sh -c` scripts included, without parsing them: a `deny` rule still wins. A waiting request checks it at every poll, so the requests of the project already in the queue go through. A broken file counts as no approval. `exec deny` removes it.
-- The server sends a base64url JSON in `SSH_ORIGINAL_COMMAND`: `{ "v": 1, "project": "myapp", "argv": [...] }`. The gate decides, waits for approval up to 60 seconds, flushes the sync, runs `[$SHELL, "-lc", "exec \"$@\"", ...argv]` in the copy, and streams stdout, stderr and the exit code back.
-- A new command waits in `~/.corami/exec/pending/`. One loop answers it, with two faces: the service `corami exec approver` opens a dialog in the graphical session (`osascript` on macOS, `zenity` on Linux), and `corami exec approve` asks in a terminal. The answer is written with an exclusive create, so the first one wins and the other face closes its question. The command reaches the dialog as an argument, never inside the script, and `zenity` runs with `--no-markup`. The dialog takes the focus while the user may be typing, so the command sits in a read-only field and Enter never allows: macOS has no default button, `zenity` defaults to deny. *Always allow* comes in two scopes, the subcommand (`flutter build *`) and the program (`flutter *`), chosen by the pure `approvalOptions` and `ruleArgv`. *Allow everything* in the project for 15 minutes writes a grant instead of a rule. Without an answer the server sees a Corami error with the fix.
-- An ssh session without a pty sends no signal to the gate when the connection closes: the gate watches its parent process, and when it changes it cancels the request or stops the process group of the command.
-- Running commands are in `~/.corami/exec/running/`: `exec deny` stops them, cancels the waiting requests, removes the key line and the approval service.
+- `corami exec setup`, run once on the client, writes a line of `~/.ssh/authorized_keys`: `command="<corami> exec gate"`. The key of the server opens nothing but the gate. It is idempotent and writes the line again when the binary of the client moves.
+- The gate takes no decision on the command. It finds the copy of the project, flushes the sync, runs the command and streams the result back. The control is in the harness on the server, which decides which `corami exec` it allows.
+- The server sends a base64url JSON in `SSH_ORIGINAL_COMMAND`: `{ "v": 1, "project": "myapp", "argv": [...] }`. The gate flushes the sync, runs `[$SHELL, "-lc", "exec \"$@\"", ...argv]` in the copy, and streams stdout, stderr and the exit code back.
+- An ssh session without a pty sends no signal to the gate when the connection closes: the gate watches its parent process, and when it changes it stops the process group of the command.
 - Output is the exception to the CLI contract: without `--json` it is the stdout and stderr of the command, even without a TTY. `--json` collects them in the envelope with `client`, `project`, `exit_code`, `stdout`, `stderr`, `duration_ms`.
-- The server keeps `clients(name, ssh_host, ssh_user, os, host_key, allowed, updated_at)`, the dedicated key `~/.ssh/id_ed25519_corami_exec` and `~/.corami/exec/known_hosts`, with `StrictHostKeyChecking=yes`: no trust on first use.
-- `GET /v1/exec/key` gives the public key and the tailnet addresses; `PUT /v1/clients/<name>` registers the client with its host key; `POST /v1/clients/<name>/probe` enters with a probe payload, which executes nothing.
+- The server keeps `clients(name, ssh_host, ssh_user, os, host_key, updated_at)`, the dedicated key `~/.ssh/id_ed25519_corami_exec` and `~/.corami/exec/known_hosts`, with `StrictHostKeyChecking=yes`: no trust on first use.
+- `GET /v1/exec/key` gives the public key; `PUT /v1/clients/<name>` registers the client with its host key; `POST /v1/clients/<name>/probe` enters with a probe payload, which executes nothing.
 
 ## Worktrees
 
@@ -521,9 +516,9 @@ All routes are under `/v1`, authenticated with the Tailscale identity headers an
 | PUT | `/projects/:project/previews/:name` | register or move a preview: `{ "target_port": 3000 }` |
 | DELETE | `/projects/:project/previews/:name` | remove the preview and its serve rule |
 | GET | `/previews` | every preview with `url` and `responding` |
-| GET | `/exec/key` | public key of the dedicated exec key and the tailnet addresses of the server |
-| GET | `/clients` | registered clients, with `allowed` |
-| PUT | `/clients/:name` | register a client: `{ "ssh_host": ..., "ssh_user": ..., "os": ..., "host_key": ..., "allowed": ... }`; the host key goes into `known_hosts` |
+| GET | `/exec/key` | public key of the dedicated exec key |
+| GET | `/clients` | registered clients |
+| PUT | `/clients/:name` | register a client: `{ "ssh_host": ..., "ssh_user": ..., "os": ..., "host_key": ... }`; the host key goes into `known_hosts` |
 | POST | `/clients/:name/probe` | enters the client with a probe payload, which executes nothing |
 
 ### SQLite tables
@@ -531,10 +526,10 @@ All routes are under `/v1`, authenticated with the Tailscale identity headers an
 ```
 projects(name, path, repo_url, created_at, owned)
 previews(project, name, public_port, target_port, created_at)
-clients(name, ssh_host, ssh_user, os, host_key, allowed, updated_at)
+clients(name, ssh_host, ssh_user, os, host_key, updated_at)
 ```
 
-`owned` tells a folder Corami made (a clone, an import) from one registered where it was. A database written before the column existed fills it with the rule of the day, "inside the projects root". `allowed` in `clients` is what the last `corami exec allow` or `exec deny` said: the truth of the channel is the key line on the client, not the row.
+`owned` tells a folder Corami made (a clone, an import) from one registered where it was. A database written before the column existed fills it with the rule of the day, "inside the projects root". A database written before `clients` lost `allowed` keeps the column, with its default, and Corami ignores it: the truth of the connection is the key line on the client.
 
 ## CLI output contract
 
@@ -610,11 +605,10 @@ One binary, two setups. In a terminal they ask what the flags leave out (role, o
 | HTTPS rule on port 7420 | server | `tailscale serve --bg` | `setup server`, step `serve` |
 | `corami-git-watch` | server and client | systemd (same scope as the daemon on the server, user on a Linux client), launchd agent `dev.corami.git-watch` on macOS, scheduled task `corami-git-watch` on Windows | both setups, step `git-watch` |
 | Mutagen daemon | client | user systemd unit `corami-mutagen` (`mutagen daemon run`) on Linux; `mutagen daemon register` on macOS (launchd agent `io.mutagen.mutagen`) and on Windows | `setup client`, step `mutagen-daemon` |
-| `corami-exec-approver` | client | user systemd unit on Linux, launchd agent `dev.corami.exec-approver` on macOS, output in `~/.corami/logs/exec-approver.log` | `corami exec allow`, removed by `corami exec deny` |
 
-`corami doctor` checks the git alignment service on every side, the Mutagen daemon service and, with the exec channel on, the approval service on the clients, with the command that installs them again as the remedy. It asks launchd whether the agent runs, not only whether it is loaded: an agent that cannot start is reported with its last exit code.
+`corami doctor` checks the git alignment service on every side and the Mutagen daemon service, with the command that installs them again as the remedy. It asks launchd whether the agent runs, not only whether it is loaded: an agent that cannot start is reported with its last exit code.
 
-`corami update` restarts the daemon, the git alignment service and the approval service after replacing the binary. On macOS the two launch agents are registered again, not restarted: `launchctl kickstart` reuses the launch constraint that Background Task Management attached to the previous binary, so an agent that changes binary can fail to start with `EX_CONFIG` (78). The update writes the plist again and runs `bootout` and `bootstrap`, as the setup does, then waits until the agent runs and reports the failure with its exit code and the command that repairs it. The Mutagen daemon runs the Mutagen binary, which only changes with the pinned version.
+`corami update` restarts the daemon and the git alignment service after replacing the binary. On macOS the launch agent is registered again, not restarted: `launchctl kickstart` reuses the launch constraint that Background Task Management attached to the previous binary, so an agent that changes binary can fail to start with `EX_CONFIG` (78). The update writes the plist again and runs `bootout` and `bootstrap`, as the setup does, then waits until the agent runs and reports the failure with its exit code and the command that repairs it. The Mutagen daemon runs the Mutagen binary, which only changes with the pinned version.
 
 ### Server setup
 

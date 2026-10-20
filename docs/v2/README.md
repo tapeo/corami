@@ -53,7 +53,7 @@ Topics postponed after v1. They are ideas, not decisions: they will be analysed 
 
 ## Remote runs
 
-**Why:** in v1 `corami exec` already runs a command of the server on a client. The key is restricted to the gate, the rules and the approval are on the client, the sync is flushed before the command and the outcome comes back. What remains are the parts around it.
+**Why:** in v1 `corami exec` already runs a command of the server on a client. The key is restricted to the gate, the sync is flushed before the command and the outcome comes back. What remains are the parts around it.
 
 **What has emerged:**
 - Returning the artifact (an `.ipa`, an `.apk`) to the server, where it is published.

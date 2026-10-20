@@ -9,7 +9,6 @@ import { validProjectName } from '@/core/projects.ts';
 import { type ClientRow, getClient, listClients, upsertClient } from '@/core/state.ts';
 import { ensureExecKey } from '@/integrations/ssh.ts';
 import { runOnClient } from '@/integrations/ssh-exec.ts';
-import { status as tailscaleStatus } from '@/integrations/tailscale.ts';
 
 export interface ExecApiResult {
   status: number;
@@ -25,19 +24,8 @@ export async function handleExecRoute(
   }
 
   const publicKey = await ensureExecKey();
-  const tailscale = await tailscaleStatus().catch(() => undefined);
 
-  return {
-    status: 200,
-    body: {
-      ok: true,
-      data: {
-        public_key: publicKey,
-        ip: tailscale?.ipv4 ?? null,
-        ips: tailscale?.ips ?? [],
-      },
-    },
-  };
+  return { status: 200, body: { ok: true, data: { public_key: publicKey } } };
 }
 
 export async function handleClientsRoute(
@@ -83,7 +71,7 @@ async function registerClient(name: string, body: Record<string, unknown>): Prom
     throw new CoramiError({
       code: 'usage',
       message: 'The registration of a client needs ssh_host, ssh_user, os and host_key',
-      fix: 'On the client, run corami exec allow again',
+      fix: 'On the client, run corami exec setup again',
     });
   }
 
@@ -95,7 +83,6 @@ async function registerClient(name: string, body: Record<string, unknown>): Prom
     ssh_user: sshUser,
     os,
     host_key: hostKey,
-    allowed: body.allowed === true,
     updated_at: new Date().toISOString(),
   };
 
@@ -111,15 +98,7 @@ async function probeClient(name: string): Promise<ExecApiResult> {
     throw new CoramiError({
       code: 'config_invalid',
       message: `Client not found: ${name}`,
-      fix: 'On the client, run corami exec allow',
-    });
-  }
-
-  if (!client.allowed) {
-    throw new CoramiError({
-      code: 'usage',
-      message: `${name} does not allow commands from this server`,
-      fix: `On ${name}, run corami exec allow`,
+      fix: 'On the client, run corami exec setup',
     });
   }
 

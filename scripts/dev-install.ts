@@ -5,7 +5,6 @@ import { paths, readGlobalConfig } from '@/core/config.ts';
 import { run } from '@/core/exec.ts';
 import { replaceBinary } from '@/core/release.ts';
 import {
-  execApproverSpec,
   gitWatchSpec,
   launchAgentPath,
   refreshService,
@@ -45,11 +44,6 @@ const services: Array<{ spec: ServiceSpec; fix: string; expected: boolean }> = [
         ? 'corami setup server --step git-watch'
         : 'corami setup client <server> --step git-watch',
     expected: role !== undefined,
-  },
-  {
-    spec: execApproverSpec(target),
-    fix: 'corami exec allow',
-    expected: false,
   },
 ];
 

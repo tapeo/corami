@@ -51,14 +51,11 @@ export interface ClientSummary {
   ssh_user: string;
   os: string;
   host_key: string;
-  allowed: boolean;
   updated_at: string;
 }
 
 export interface ExecKeyData {
   public_key: string;
-  ip: string | undefined;
-  ips: string[];
 }
 
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -282,16 +279,9 @@ export async function deletePreview(
 }
 
 export async function execKey(): Promise<ExecKeyData> {
-  const data = await request<{ public_key?: unknown; ip?: unknown; ips?: unknown }>('/v1/exec/key');
-  const ips = Array.isArray(data.ips)
-    ? data.ips.filter((value): value is string => typeof value === 'string')
-    : [];
+  const data = await request<{ public_key?: unknown }>('/v1/exec/key');
 
-  return {
-    public_key: typeof data.public_key === 'string' ? data.public_key : '',
-    ip: typeof data.ip === 'string' ? data.ip : undefined,
-    ips,
-  };
+  return { public_key: typeof data.public_key === 'string' ? data.public_key : '' };
 }
 
 export async function listClients(): Promise<ClientSummary[]> {

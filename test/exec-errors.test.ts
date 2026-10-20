@@ -34,7 +34,7 @@ describe('remoteExecError', () => {
     });
 
     expect(error?.message).toBe('macbook does not allow commands from this server');
-    expect(error?.fix).toContain('corami exec allow');
+    expect(error?.fix).toContain('corami exec setup');
   });
 
   test('reads a changed host key', () => {

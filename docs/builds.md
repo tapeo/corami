@@ -30,10 +30,10 @@ The output, the exit code included, comes back as it is. The build output stays 
 Setup, once:
 
 1. On the Mac: System Settings > General > Sharing > Remote Login.
-2. On the Mac: `corami setup client <server>`, then `corami exec allow` in its terminal.
-3. On the server: `corami exec status` lists the client as allowed and online.
+2. On the Mac: `corami setup client <server>`, then `corami exec setup`.
+3. On the server: `corami exec status` lists the client as online.
 
-`exec allow` offers to close sshd to passwords, adds the key of the server to `authorized_keys` limited to the gate, registers the host key of the Mac on the server, checks the path from the server and installs the approval dialog. The rules and the approval are on the Mac: a new command opens a dialog with *Allow once*, *Always allow* on the subcommand (`flutter build *`) or on the program (`flutter *`), *Allow everything* in the project for 15 minutes, and *Deny*, `corami exec approve` answers the same requests from a terminal, also over ssh from a phone, and `corami exec rule` adds rules in advance. A command not answered within 60 seconds fails with a Corami error, and the agent can run it again.
+`exec setup` adds the key of the server to `authorized_keys`, limited to the gate, registers the host key of the Mac on the server and checks the path from the server. It asks nothing: the client runs what the server sends, and the harness on the server decides which `corami exec` the agent may run.
 
 The rest of the notes stay:
 
@@ -69,7 +69,7 @@ A simulator, an emulator or a phone plugged into the Mac is driven by an MCP ser
 
 `mobile-mcp` drives Android and iOS simulators and devices, with screenshots. `xcodebuildmcp` runs `xcodebuild` and `simctl` ([docs](https://www.xcodebuildmcp.com/docs/clients)). The project names the copy the tools work in, and the gate sends the server's stdio to them.
 
-The first run asks on the Mac. For `npx` and the other programs that run arbitrary code, *Always allow* allows exactly that command, never `npx *`. If nobody answers within 60 seconds, add the two rules first from the Mac with `corami exec rule allow`. When the harness closes the MCP server, the gate closes the processes on the Mac.
+When the harness closes the MCP server, the gate closes the processes on the Mac.
 
 ## What Corami does not do
 

@@ -57,7 +57,7 @@ A role and flags after `--` go to the setup. Without a terminal it installs the 
 | `corami-git-watch` | server and clients: systemd on Linux, launchd agent `dev.corami.git-watch` on macOS, scheduled task on Windows | keeps `.git` aligned with `origin` | both setups, step `git-watch` |
 | Mutagen daemon | clients: user systemd unit `corami-mutagen` on Linux, launchd agent `io.mutagen.mutagen` on macOS, logon registration on Windows | carries the sync sessions, also after a reboot | `corami setup client`, step `mutagen-daemon` |
 
-`corami doctor` reports a service that is not running and the step that installs it again. On the server it also reports the folders of the projects root that no project names, and the ones an import that stopped left behind. It reports how Tailscale SSH treats `root` and the other accounts of the machine, whether the tailnet holds people besides the owner, and on a client whether sshd, the exec channel and its approval dialog are in order: the remedies are in [security.md](security.md).
+`corami doctor` reports a service that is not running and the step that installs it again. On the server it also reports the folders of the projects root that no project names, and the ones an import that stopped left behind. It reports how Tailscale SSH treats `root` and the other accounts of the machine, whether the tailnet holds people besides the owner, and on a client whether the exec channel is connected: the remedies are in [security.md](security.md).
 
 ## Projects
 
@@ -133,29 +133,21 @@ Every side is a peer and follows only `origin`: `corami git watch` runs one cycl
 
 ## Exec
 
-`corami exec` runs a command of the server on a client, inside the synced copy of a project. The agent works on the server; a simulator, `xcodebuild` or a device plugged into a Mac need the Mac. The channel is off until the client turns it on in its terminal.
+`corami exec` runs a command of the server on a client, inside the synced copy of a project. The agent works on the server; a simulator, `xcodebuild` or a device plugged into a Mac need the Mac.
 
 | Command | Where | Description |
 |---|---|---|
 | `corami exec --on <client> [--project <name>] -- <command>` | server | runs the command on the client, in the copy of the project. The project comes from the current folder |
-| `corami exec status` | all | on the client: channel, sshd, rules, projects allowed for a while, waiting and running commands. On the server: the registered clients, allowed and online |
-| `corami exec allow` | client, terminal | turns the channel on: sshd to keys only, the key of the server in `authorized_keys`, the registration and a check from the server |
-| `corami exec deny` | client | removes the key line and the time-limited approvals, stops the running commands, cancels the waiting ones and informs the server |
-| `corami exec approve` | client, terminal | stays open and answers the requests of the server as they arrive: once, always on the subcommand or on the program, everything in the project for 15 minutes, or deny. Also over ssh, from a phone |
-| `corami exec rule allow\|deny\|rm [--project <name>] -- <command>` | client | adds or removes a rule |
-| `corami exec rules` | client | lists the rules |
+| `corami exec setup` | client | connects this client to its server: the key of the server in `authorized_keys`, the registration and a check from the server |
+| `corami exec status` | all | on the client: the server, the connection and the gate. On the server: the registered clients, online and OS |
 
-A rule is a list of tokens compared with `argv`, token by token. `*` is only the last token and covers any rest, even empty. `deny` wins over `allow`, and a command with no rule asks. `--project` limits a rule to one project. A rule limits the command, not what it does: `flutter run` runs project code and `allow npx *` allows everything, so `exec rule allow` warns when it covers a program that runs arbitrary code.
+`exec setup` writes one line in `~/.ssh/authorized_keys`, `command="<corami> exec gate" <key> corami-exec:<server>`: the key of the server opens only the gate. It can be run again, and it has to be run again when the binary of the client changes path. The client lets the server run any command it sends: the control is in the harness, see [security](security.md).
 
-A command with no rule asks on the client. A dialog opens on the screen of the client with *Allow once*, two *Always allow*, *Allow everything in myapp for 15 minutes* and *Deny*; a terminal that runs `corami exec approve` asks the same question, and the first answer wins. The narrow *Always allow* adds the rule of the program, its first argument and `*`, such as `flutter build *`; the wide one adds the program and `*`, such as `flutter *` or `adb *`. A program that runs arbitrary code (`npx`, `node`, `bash`...) gets one *Always allow*, on the exact command. *Allow everything* lets every command of the project run without asking for 15 minutes, `sh -c` scripts included, and the requests of the project already waiting go through: `deny` rules still win, nothing is written to the rules, and `corami exec deny` ends it early. The command sits in a read-only field and no button answers Enter, so keys typed elsewhere when the dialog opens answer nothing. The wait is 60 seconds, shorter than the timeout of the bash tool of a harness: without an answer the server sees a Corami error and the agent can run the command again. When the connection closes while it waits, or while the command runs, the gate cancels the request or stops the command.
+To disconnect the client, remove the line that ends with `corami-exec:<server>` from `~/.ssh/authorized_keys`.
 
 ```bash
 # on the client, once
-corami exec allow
-
-# on the client, the rules of a simulator and of a build
-corami exec rule allow -- xcrun simctl '*'
-corami exec rule allow --project myapp -- flutter build '*'
+corami exec setup
 
 # from the server, inside the project
 corami exec --on macbook -- flutter devices
@@ -197,7 +189,7 @@ An MCP server can run on the client through the same channel. The first run asks
 }
 ```
 
-For `npx` and the other programs that run arbitrary code, *Always allow* allows exactly that command, not `npx *`. When the harness closes the MCP server, the connection ends and the gate closes the processes of the command on the client.
+When the harness closes the MCP server, the connection ends and the gate closes the processes of the command on the client.
 
 ## Output examples
 

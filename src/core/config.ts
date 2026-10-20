@@ -25,12 +25,6 @@ export interface CoramiPaths {
   syncState: string;
   daemonToken: string;
   exec: string;
-  execRules: string;
-  execGrants: string;
-  execPending: string;
-  execRunning: string;
-  execLog: string;
-  execState: string;
   execKnownHosts: string;
 }
 
@@ -63,12 +57,6 @@ export function paths(): CoramiPaths {
     syncState: join(root, 'sync-state.json'),
     daemonToken: join(root, 'daemon-token'),
     exec,
-    execRules: join(exec, 'rules.json'),
-    execGrants: join(exec, 'grants.json'),
-    execPending: join(exec, 'pending'),
-    execRunning: join(exec, 'running'),
-    execLog: join(logs, 'exec.log'),
-    execState: join(exec, 'state.json'),
     execKnownHosts: join(exec, 'known_hosts'),
   };
 }

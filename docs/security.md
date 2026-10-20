@@ -59,13 +59,13 @@ Remove the device from the tailnet in the [Tailscale console](https://login.tail
 
 ## Commands on a client
 
-`corami exec` runs a command of the server on a client, inside the synced copy. The client turns the channel on in its terminal with `corami exec allow`, and turns it off with `corami exec deny`. The server reaches the client through a key line in `~/.ssh/authorized_keys` limited with `restrict,from=...,command="... exec gate"`, and sshd must accept keys only: `exec allow` writes `/etc/ssh/sshd_config.d/100-corami.conf` with sudo when passwords are on.
+`corami exec` runs a command of the server on a client, inside the synced copy. `corami exec setup`, run once on the client, writes a key line in `~/.ssh/authorized_keys`: `command="<corami> exec gate"`. The key of the server opens nothing but the gate, so sshd gives it no shell, no pty and no forwarding. To disconnect the client, remove the line that ends with `corami-exec:<server>`.
 
-The rules and the approval are on the client. `ask` is the default, `deny` wins, and the agent on the server cannot read or change them: every payload passes through the gate, and the file of the rules is not reachable from the server. A new command is answered in a dialog on the client or in `corami exec approve`; the command is shown as text, never run as a script or read as markup. A rule limits the command, not what it does: `flutter run` runs code of the project, and `allow npx *` allows everything. `exec rule allow` says so when a rule covers a program that runs arbitrary code.
+There is no second check on the client. The client lets the server run any command, as the user of the client, in the copies of the projects. The control belongs to the harness on the server, where it already decides which commands the agent runs: the permissions of Claude Code or OpenCode can allow `corami exec --on macbook -- flutter build '*'` and ask about the rest. An agent with the full permissions of its harness can already read and write the server, and through the sync the copies on the client.
 
-The gate protects the client from an agent that goes wrong, not from whoever controls the server. A command outside the rules, such as reading `~/.ssh` or the keychain, is denied or asked, and every run is in `~/.corami/logs/exec.log`. But the project comes from the server through the sync, and a build runs the files of the project: an Xcode build phase, a Podfile, a Gradle script, a build hook. Allowing a build of a synced project means trusting the server with the account of the client that runs it. Keep the channel on only while a client needs it, and turn it off with `corami exec deny`.
+The line of the gate is what the client gives away, and it is worth saying exactly: the agent can read `~/.ssh`, the keychain and the rest of the account when the harness allows the command, and a build runs the files of the project, an Xcode build phase, a Podfile, a Gradle script, a build hook. Connect a client when you need it, and remove the line when you do not.
 
-Checks: `exec.allowed`, `exec.sshd` and `exec.approver` on a client; `exec.clients` on the server.
+Checks: `exec.setup` on a client; `exec.clients` on the server.
 
 ## Keys and env files
 

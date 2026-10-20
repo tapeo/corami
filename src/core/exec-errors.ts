@@ -57,7 +57,7 @@ export function remoteExecError(failure: RemoteFailure): CoramiError | undefined
     return new CoramiError({
       code: 'generic',
       message: `${failure.client} does not allow commands from this server`,
-      fix: `On ${failure.client}, run corami exec allow`,
+      fix: `On ${failure.client}, run corami exec setup`,
     });
   }
 
@@ -65,7 +65,7 @@ export function remoteExecError(failure: RemoteFailure): CoramiError | undefined
     return new CoramiError({
       code: 'generic',
       message: `The host key of ${failure.client} changed`,
-      fix: `On ${failure.client}, run corami exec allow again to register the new key`,
+      fix: `On ${failure.client}, run corami exec setup again to register the new key`,
     });
   }
 

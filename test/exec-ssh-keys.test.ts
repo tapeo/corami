@@ -3,7 +3,6 @@ import { describe, expect, test } from 'bun:test';
 import {
   authorizedKeyLine,
   execComment,
-  execLineAddresses,
   findExecLine,
   knownHostsLine,
   withKnownHost,
@@ -13,34 +12,32 @@ import {
 const key = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample me@macbook';
 
 describe('authorizedKeyLine', () => {
-  test('locks the key to the gate and to the addresses of the server', () => {
+  test('locks the key to the gate', () => {
     const line = authorizedKeyLine({
       gateCommand: '/Users/me/.corami/bin/corami exec gate',
       publicKey: key,
       server: 'hearth-vps',
-      addresses: ['100.101.12.7', 'fd7a:115c:a1e0::1234'],
     });
 
     expect(line).toBe(
-      'restrict,from="100.101.12.7,fd7a:115c:a1e0::1234",command="/Users/me/.corami/bin/corami exec gate" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample corami-exec:hearth-vps',
+      'command="/Users/me/.corami/bin/corami exec gate" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample corami-exec:hearth-vps',
     );
   });
 
-  test('leaves out from= when the server has no address', () => {
+  test('escapes the quotes of the gate command', () => {
     const line = authorizedKeyLine({
-      gateCommand: 'corami exec gate',
+      gateCommand: '"/opt/my corami/corami" exec gate',
       publicKey: key,
       server: 'hearth-vps',
-      addresses: [],
     });
 
-    expect(line.startsWith('restrict,command=')).toBe(true);
+    expect(line.startsWith('command="\\"/opt/my corami/corami\\" exec gate" ')).toBe(true);
   });
 });
 
 describe('findExecLine', () => {
   test('finds the line of one server among the others', () => {
-    const text = `${key}\n${authorizedKeyLine({ gateCommand: 'corami exec gate', publicKey: key, server: 'hearth-vps', addresses: [] })}\n`;
+    const text = `${key}\n${authorizedKeyLine({ gateCommand: 'corami exec gate', publicKey: key, server: 'hearth-vps' })}\n`;
 
     expect(findExecLine(text, 'hearth-vps')?.includes('corami-exec:hearth-vps')).toBe(true);
     expect(findExecLine(text, 'other')).toBeUndefined();
@@ -53,29 +50,11 @@ describe('withoutExecLine', () => {
       gateCommand: 'corami exec gate',
       publicKey: key,
       server: 'hearth-vps',
-      addresses: [],
     });
     const text = `${key}\n${gate}\n`;
 
     expect(withoutExecLine(text, 'hearth-vps')).toBe(`${key}\n`);
     expect(withoutExecLine(gate, 'hearth-vps')).toBe('');
-  });
-});
-
-describe('execLineAddresses', () => {
-  test('reads the addresses of from=', () => {
-    const line = authorizedKeyLine({
-      gateCommand: 'corami exec gate',
-      publicKey: key,
-      server: 'hearth-vps',
-      addresses: ['100.101.12.7', '100.101.12.8'],
-    });
-
-    expect(execLineAddresses(line)).toEqual(['100.101.12.7', '100.101.12.8']);
-  });
-
-  test('gives nothing for a missing line', () => {
-    expect(execLineAddresses(undefined)).toEqual([]);
   });
 });
 

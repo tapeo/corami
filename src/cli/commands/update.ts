@@ -17,7 +17,6 @@ import {
 } from '@/core/release.ts';
 import { ownerBinary, ownerOfServer } from '@/core/server-user.ts';
 import {
-  execApproverSpec,
   gitWatchSpec,
   refreshService,
   type ServiceRefresh,
@@ -76,8 +75,7 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
   const copiedToOwner = await copyToOwner();
   const restarted = await restartDaemon();
   const watch = await refreshGitWatch(binary);
-  const approver = await refreshIfInstalled(execApproverSpec(binary));
-  const failures = [watch, approver].flatMap((result) =>
+  const failures = [watch].flatMap((result) =>
     result === undefined || result.ok
       ? []
       : [{ name: result.name, detail: result.detail, fix: result.fix }],
@@ -90,7 +88,6 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
     account_binary_updated: copiedToOwner,
     restarted_daemon: restarted,
     restarted_git_watch: watch?.ok === true,
-    restarted_exec_approver: approver?.ok === true,
     service_failures: failures,
   };
 
@@ -105,7 +102,6 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
       copiedToOwner ? 'The account that owns the projects runs the same binary.' : '',
       restarted ? 'Daemon service restarted.' : '',
       watch?.ok === true ? 'Git alignment service registered again and running.' : '',
-      approver?.ok === true ? 'Approval dialog registered again and running.' : '',
       ...failures.map(
         (failure) =>
           `${failure.name} not running after the update: ${failure.detail}. ${failure.fix}`,
@@ -315,10 +311,7 @@ async function refreshIfInstalled(spec: ServiceSpec): Promise<ServiceRefreshOutc
   return {
     ...refreshed,
     name: spec.name,
-    fix:
-      spec.name === 'corami-git-watch'
-        ? 'Run corami setup client <server> --step git-watch on a client, or corami setup server --step git-watch on the server'
-        : 'Run corami exec allow again',
+    fix: 'Run corami setup client <server> --step git-watch on a client, or corami setup server --step git-watch on the server',
   };
 }
 

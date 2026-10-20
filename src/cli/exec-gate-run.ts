@@ -1,20 +1,6 @@
 import type { CommandContext, CommandResult } from '@/cli/command.ts';
 import { tailnetIdentity } from '@/cli/exec-client-system.ts';
-import {
-  appendExecLog,
-  ensureExecDirs,
-  isPending,
-  newExecId,
-  readDecision,
-  readGrants,
-  readRules,
-  removePending,
-  removeRunning,
-  writePending,
-  writeRunning,
-} from '@/cli/exec-files.ts';
 import { CoramiError, toCoramiError } from '@/core/errors.ts';
-import { APPROVAL_WAIT_MS, approvalSeconds } from '@/core/exec-approval.ts';
 import { gateErrorLine } from '@/core/exec-errors.ts';
 import {
   type GateCommand,
@@ -22,13 +8,9 @@ import {
   gatePayload,
   parseGateRequest,
 } from '@/core/exec-gate.ts';
-import { activeGrant } from '@/core/exec-grants.ts';
-import { decide, type ExecChoice, ruleText } from '@/core/exec-rules.ts';
 import { MutagenEngine } from '@/integrations/mutagen.ts';
 
 const POLL_MS = 500;
-
-type Approval = 'answer' | 'grant';
 
 export async function runGate(context: CommandContext): Promise<CommandResult> {
   try {
@@ -49,7 +31,7 @@ async function gate(_context: CommandContext): Promise<CommandResult> {
     throw new CoramiError({
       code: 'usage',
       message: 'The gate runs only through ssh, from the server',
-      fix: 'On the client, run corami exec allow',
+      fix: 'On the client, run corami exec setup',
     });
   }
 
@@ -67,36 +49,15 @@ async function gate(_context: CommandContext): Promise<CommandResult> {
     return { exitCode: 0 };
   }
 
-  ensureExecDirs();
-
   return runCommand(request);
 }
 
 async function runCommand(request: GateCommand): Promise<CommandResult> {
-  const identity = await tailnetIdentity();
-  const rules = await readRules();
-  const choice = decide(rules, request.project, request.argv);
-
-  if (choice.decision === 'deny') {
-    const rule = choice.rule === undefined ? '' : ` (rule: ${ruleText(choice.rule)})`;
-
-    logDecision(request, 'deny', choice.rule?.decision, Date.now(), 1);
-
-    throw new CoramiError({
-      code: 'generic',
-      message: `${identity.name} denies this command: ${request.argv.join(' ')}${rule}`,
-    });
-  }
-
-  let approval: Approval | undefined;
-
-  if (choice.decision === 'ask') {
-    approval = await waitForApproval(request, identity.name);
-  }
-
   const engine = new MutagenEngine();
   const sessions = await engine.sessions();
   const copy = gateCopyDecision(sessions, request.project);
+  const identity = await tailnetIdentity();
+
   if (copy === 'unavailable') {
     throw new CoramiError({
       code: 'capability_missing',
@@ -121,109 +82,48 @@ async function runCommand(request: GateCommand): Promise<CommandResult> {
     });
   }
 
-  try {
-    await engine.flush(request.project);
-  } catch {
-    throw new CoramiError({
-      code: 'sync_pending',
-      message: `The sync of ${request.project} on ${identity.name} is not up to date: the command did not start`,
-      fix: `Run corami sync status on ${identity.name}`,
-    });
-  }
+  await flushOrFail(engine, request.project, identity.name);
 
   const session = sessions?.find((entry) => entry.project === request.project);
-  const result = await execute(
-    request,
-    session?.beta ?? process.cwd(),
-    choice.decision,
-    loggedRule(choice, approval),
-  );
+  const result = await execute(request, session?.beta ?? process.cwd());
 
   await engine.flush(request.project).catch(() => undefined);
 
   return result;
 }
 
-async function waitForApproval(request: GateCommand, client: string): Promise<Approval> {
-  if (await granted(request.project)) {
-    return 'grant';
-  }
-
-  const id = newExecId();
-  const command = request.argv.join(' ');
-  const started = Date.now();
-  let lost = false;
-  const stopWatching = watchConnection(() => {
-    lost = true;
-  });
-
-  await writePending({
-    id,
-    project: request.project,
-    argv: request.argv,
-    created_at: new Date().toISOString(),
-  });
-
-  process.stderr.write(`Waiting for approval on ${client}: ${command}\n`);
-
+async function flushOrFail(engine: MutagenEngine, project: string, client: string): Promise<void> {
   try {
-    for (;;) {
-      const decision = await readDecision(id);
-
-      if (decision?.decision === 'allow') {
-        return 'answer';
-      }
-
-      if (decision?.decision === 'deny') {
-        logDecision(request, 'deny', 'ask', started, 1);
-
-        throw new CoramiError({ code: 'generic', message: `Denied on ${client}: ${command}` });
-      }
-
-      if (await granted(request.project)) {
-        return 'grant';
-      }
-
-      if (!isPending(id)) {
-        throw new CoramiError({
-          code: 'generic',
-          message: `The request was cancelled on ${client}: ${command}`,
-        });
-      }
-
-      if (lost) {
-        throw new CoramiError({
-          code: 'generic',
-          message: 'The connection closed while waiting for approval',
-        });
-      }
-
-      if (Date.now() - started >= APPROVAL_WAIT_MS) {
-        throw new CoramiError({
-          code: 'generic',
-          message: `Not answered on ${client} within ${approvalSeconds()} seconds: ${command}`,
-          fix: `Run the command again and answer the dialog on ${client}, or keep corami exec approve open there. corami doctor on ${client} checks the dialog`,
-        });
-      }
-
-      await Bun.sleep(POLL_MS);
-    }
-  } finally {
-    stopWatching();
-    await removePending(id);
+    await engine.flush(project);
+  } catch {
+    throw new CoramiError({
+      code: 'sync_pending',
+      message: `The sync of ${project} on ${client} is not up to date: the command did not start`,
+      fix: `Run corami sync status on ${client}`,
+    });
   }
 }
 
-async function granted(project: string): Promise<boolean> {
-  return activeGrant(await readGrants(), project) !== undefined;
-}
+async function execute(request: GateCommand, cwd: string): Promise<CommandResult> {
+  const shell = process.env.SHELL ?? '/bin/sh';
+  const child = Bun.spawn({
+    cmd: [shell, '-lc', 'exec "$@"', 'corami-exec', ...request.argv],
+    cwd,
+    stdin: 'inherit',
+    stdout: 'inherit',
+    stderr: 'inherit',
+    detached: true,
+  });
 
-function loggedRule(choice: ExecChoice, approval: Approval | undefined): string | undefined {
-  if (approval === 'grant') {
-    return 'grant';
-  }
+  const stopWatching = watchConnection(() => {
+    killGroup(child.pid);
+  });
 
-  return choice.rule?.decision;
+  const exitCode = await child.exited;
+
+  stopWatching();
+
+  return { exitCode };
 }
 
 function watchConnection(onLost: () => void): () => void {
@@ -255,80 +155,6 @@ function watchConnection(onLost: () => void): () => void {
       process.off(signal, fire);
     }
   };
-}
-
-async function execute(
-  request: GateCommand,
-  cwd: string,
-  decision: string,
-  ruleDecision: string | undefined,
-): Promise<CommandResult> {
-  const id = newExecId();
-  const shell = process.env.SHELL ?? '/bin/sh';
-  const started = Date.now();
-  const child = Bun.spawn({
-    cmd: [shell, '-lc', 'exec "$@"', 'corami-exec', ...request.argv],
-    cwd,
-    stdin: 'inherit',
-    stdout: 'inherit',
-    stderr: 'inherit',
-    detached: true,
-  });
-
-  const stopWatching = watchConnection(() => {
-    killGroup(child.pid);
-  });
-
-  await writeRunning({
-    id,
-    project: request.project,
-    program: request.argv[0] ?? '',
-    pgid: child.pid,
-    started_at: new Date().toISOString(),
-  });
-
-  const exitCode = await child.exited;
-
-  stopWatching();
-  await removeRunning(id);
-
-  try {
-    appendExecLog({
-      at: new Date().toISOString(),
-      project: request.project,
-      program: request.argv[0] ?? '',
-      decision,
-      rule: ruleDecision,
-      duration_ms: Date.now() - started,
-      exit_code: exitCode,
-    });
-  } catch {
-    return { exitCode };
-  }
-
-  return { exitCode };
-}
-
-function logDecision(
-  request: GateCommand,
-  decision: string,
-  rule: string | undefined,
-  started: number,
-  exitCode: number,
-): void {
-  try {
-    appendExecLog({
-      at: new Date().toISOString(),
-      project: request.project,
-      program: request.argv[0] ?? '',
-      decision,
-      rule,
-      duration_ms: Date.now() - started,
-      exit_code: exitCode,
-    });
-  } catch {
-    return;
-  }
 }
 
 function killGroup(pid: number): void {

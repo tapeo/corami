@@ -50,7 +50,7 @@ The [quick start](docs/quickstart.md) goes through it step by step, then adds yo
 - **One binary.** `corami` is the CLI on every machine and the daemon on the server.
 - **Sync.** Files travel with [Mutagen](https://mutagen.io) over Tailscale SSH. A conflict that cannot be solved without losing data is held and reported, never overwritten. Dependencies and build outputs (`node_modules`, `build`, `Pods`...) stay out of the sync and each machine regenerates them. Everything else syncs, keys and env files included: keeping a secret off the machines is a decision made in the project, not by Corami.
 - **Private.** Nothing is on the public internet: the server, the agent and the previews are reachable only through your Tailscale network.
-- **Builds on a client.** When only a client can do it (Xcode, a simulator, a phone on USB), the agent runs the command there with `corami exec`. The channel is off until the client turns it on, and the rules and the approval stay on the client.
+- **Builds on a client.** When only a client can do it (Xcode, a simulator, a phone on USB), the agent runs the command there with `corami exec`, after `corami exec setup` on that client. What the agent may run is decided by the permissions of the harness.
 - **Scriptable.** Every command takes `--json`, the default without a terminal. `corami exec --on` is the exception: it passes the output of the command through, and collects it in the envelope only with `--json`.
 
 ## Status
