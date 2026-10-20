@@ -172,7 +172,7 @@ function dialogPresenter(report: Report): Presenter {
 
       const options = approvalOptions(request.argv);
       const child = Bun.spawn({
-        cmd: dialogCommand(setup.tool, approvalQuestion(request).join('\n'), options),
+        cmd: dialogCommand(setup.tool, request, options),
         env: setup.env,
         stdout: 'pipe',
         stderr: 'ignore',

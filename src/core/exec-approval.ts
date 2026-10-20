@@ -34,28 +34,26 @@ export function alwaysArgv(argv: string[]): string[] {
 export function approvalOptions(argv: string[]): ApprovalOption[] {
   return [
     { label: 'Allow once', value: 'once' },
-    { label: `Always allow: ${alwaysArgv(argv).join(' ')}`, value: 'always' },
+    { label: alwaysLabel(argv), value: 'always' },
     { label: 'Deny', value: 'deny' },
   ];
 }
 
 export function approvalQuestion(request: ApprovalRequest): string[] {
-  const lines = [`The server asks to run, in ${request.project}:`, `  ${request.argv.join(' ')}`];
+  const warnings = warningLines(request.argv).map((line) => `  ${line}`);
 
-  if (runsArbitraryCode(newRule('allow', request.argv, request.project))) {
-    lines.push(
-      `  ${request.argv[0] ?? ''} runs code of the project or of the network: "Always allow" allows whatever this command runs.`,
-    );
-  }
-
-  return lines;
+  return [askLine(request), `  ${commandLine(request.argv)}`, ...warnings];
 }
 
 export function approvalSeconds(): number {
   return APPROVAL_WAIT_MS / 1000;
 }
 
-export function dialogCommand(tool: DialogTool, text: string, options: ApprovalOption[]): string[] {
+export function dialogCommand(
+  tool: DialogTool,
+  request: ApprovalRequest,
+  options: ApprovalOption[],
+): string[] {
   const [once, always, deny] = labelsOf(options);
 
   if (tool === 'osascript') {
@@ -64,10 +62,11 @@ export function dialogCommand(tool: DialogTool, text: string, options: ApprovalO
       '-e',
       'on run argv',
       '-e',
-      'display dialog (item 1 of argv) with title "Corami" buttons {item 2 of argv, item 3 of argv, item 4 of argv} default button (item 4 of argv)',
+      'return button returned of (display dialog (item 1 of argv) default answer (item 2 of argv) with title "Corami" buttons {item 3 of argv, item 4 of argv, item 5 of argv} default button (item 5 of argv))',
       '-e',
       'end run',
-      text,
+      [askLine(request), ...warningLines(request.argv)].join('\n'),
+      commandLine(request.argv),
       deny,
       always,
       once,
@@ -79,7 +78,7 @@ export function dialogCommand(tool: DialogTool, text: string, options: ApprovalO
     '--question',
     '--no-markup',
     '--title=Corami',
-    `--text=${text}`,
+    `--text=${approvalQuestion(request).join('\n')}`,
     `--ok-label=${once}`,
     `--cancel-label=${deny}`,
     `--extra-button=${always}`,
@@ -123,16 +122,39 @@ function osascriptChoice(
   stdout: string,
   options: ApprovalOption[],
 ): ApprovalChoice | undefined {
-  const prefix = 'button returned:';
-  const output = stdout.trim();
-
-  if (exitCode !== 0 || !output.startsWith(prefix)) {
+  if (exitCode !== 0) {
     return undefined;
   }
 
-  const label = output.slice(prefix.length);
+  const label = stdout.trim();
 
   return options.find((option) => option.label === label)?.value;
+}
+
+function alwaysLabel(argv: string[]): string {
+  if (runsArbitraryCode(newRule('allow', argv, undefined))) {
+    return 'Always allow this command';
+  }
+
+  return `Always allow: ${allowPrefix(argv).join(' ')}`;
+}
+
+function askLine(request: ApprovalRequest): string {
+  return `The server asks to run, in ${request.project}:`;
+}
+
+function commandLine(argv: string[]): string {
+  return argv.join(' ').replaceAll('\r', '\\r').replaceAll('\n', '\\n');
+}
+
+function warningLines(argv: string[]): string[] {
+  if (!runsArbitraryCode(newRule('allow', argv, undefined))) {
+    return [];
+  }
+
+  return [
+    `${argv[0] ?? ''} runs code of the project or of the network: "Always allow" allows whatever this command runs.`,
+  ];
 }
 
 function zenityChoice(

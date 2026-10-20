@@ -93,12 +93,10 @@ describe('runsArbitraryCode', () => {
 });
 
 describe('allowPrefix', () => {
-  test('keeps the program and the first subcommand', () => {
-    expect(allowPrefix(['xcrun', 'simctl', 'boot', 'iPhone 16'])).toEqual(['xcrun', 'simctl', '*']);
-  });
-
-  test('keeps the program alone for a short command', () => {
+  test('keeps the program alone', () => {
+    expect(allowPrefix(['xcrun', 'simctl', 'boot', 'iPhone 16'])).toEqual(['xcrun', '*']);
     expect(allowPrefix(['flutter', 'devices'])).toEqual(['flutter', '*']);
+    expect(allowPrefix(['adb'])).toEqual(['adb', '*']);
   });
 });
 

@@ -142,10 +142,6 @@ export function runsArbitraryCode(rule: ExecRule): boolean {
 }
 
 export function allowPrefix(argv: string[]): string[] {
-  if (argv.length >= 3) {
-    return [...argv.slice(0, 2), '*'];
-  }
-
   return [argv[0] ?? '', '*'];
 }
 
