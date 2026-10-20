@@ -1,36 +1,60 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
-  alwaysArgv,
   approvalOptions,
   approvalQuestion,
   dialogChoice,
   dialogCommand,
   graphicalEnv,
   hasDisplay,
+  ruleArgv,
 } from '@/core/exec-approval.ts';
 
 const options = approvalOptions(['flutter', 'build', 'ios']);
 
 describe('approvalOptions', () => {
-  test('offers once, always on the program, and deny', () => {
+  test('offers once, always on the subcommand, always on the program, and deny', () => {
     expect(options).toEqual([
       { label: 'Allow once', value: 'once' },
+      { label: 'Always allow: flutter build *', value: 'subcommand' },
       { label: 'Always allow: flutter *', value: 'always' },
+      { label: 'Deny', value: 'deny' },
+    ]);
+  });
+
+  test('offers no subcommand for a single token', () => {
+    expect(approvalOptions(['xcodebuild']).map((option) => option.value)).toEqual([
+      'once',
+      'always',
+      'deny',
+    ]);
+  });
+
+  test('offers only the exact command for a program that runs arbitrary code', () => {
+    expect(approvalOptions(['npx', 'something'])).toEqual([
+      { label: 'Allow once', value: 'once' },
+      { label: 'Always allow this command', value: 'always' },
       { label: 'Deny', value: 'deny' },
     ]);
   });
 });
 
-describe('alwaysArgv', () => {
+describe('ruleArgv', () => {
+  const argv = ['flutter', 'build', 'ios', '--release'];
+
+  test('allows the subcommand and a star', () => {
+    expect(ruleArgv(argv, 'subcommand')).toEqual(['flutter', 'build', '*']);
+  });
+
   test('allows the program and a star', () => {
-    expect(alwaysArgv(['flutter', 'build', 'ios', '--release'])).toEqual(['flutter', '*']);
+    expect(ruleArgv(argv, 'always')).toEqual(['flutter', '*']);
   });
 
   test('allows exactly the command of a program that runs arbitrary code', () => {
-    const argv = ['npx', '-y', '@mobilenext/mobile-mcp@latest'];
+    const npx = ['npx', '-y', '@mobilenext/mobile-mcp@latest'];
 
-    expect(alwaysArgv(argv)).toEqual(argv);
+    expect(ruleArgv(npx, 'always')).toEqual(npx);
+    expect(ruleArgv(npx, 'subcommand')).toEqual(npx);
   });
 });
 
@@ -54,42 +78,51 @@ describe('dialogCommand', () => {
   test('passes the text, the command and the labels to osascript as arguments, never inside the script', () => {
     const argv = ['flutter', 'build', '"x"', '\\', 'end'];
     const command = dialogCommand('osascript', { project: 'myapp', argv }, options);
-    const script = command.slice(0, 7).join(' ');
+    const script = command.slice(0, 5).join(' ');
 
-    expect(command.slice(7)).toEqual([
+    expect(command.slice(5)).toEqual([
       'The server asks to run, in myapp:',
       'flutter build "x" \\ end',
-      'Deny',
-      'Always allow: flutter *',
       'Allow once',
+      'Always allow: flutter build *',
+      'Always allow: flutter *',
+      'Deny',
     ]);
     expect(script).not.toContain('flutter');
   });
 
-  test('puts the command of osascript in a one-line field', () => {
+  test('puts the command of osascript in a read-only field, with no default button', () => {
     const argv = ['bash', '-c', 'echo a\necho b'];
     const command = dialogCommand('osascript', { project: 'myapp', argv }, approvalOptions(argv));
 
-    expect(command[4]).toContain('default answer (item 2 of argv)');
-    expect(command[8]).toBe('bash -c echo a\\necho b');
-    expect(command[7]).not.toContain('echo');
-    expect(command[10]).toBe('Always allow this command');
+    expect(command[4]).toContain('setEditable(false)');
+    expect(command[4]).toContain("setKeyEquivalent('')");
+    expect(command[6]).toBe('bash -c echo a\\necho b');
+    expect(command[5]).not.toContain('echo');
+    expect(command[8]).toBe('Always allow this command');
   });
 
-  test('turns off the markup of zenity', () => {
+  test('turns off the markup of zenity and makes deny the default', () => {
     const command = dialogCommand('zenity', { project: 'myapp', argv: ['<b>x</b>'] }, options);
 
     expect(command).toContain('--no-markup');
+    expect(command).toContain('--default-cancel');
     expect(command).toContain('--text=The server asks to run, in myapp:\n  <b>x</b>');
     expect(command).toContain('--ok-label=Allow once');
     expect(command).toContain('--cancel-label=Deny');
-    expect(command).toContain('--extra-button=Always allow: flutter *');
+    expect(command.slice(-2)).toEqual([
+      '--extra-button=Always allow: flutter build *',
+      '--extra-button=Always allow: flutter *',
+    ]);
   });
 });
 
 describe('dialogChoice', () => {
   test('reads the button of osascript', () => {
     expect(dialogChoice('osascript', 0, 'Allow once\n', options)).toBe('once');
+    expect(dialogChoice('osascript', 0, 'Always allow: flutter build *\n', options)).toBe(
+      'subcommand',
+    );
     expect(dialogChoice('osascript', 0, 'Always allow: flutter *\n', options)).toBe('always');
     expect(dialogChoice('osascript', 0, 'Deny\n', options)).toBe('deny');
   });
@@ -101,6 +134,9 @@ describe('dialogChoice', () => {
 
   test('reads the exit code and the extra button of zenity', () => {
     expect(dialogChoice('zenity', 0, '', options)).toBe('once');
+    expect(dialogChoice('zenity', 1, 'Always allow: flutter build *\n', options)).toBe(
+      'subcommand',
+    );
     expect(dialogChoice('zenity', 1, 'Always allow: flutter *\n', options)).toBe('always');
     expect(dialogChoice('zenity', 1, '', options)).toBe('deny');
     expect(dialogChoice('zenity', 255, '', options)).toBeUndefined();

@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   addRule,
   allowPrefix,
+  allowSubcommand,
   decide,
   newRule,
   parseRule,
@@ -97,6 +98,22 @@ describe('allowPrefix', () => {
     expect(allowPrefix(['xcrun', 'simctl', 'boot', 'iPhone 16'])).toEqual(['xcrun', '*']);
     expect(allowPrefix(['flutter', 'devices'])).toEqual(['flutter', '*']);
     expect(allowPrefix(['adb'])).toEqual(['adb', '*']);
+  });
+});
+
+describe('allowSubcommand', () => {
+  test('keeps the program and the first argument', () => {
+    expect(allowSubcommand(['xcrun', 'simctl', 'boot', 'iPhone 16'])).toEqual([
+      'xcrun',
+      'simctl',
+      '*',
+    ]);
+    expect(allowSubcommand(['flutter', 'devices'])).toEqual(['flutter', 'devices', '*']);
+  });
+
+  test('gives no rule for a single token or a star as first argument', () => {
+    expect(allowSubcommand(['adb'])).toBeUndefined();
+    expect(allowSubcommand(['ls', '*'])).toBeUndefined();
   });
 });
 

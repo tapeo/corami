@@ -141,13 +141,13 @@ Every side is a peer and follows only `origin`: `corami git watch` runs one cycl
 | `corami exec status` | all | on the client: channel, sshd, rules, waiting and running commands. On the server: the registered clients, allowed and online |
 | `corami exec allow` | client, terminal | turns the channel on: sshd to keys only, the key of the server in `authorized_keys`, the registration and a check from the server |
 | `corami exec deny` | client | removes the key line, stops the running commands, cancels the waiting ones and informs the server |
-| `corami exec approve` | client, terminal | stays open and answers the requests of the server as they arrive: once, always, or deny. Also over ssh, from a phone |
+| `corami exec approve` | client, terminal | stays open and answers the requests of the server as they arrive: once, always on the subcommand or on the program, or deny. Also over ssh, from a phone |
 | `corami exec rule allow\|deny\|rm [--project <name>] -- <command>` | client | adds or removes a rule |
 | `corami exec rules` | client | lists the rules |
 
 A rule is a list of tokens compared with `argv`, token by token. `*` is only the last token and covers any rest, even empty. `deny` wins over `allow`, and a command with no rule asks. `--project` limits a rule to one project. A rule limits the command, not what it does: `flutter run` runs project code and `allow npx *` allows everything, so `exec rule allow` warns when it covers a program that runs arbitrary code.
 
-A command with no rule asks on the client. A dialog opens on the screen of the client with *Allow once*, *Always allow* and *Deny*; a terminal that runs `corami exec approve` asks the same question, and the first answer wins. *Always allow* adds the rule of the program and `*`, such as `flutter *` or `adb *`, or of the exact command for a program that runs arbitrary code (`npx`, `node`, `bash`...). The wait is 60 seconds, shorter than the timeout of the bash tool of a harness: without an answer the server sees a Corami error and the agent can run the command again. When the connection closes while it waits, or while the command runs, the gate cancels the request or stops the command.
+A command with no rule asks on the client. A dialog opens on the screen of the client with *Allow once*, two *Always allow* and *Deny*; a terminal that runs `corami exec approve` asks the same question, and the first answer wins. The narrow *Always allow* adds the rule of the program, its first argument and `*`, such as `flutter build *`; the wide one adds the program and `*`, such as `flutter *` or `adb *`. A program that runs arbitrary code (`npx`, `node`, `bash`...) gets one *Always allow*, on the exact command. The command sits in a read-only field and no button answers Enter, so keys typed elsewhere when the dialog opens answer nothing. The wait is 60 seconds, shorter than the timeout of the bash tool of a harness: without an answer the server sees a Corami error and the agent can run the command again. When the connection closes while it waits, or while the command runs, the gate cancels the request or stops the command.
 
 ```bash
 # on the client, once

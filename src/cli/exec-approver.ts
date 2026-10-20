@@ -12,7 +12,6 @@ import { CoramiError, toCoramiError } from '@/core/errors.ts';
 import { commandPath, run } from '@/core/exec.ts';
 import {
   type ApprovalChoice,
-  alwaysArgv,
   approvalOptions,
   approvalQuestion,
   type DialogTool,
@@ -20,6 +19,7 @@ import {
   dialogCommand,
   graphicalEnv,
   hasDisplay,
+  ruleArgv,
 } from '@/core/exec-approval.ts';
 import { addRule, newRule } from '@/core/exec-rules.ts';
 
@@ -129,7 +129,7 @@ async function answerRequest(request: PendingRequest, choice: ApprovalChoice): P
     return `✓ Allowed once: ${command}`;
   }
 
-  const argv = alwaysArgv(request.argv);
+  const argv = ruleArgv(request.argv, choice);
 
   await writeRules(addRule(await readRules(), newRule('allow', argv, request.project)));
 

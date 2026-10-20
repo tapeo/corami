@@ -1,8 +1,8 @@
-import { allowPrefix, newRule, runsArbitraryCode } from '@/core/exec-rules.ts';
+import { allowPrefix, allowSubcommand, newRule, runsArbitraryCode } from '@/core/exec-rules.ts';
 
 export const APPROVAL_WAIT_MS = 60_000;
 
-export type ApprovalChoice = 'once' | 'always' | 'deny';
+export type ApprovalChoice = 'once' | 'subcommand' | 'always' | 'deny';
 
 export type DialogTool = 'osascript' | 'zenity';
 
@@ -16,6 +16,25 @@ export interface ApprovalOption {
   value: ApprovalChoice;
 }
 
+const OSASCRIPT_DIALOG = [
+  "ObjC.import('AppKit');",
+  'function run(argv) {',
+  '  const labels = argv.slice(2);',
+  '  const alert = $.NSAlert.alloc.init;',
+  "  alert.setMessageText('Corami');",
+  '  alert.setInformativeText(argv[0]);',
+  "  labels.forEach((label) => alert.addButtonWithTitle(label).setKeyEquivalent(''));",
+  '  const field = $.NSTextView.scrollableTextView;',
+  '  field.setFrame($.NSMakeRect(0, 0, 360, 64));',
+  '  field.documentView.setString(argv[1]);',
+  '  field.documentView.setEditable(false);',
+  '  alert.setAccessoryView(field);',
+  '  $.NSApplication.sharedApplication.setActivationPolicy($.NSApplicationActivationPolicyAccessory);',
+  '  $.NSApplication.sharedApplication.activateIgnoringOtherApps(true);',
+  '  return labels[alert.runModal - 1000];',
+  '}',
+];
+
 const GRAPHICAL_KEYS = [
   'DISPLAY',
   'WAYLAND_DISPLAY',
@@ -23,7 +42,11 @@ const GRAPHICAL_KEYS = [
   'DBUS_SESSION_BUS_ADDRESS',
 ];
 
-export function alwaysArgv(argv: string[]): string[] {
+export function ruleArgv(argv: string[], choice: 'subcommand' | 'always'): string[] {
+  if (choice === 'subcommand') {
+    return subcommandArgv(argv) ?? argv;
+  }
+
   if (runsArbitraryCode(newRule('allow', argv, undefined))) {
     return argv;
   }
@@ -32,11 +55,16 @@ export function alwaysArgv(argv: string[]): string[] {
 }
 
 export function approvalOptions(argv: string[]): ApprovalOption[] {
-  return [
-    { label: 'Allow once', value: 'once' },
-    { label: alwaysLabel(argv), value: 'always' },
-    { label: 'Deny', value: 'deny' },
-  ];
+  const options: ApprovalOption[] = [{ label: 'Allow once', value: 'once' }];
+  const subcommand = subcommandArgv(argv);
+
+  if (subcommand !== undefined) {
+    options.push({ label: `Always allow: ${subcommand.join(' ')}`, value: 'subcommand' });
+  }
+
+  options.push({ label: alwaysLabel(argv), value: 'always' }, { label: 'Deny', value: 'deny' });
+
+  return options;
 }
 
 export function approvalQuestion(request: ApprovalRequest): string[] {
@@ -54,34 +82,33 @@ export function dialogCommand(
   request: ApprovalRequest,
   options: ApprovalOption[],
 ): string[] {
-  const [once, always, deny] = labelsOf(options);
-
   if (tool === 'osascript') {
     return [
       'osascript',
+      '-l',
+      'JavaScript',
       '-e',
-      'on run argv',
-      '-e',
-      'return button returned of (display dialog (item 1 of argv) default answer (item 2 of argv) with title "Corami" buttons {item 3 of argv, item 4 of argv, item 5 of argv} default button (item 5 of argv))',
-      '-e',
-      'end run',
+      OSASCRIPT_DIALOG.join('\n'),
       [askLine(request), ...warningLines(request.argv)].join('\n'),
       commandLine(request.argv),
-      deny,
-      always,
-      once,
+      ...options.map((option) => option.label),
     ];
   }
+
+  const extraButtons = options
+    .filter((option) => option.value === 'subcommand' || option.value === 'always')
+    .map((option) => `--extra-button=${option.label}`);
 
   return [
     'zenity',
     '--question',
     '--no-markup',
+    '--default-cancel',
     '--title=Corami',
     `--text=${approvalQuestion(request).join('\n')}`,
-    `--ok-label=${once}`,
-    `--cancel-label=${deny}`,
-    `--extra-button=${always}`,
+    `--ok-label=${labelOf(options, 'once')}`,
+    `--cancel-label=${labelOf(options, 'deny')}`,
+    ...extraButtons,
   ];
 }
 
@@ -179,9 +206,14 @@ function zenityChoice(
   return options.find((option) => option.label === extra)?.value;
 }
 
-function labelsOf(options: ApprovalOption[]): [string, string, string] {
-  const label = (value: ApprovalChoice) =>
-    options.find((option) => option.value === value)?.label ?? value;
+function labelOf(options: ApprovalOption[], value: ApprovalChoice): string {
+  return options.find((option) => option.value === value)?.label ?? value;
+}
 
-  return [label('once'), label('always'), label('deny')];
+function subcommandArgv(argv: string[]): string[] | undefined {
+  if (runsArbitraryCode(newRule('allow', argv, undefined))) {
+    return undefined;
+  }
+
+  return allowSubcommand(argv);
 }

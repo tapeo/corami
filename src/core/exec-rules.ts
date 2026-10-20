@@ -145,6 +145,16 @@ export function allowPrefix(argv: string[]): string[] {
   return [argv[0] ?? '', '*'];
 }
 
+export function allowSubcommand(argv: string[]): string[] | undefined {
+  const prefix = [argv[0] ?? '', argv[1] ?? '', '*'];
+
+  if (argv.length < 2 || !validRuleArgv(prefix)) {
+    return undefined;
+  }
+
+  return prefix;
+}
+
 export function newRule(
   decision: ExecDecision,
   argv: string[],
