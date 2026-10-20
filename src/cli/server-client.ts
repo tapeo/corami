@@ -45,6 +45,22 @@ export interface ProjectSummary {
   previews: PreviewView[];
 }
 
+export interface ClientSummary {
+  name: string;
+  ssh_host: string;
+  ssh_user: string;
+  os: string;
+  host_key: string;
+  allowed: boolean;
+  updated_at: string;
+}
+
+export interface ExecKeyData {
+  public_key: string;
+  ip: string | undefined;
+  ips: string[];
+}
+
 const REQUEST_TIMEOUT_MS = 20_000;
 
 const GATEWAY_ERRORS = new Set([502, 503, 504]);
@@ -263,4 +279,39 @@ export async function deletePreview(
     `/v1/projects/${encodeURIComponent(project)}/previews/${encodeURIComponent(name)}`,
     { method: 'DELETE' },
   );
+}
+
+export async function execKey(): Promise<ExecKeyData> {
+  const data = await request<{ public_key?: unknown; ip?: unknown; ips?: unknown }>('/v1/exec/key');
+  const ips = Array.isArray(data.ips)
+    ? data.ips.filter((value): value is string => typeof value === 'string')
+    : [];
+
+  return {
+    public_key: typeof data.public_key === 'string' ? data.public_key : '',
+    ip: typeof data.ip === 'string' ? data.ip : undefined,
+    ips,
+  };
+}
+
+export async function listClients(): Promise<ClientSummary[]> {
+  const data = await request<{ clients: ClientSummary[] }>('/v1/clients');
+  return data.clients;
+}
+
+export async function putClient(client: ClientSummary): Promise<ClientSummary> {
+  return request(`/v1/clients/${encodeURIComponent(client.name)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(client),
+  });
+}
+
+export async function probeClient(name: string): Promise<{ reached: boolean }> {
+  return request(`/v1/clients/${encodeURIComponent(name)}/probe`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({}),
+    signal: AbortSignal.timeout(30_000),
+  });
 }

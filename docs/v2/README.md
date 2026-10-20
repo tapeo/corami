@@ -53,12 +53,14 @@ Topics postponed after v1. They are ideas, not decisions: they will be analysed 
 
 ## Remote runs
 
-**Why:** in v1 the server reaches a client only with the sync, and a build or a run that needs another machine (an iOS build needs `xcodebuild` on a Mac) is done by hand over SSH. A single command would be safer: the key of the server restricted to it, the copy flushed before it starts, the outcome in JSON.
+**Why:** in v1 `corami exec` already runs a command of the server on a client. The key is restricted to the gate, the rules and the approval are on the client, the sync is flushed before the command and the outcome comes back. What remains are the parts around it.
 
 **What has emerged:**
-- The shape is `corami run <command> --on <machine>`, or a preview registered on the client: the daemon knows the machines connected to the tailnet, checks that the command exists there, flushes the sync of the project and returns the outcome.
-- The v1 clients have no always-on service: the command would arrive over Tailscale SSH, which on macOS needs Remote Login on and a key of the server in `authorized_keys`.
-- The artifact produced elsewhere should be brought back where it is published.
+- Returning the artifact (an `.ipa`, an `.apk`) to the server, where it is published.
+- Choosing the machine when several clients can run the command: today `--on` is required.
+- Resuming when a client goes offline halfway through: today the processes are closed and the error is clear.
+- A preview registered on the client, for a dev server that runs there.
+- Checking that the command exists on the client before asking for the permission.
 - External services discussed for iOS builds:
   - Codemagic, with free macOS minutes in the individual plan and automatic iOS signing;
   - Xcode Cloud, with hours included in the Apple Developer Program, startable from `asc`;
@@ -67,8 +69,8 @@ Topics postponed after v1. They are ideas, not decisions: they will be analysed 
 - For the external services a guide with the right command might be enough, without code in Corami.
 
 **To clarify:**
-- How to choose the machine when several clients can run the command.
-- What happens when the chosen machine goes offline halfway through.
+- Which client runs a command when several are online, and by which rule.
+- How an artifact comes back, and where it is published.
 - Whether the simulator on a remote Mac fits here too, with screenshots for the agent.
 
 ## Automatic pause
@@ -148,7 +150,7 @@ Topics postponed after v1. They are ideas, not decisions: they will be analysed 
 **What has emerged:**
 - Sync of worktrees, together with the [parallel previews](#parallel-previews).
 - `.git` lives on both sides with its own git commands, and the two repositories align by hand (done in v1). Syncing the same `.git` between two machines, instead, stays risky: without a lock two git commands together can corrupt the repository.
-- A watcher on the client that reinstalls the dependencies when the lockfile changes would need an always-on service on the client, which does not exist in v1. The same service would serve the [remote runs](#remote-runs).
+- A watcher on the client that reinstalls the dependencies when the lockfile changes would need an always-on service on the client, which does not exist in v1. The same service would avoid Remote Login for the [remote runs](#remote-runs) and let a command survive a lost connection.
 
 **To clarify:**
 - Whether a reliable lock for git is feasible on top of Mutagen, to keep a single `.git` synced instead of one per side.

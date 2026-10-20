@@ -4,6 +4,8 @@ import { run, runOrThrow } from '@/core/exec.ts';
 
 export const CORAMI_KEY_NAME = 'id_ed25519_corami';
 
+export const EXEC_KEY_NAME = 'id_ed25519_corami_exec';
+
 export interface ProviderSpec {
   id: string;
   host: string;
@@ -45,6 +47,14 @@ export function publicKeyPath(): string {
   return `${keyPath()}.pub`;
 }
 
+export function execKeyPath(): string {
+  return join(sshDir(), EXEC_KEY_NAME);
+}
+
+export function execPublicKeyPath(): string {
+  return `${execKeyPath()}.pub`;
+}
+
 export async function keyExists(): Promise<boolean> {
   return Bun.file(keyPath()).exists();
 }
@@ -60,6 +70,37 @@ export async function generateKey(comment: string): Promise<void> {
 
 export async function readPublicKey(): Promise<string> {
   return (await Bun.file(publicKeyPath()).text()).trim();
+}
+
+export async function ensureExecKey(): Promise<string> {
+  const publicPath = execPublicKeyPath();
+
+  if (await Bun.file(publicPath).exists()) {
+    return (await Bun.file(publicPath).text()).trim();
+  }
+
+  await run('mkdir', ['-p', sshDir(), '-m', '700']);
+  await runOrThrow('ssh-keygen', [
+    '-t',
+    'ed25519',
+    '-N',
+    '',
+    '-C',
+    'corami-exec',
+    '-f',
+    execKeyPath(),
+  ]);
+
+  return (await Bun.file(publicPath).text()).trim();
+}
+
+export async function readExecPublicKey(): Promise<string | undefined> {
+  try {
+    const text = (await Bun.file(execPublicKeyPath()).text()).trim();
+    return text === '' ? undefined : text;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function addSshConfig(provider: ProviderSpec): Promise<boolean> {

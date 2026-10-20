@@ -55,10 +55,26 @@ describe('parseArgs', () => {
     expect(stringListFlag(args, 'include')).toEqual(['a', 'b']);
   });
 
-  test('takes everything after -- as arguments', () => {
+  test('keeps everything after -- apart from the positionals', () => {
     const args = parseArgs(['sync', '--', 'a', '-b']);
-    expect(args.positionals).toEqual(['sync', 'a', '-b']);
+    expect(args.positionals).toEqual(['sync']);
+    expect(args.rest).toEqual(['a', '-b']);
     expect(args.values).toEqual({});
+  });
+
+  test('reads the arguments of a command after --', () => {
+    const args = parseArgs(['exec', '--on', 'macbook', '--', 'flutter', 'devices'], {
+      valueFlags: ['on'],
+    });
+    expect(stringFlag(args, 'on')).toBe('macbook');
+    expect(args.positionals).toEqual(['exec']);
+    expect(args.rest).toEqual(['flutter', 'devices']);
+  });
+
+  test('leaves the rules of exec on the left of --', () => {
+    const args = parseArgs(['exec', 'rule', 'allow', '--', 'flutter', 'build', '*']);
+    expect(args.positionals).toEqual(['exec', 'rule', 'allow']);
+    expect(args.rest).toEqual(['flutter', 'build', '*']);
   });
 
   test('does not consume the next token for an undeclared flag', () => {

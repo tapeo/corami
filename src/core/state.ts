@@ -12,6 +12,16 @@ export interface ProjectRow {
   owned: boolean;
 }
 
+export interface ClientRow {
+  name: string;
+  ssh_host: string;
+  ssh_user: string;
+  os: string;
+  host_key: string;
+  allowed: boolean;
+  updated_at: string;
+}
+
 let database: Database | undefined;
 
 export function db(): Database {
@@ -44,6 +54,16 @@ export function migrate(target: Database): void {
       target_port INTEGER NOT NULL,
       created_at TEXT NOT NULL,
       PRIMARY KEY (project, name)
+    );
+
+    CREATE TABLE IF NOT EXISTS clients (
+      name TEXT PRIMARY KEY,
+      ssh_host TEXT NOT NULL,
+      ssh_user TEXT NOT NULL,
+      os TEXT NOT NULL,
+      host_key TEXT NOT NULL,
+      allowed INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
     );
   `);
 
@@ -133,4 +153,50 @@ export function upsertPreview(row: PreviewRow): void {
 
 export function deletePreview(project: string, name: string): void {
   db().query('DELETE FROM previews WHERE project = ? AND name = ?').run(project, name);
+}
+
+export function listClients(): ClientRow[] {
+  return db()
+    .query<ClientRow, []>(
+      'SELECT name, ssh_host, ssh_user, os, host_key, allowed, updated_at FROM clients ORDER BY name',
+    )
+    .all()
+    .map(withAllowedFlag);
+}
+
+export function getClient(name: string): ClientRow | undefined {
+  const row =
+    db()
+      .query<ClientRow, [string]>(
+        'SELECT name, ssh_host, ssh_user, os, host_key, allowed, updated_at FROM clients WHERE name = ?',
+      )
+      .get(name) ?? undefined;
+
+  return row === undefined ? undefined : withAllowedFlag(row);
+}
+
+export function upsertClient(row: ClientRow): void {
+  db()
+    .query(
+      'INSERT INTO clients (name, ssh_host, ssh_user, os, host_key, allowed, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET ssh_host = excluded.ssh_host, ssh_user = excluded.ssh_user, os = excluded.os, host_key = excluded.host_key, allowed = excluded.allowed, updated_at = excluded.updated_at',
+    )
+    .run(
+      row.name,
+      row.ssh_host,
+      row.ssh_user,
+      row.os,
+      row.host_key,
+      row.allowed ? 1 : 0,
+      row.updated_at,
+    );
+}
+
+export function setClientAllowed(name: string, allowed: boolean): void {
+  db()
+    .query('UPDATE clients SET allowed = ?, updated_at = ? WHERE name = ?')
+    .run(allowed ? 1 : 0, new Date().toISOString(), name);
+}
+
+function withAllowedFlag(row: ClientRow): ClientRow {
+  return { ...row, allowed: Boolean(row.allowed) };
 }

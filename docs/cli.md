@@ -1,6 +1,6 @@
 # CLI reference
 
-Commands of v1. A command that does several things has actions, as in `corami sync prune`, and each action has its own flags. Every command accepts the global flags `--json`, `--help` and `--version`. Without a TTY the output is JSON by default, the help included. A flag the command or the action does not know, a flag without its value, or an argument beyond the ones it takes, is a `usage` error. Envelope and exit codes are in `architecture.md`.
+Commands of v1. A command that does several things has actions, as in `corami sync prune`, and each action has its own flags. Every command accepts the global flags `--json`, `--help` and `--version`. Without a TTY the output is JSON by default, the help included; `corami exec --on` is the one exception, with the passthrough explained in [Exec](#exec). A flag the command or the action does not know, a flag without its value, or an argument beyond the ones it takes, is a `usage` error. Envelope and exit codes are in `architecture.md`.
 
 `corami help [command [action]]` is the same as `--help` on the command or the action: `corami help sync prune` shows the flags of `sync prune` only.
 
@@ -10,6 +10,7 @@ Commands of v1. A command that does several things has actions, as in `corami sy
 - [Projects](#projects)
 - [Previews](#previews)
 - [Sync](#sync)
+- [Exec](#exec)
 - [Output examples](#output-examples)
 
 ## Setup
@@ -56,7 +57,7 @@ A role and flags after `--` go to the setup. Without a terminal it installs the 
 | `corami-git-watch` | server and clients: systemd on Linux, launchd agent `dev.corami.git-watch` on macOS, scheduled task on Windows | keeps `.git` aligned with `origin` | both setups, step `git-watch` |
 | Mutagen daemon | clients: user systemd unit `corami-mutagen` on Linux, launchd agent `io.mutagen.mutagen` on macOS, logon registration on Windows | carries the sync sessions, also after a reboot | `corami setup client`, step `mutagen-daemon` |
 
-`corami doctor` reports a service that is not running and the step that installs it again. On the server it also reports the folders of the projects root that no project names, and the ones an import that stopped left behind. It reports how Tailscale SSH treats `root` and the other accounts of the machine, and whether the tailnet holds people besides the owner: the remedies are in [security.md](security.md).
+`corami doctor` reports a service that is not running and the step that installs it again. On the server it also reports the folders of the projects root that no project names, and the ones an import that stopped left behind. It reports how Tailscale SSH treats `root` and the other accounts of the machine, whether the tailnet holds people besides the owner, and on a client whether Remote Login, sshd and the exec channel are in order: the remedies are in [security.md](security.md).
 
 ## Projects
 
@@ -129,6 +130,74 @@ The folder of a copy is never guessed. `project add` needs it as the argument, a
 The account of the server for the sync and the import is `server_user` of the configuration, saved by `corami setup client`, then `user` of the health answer of the daemon, then `root`. `--user` overrides it for one command.
 
 Every side is a peer and follows only `origin`: `corami git watch` runs one cycle at startup and then one every minute, downloads the refs of `origin` and, when it is behind and the files have already arrived with the sync, moves its HEAD without touching the files. The push is done by whoever makes the commit: `git push` from the side that has the commits, and the other aligns after the push. A merged PR on GitHub enters with a `git pull` on any side, and the other follows when the files arrive with the sync.
+
+## Exec
+
+`corami exec` runs a command of the server on a client, inside the synced copy of a project. The agent works on the server; a simulator, `xcodebuild` or a device plugged into a Mac need the Mac. The channel is off until the client turns it on in its terminal.
+
+| Command | Where | Description |
+|---|---|---|
+| `corami exec --on <client> [--project <name>] -- <command>` | server | runs the command on the client, in the copy of the project. The project comes from the current folder |
+| `corami exec status` | all | on the client: channel, sshd, rules, waiting and running commands. On the server: the registered clients, allowed and online |
+| `corami exec allow` | client, terminal | turns the channel on: sshd to keys only, the key of the server in `authorized_keys`, the registration and a check from the server |
+| `corami exec deny` | client | removes the key line, stops the running commands, cancels the waiting ones and informs the server |
+| `corami exec approve` | client, terminal | answers the commands that wait: once, always, or deny |
+| `corami exec rule allow\|deny\|rm [--project <name>] -- <command>` | client | adds or removes a rule |
+| `corami exec rules` | client | lists the rules |
+
+A rule is a list of tokens compared with `argv`, token by token. `*` is only the last token and covers any rest, even empty. `deny` wins over `allow`, and a command with no rule asks. `--project` limits a rule to one project. A rule limits the command, not what it does: `flutter run` runs project code and `allow npx *` allows everything, so `exec rule allow` warns when it covers a program that runs arbitrary code.
+
+The first command of a series asks on the client, in the terminal that runs `corami exec approve`. The wait is 10 minutes. The bash tool of a harness may have a shorter timeout: when the harness closes the command, the request disappears from the client. Add the rules first, or approve before running.
+
+```bash
+# on the client, once
+corami exec allow
+
+# on the client, the rules of a simulator and of a build
+corami exec rule allow -- xcrun simctl '*'
+corami exec rule allow --project myapp -- flutter build '*'
+
+# from the server, inside the project
+corami exec --on macbook -- flutter devices
+corami exec --on macbook --project myapp -- flutter run -d "iPhone 16"
+corami exec --on macbook -- xcrun simctl boot "iPhone 16"
+```
+
+Output is the exception to the contract above: without `--json` it is the stdout and stderr of the command, even without a TTY, and the exit code of the command is the exit code of `corami`. With `--json` the output is collected:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "client": "macbook",
+    "project": "myapp",
+    "exit_code": 0,
+    "stdout": "2 connected devices:\n...",
+    "stderr": "",
+    "duration_ms": 1840
+  }
+}
+```
+
+The errors of Corami before the command starts use the usual envelope: `macbook is offline in the tailnet`, `macbook does not allow commands from this server`, `macbook denies this command: rm -rf build (rule: deny rm *)`, `macbook has no copy of myapp`, or `the sync of myapp on macbook is not up to date: the command did not start`.
+
+An MCP server can run on the client through the same channel. The first run asks for the exact command of the server:
+
+```json
+{
+  "mcp": {
+    "mobile": {
+      "type": "local",
+      "command": [
+        "corami", "exec", "--on", "macbook", "--project", "myapp", "--",
+        "npx", "-y", "@mobilenext/mobile-mcp@latest"
+      ]
+    }
+  }
+}
+```
+
+Allow exactly that command, not `npx *`. When the harness closes the MCP server, the connection ends and the gate closes the processes of the command on the client.
 
 ## Output examples
 

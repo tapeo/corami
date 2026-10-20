@@ -16,28 +16,60 @@ pnpm build
 - The build output travels nowhere: the regenerable folders (`node_modules`, `build`, `.next`, `Pods`...) are excluded from the sync and rebuilt on every machine.
 - A build on the server has what the build of the laptop has: keys and keystores (`.env`, `*.jks`, `*.keystore`, `*.p8`, `android/key.properties`...) are files of the project, so an import puts them there and the sync keeps them in step on every machine. If a key must not travel, keep it out of the project folder: a path outside it read through an environment variable (`KEYSTORE_FILE=~/.config/keys/release.jks`), or a secret manager that injects it into the command.
 
-## On a client, over SSH
+## On a client, with corami exec
 
-Some builds only work on a certain machine: an iOS build needs macOS and Xcode. The agent works on the server, so it reaches the Mac over SSH on the tailnet and builds the synced copy there:
+Some builds only work on a certain machine: an iOS build needs macOS and Xcode. The agent works on the server, so it runs the command on the Mac with `corami exec`, inside the synced copy:
 
 ```bash
-# from the server
-ssh macbook 'cd ~/dev/myapp && corami sync flush myapp && flutter build ios --release --no-codesign'
+# from the server, inside the project
+corami exec --on macbook -- flutter build ios --release --no-codesign
 ```
+
+The output, the exit code included, comes back as it is. The build output stays on the Mac, because build outputs are not synced.
 
 Setup, once:
 
 1. On the Mac: System Settings > General > Sharing > Remote Login.
-2. The server's SSH key in the `authorized_keys` of the Mac user.
-3. From the server: `ssh macbook echo ok`.
+2. On the Mac: `corami setup client <server>`, then `corami exec allow` in its terminal.
+3. On the server: `corami exec status` lists the client as allowed and online.
 
-Make it safe:
+`exec allow` offers to close sshd to passwords, adds the key of the server to `authorized_keys` limited to the gate, registers the host key of the Mac on the server and checks the path from the server. The rules and the approval are on the Mac: `corami exec approve` answers the commands that wait, and `corami exec rule` adds them in advance. A command that does not arrive at an approval within 10 minutes fails with a Corami error. If the harness closes the connection before it, the harness timeout wins: add the rules first, or approve before running.
 
-- Restrict the key to the single script it needs, with `command="..."` in `authorized_keys`, or use a dedicated macOS user. A server key without limits lets anything on the server run anything on your Mac, with your credentials. See [security.md](security.md#builds-on-the-mac).
-- The Mac must be awake, otherwise SSH fails: the agent sees the error and can say so.
-- An SSH session reads neither `.zshrc` nor `.bashrc`: put `PATH` in `~/.zshenv`, or run the command as `zsh -lc '...'`.
+The rest of the notes stay:
+
+- The Mac must be awake, otherwise the command fails: the agent sees the error and can say so.
+- The login shell of an SSH session reads `.zshenv`, `.zprofile` and `.zlogin`, not `.zshrc`. `exec allow` compares the `PATH` of the login shell with the one of the interactive shell and says what to move. On Linux the same rule holds for `.profile`.
 - Over SSH the login keychain can be locked and `codesign` fails. For builds without signing (`--no-codesign`) nothing is needed; for a signed build run `security unlock-keychain` before it.
-- The artifact stays on the Mac, because build outputs are not synced. Publish from there, or copy the file with `scp`.
+- The artifact stays on the Mac: publish from there, or copy the file with `scp`. Bringing it back to the server is still in the [v2](v2/README.md#remote-runs).
+
+## Simulators and devices from the agent
+
+A simulator, an emulator or a phone plugged into the Mac is driven by an MCP server that runs on the Mac, through `corami exec`. In the harness configuration on the server:
+
+```json
+{
+  "mcp": {
+    "mobile": {
+      "type": "local",
+      "command": [
+        "corami", "exec", "--on", "macbook", "--project", "myapp", "--",
+        "npx", "-y", "@mobilenext/mobile-mcp@latest"
+      ]
+    },
+    "xcode": {
+      "type": "local",
+      "command": [
+        "corami", "exec", "--on", "macbook", "--project", "myapp", "--",
+        "npx", "-y", "xcodebuildmcp@latest", "mcp"
+      ]
+    }
+  }
+}
+```
+
+`mobile-mcp` drives Android and iOS simulators and devices, with screenshots. `xcodebuildmcp` runs `xcodebuild` and `simctl` ([docs](https://www.xcodebuildmcp.com/docs/clients)). The project names the copy the tools work in, and the gate sends the server's stdio to them.
+
+The first run asks for the exact command on the Mac: choose "Always allow exactly this command", not `npx *`. If the harness closes the connection before someone answers, add the two rules first from the Mac. When the harness closes the MCP server, the gate closes the processes on the Mac.
 
 ## What Corami does not do
 

@@ -18,6 +18,7 @@ export interface TailscaleStatus {
   dnsName?: string | undefined;
   tailnetName?: string | undefined;
   ipv4?: string | undefined;
+  ips: string[];
   loginName?: string | undefined;
 }
 
@@ -28,19 +29,19 @@ export async function isInstalled(): Promise<boolean> {
 
 export async function status(): Promise<TailscaleStatus> {
   if (!(await isInstalled())) {
-    return { installed: false, running: false, online: false };
+    return { installed: false, running: false, online: false, ips: [] };
   }
 
   const result = await run('tailscale', ['status', '--json']);
 
   if (!result.ok) {
-    return { installed: true, running: false, online: false };
+    return { installed: true, running: false, online: false, ips: [] };
   }
 
   const parsed = parseJson(result.stdout);
 
   if (parsed === undefined) {
-    return { installed: true, running: false, online: false };
+    return { installed: true, running: false, online: false, ips: [] };
   }
 
   const self = parsed.Self;
@@ -55,6 +56,7 @@ export async function status(): Promise<TailscaleStatus> {
     dnsName: normalizeDnsName(dnsName),
     tailnetName,
     ipv4: readFirstIpv4(self),
+    ips: readIpAddresses(self),
     loginName: readSelfLogin(parsed),
   };
 }
@@ -307,23 +309,21 @@ function readBoolean(source: unknown, key: string): boolean {
 }
 
 function readFirstIpv4(source: unknown): string | undefined {
+  return readIpAddresses(source).find((address) => !address.includes(':'));
+}
+
+function readIpAddresses(source: unknown): string[] {
   if (typeof source !== 'object' || source === null) {
-    return undefined;
+    return [];
   }
 
   const addresses = (source as Record<string, unknown>).TailscaleIPs;
 
   if (!Array.isArray(addresses)) {
-    return undefined;
+    return [];
   }
 
-  for (const address of addresses) {
-    if (typeof address === 'string' && !address.includes(':')) {
-      return address;
-    }
-  }
-
-  return undefined;
+  return addresses.filter((address): address is string => typeof address === 'string');
 }
 
 function normalizeDnsName(value: string | undefined): string | undefined {

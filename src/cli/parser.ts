@@ -3,6 +3,7 @@ export type FlagValue = string | boolean | string[];
 export interface ParsedArgs {
   values: Record<string, FlagValue>;
   positionals: string[];
+  rest: string[];
 }
 
 export interface ParseOptions {
@@ -42,13 +43,14 @@ export function parseArgs(argv: string[], options: ParseOptions = {}): ParsedArg
   const valueFlags = new Set(options.valueFlags ?? []);
   const values: Record<string, FlagValue> = {};
   const positionals: string[] = [];
+  let rest: string[] = [];
   let index = 0;
 
   while (index < argv.length) {
     const token = argv[index] ?? '';
 
     if (token === '--') {
-      positionals.push(...argv.slice(index + 1));
+      rest = argv.slice(index + 1);
       break;
     }
 
@@ -107,7 +109,7 @@ export function parseArgs(argv: string[], options: ParseOptions = {}): ParsedArg
     index += 1;
   }
 
-  return { values, positionals };
+  return { values, positionals, rest };
 }
 
 export function stringFlag(args: ParsedArgs, name: string): string | undefined {

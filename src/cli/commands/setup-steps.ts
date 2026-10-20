@@ -30,6 +30,7 @@ async function tailscaleStatus(): Promise<TailscaleStatus> {
     dnsName: undefined,
     tailnetName: undefined,
     ipv4: undefined,
+    ips: [],
   }));
 }
 

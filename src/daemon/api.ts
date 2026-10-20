@@ -12,6 +12,7 @@ import { validatePreviewName, validateTargetPort } from '@/core/previews.ts';
 import { serverFolderOverlaps, serverPathFrom, validServerPath } from '@/core/project-add.ts';
 import { validNewProjectName, validProjectName } from '@/core/projects.ts';
 import { deleteProject, getProject, listProjects, upsertProject } from '@/core/state.ts';
+import { handleClientsRoute, handleExecRoute } from '@/daemon/exec-api.ts';
 import {
   applyPreview,
   listPreviewViews,
@@ -60,6 +61,14 @@ export async function handleApi(
       status: 200,
       body: { ok: true, data: { previews: await listPreviewViews(context.previews) } },
     };
+  }
+
+  if (resource === 'exec') {
+    return handleExecRoute(request, rest);
+  }
+
+  if (resource === 'clients') {
+    return handleClientsRoute(request, rest);
   }
 
   return undefined;

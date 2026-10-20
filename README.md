@@ -49,7 +49,7 @@ The [quick start](docs/quickstart.md) goes through it step by step, then adds yo
 - **One binary.** `corami` is the CLI on every machine and the daemon on the server.
 - **Sync.** Files travel with [Mutagen](https://mutagen.io) over Tailscale SSH. A conflict that cannot be solved without losing data is held and reported, never overwritten. Dependencies and build outputs (`node_modules`, `build`, `Pods`...) stay out of the sync and each machine regenerates them. Everything else syncs, keys and env files included: keeping a secret off the machines is a decision made in the project, not by Corami.
 - **Private.** Nothing is on the public internet: the server, the agent and the previews are reachable only through your Tailscale network.
-- **Scriptable.** Every command takes `--json`, the default without a terminal, so agents can drive Corami too.
+- **Scriptable.** Every command takes `--json`, the default without a terminal. `corami exec --on` is the exception: it passes the output of the command through, and collects it in the envelope only with `--json`.
 
 ## Status
 
@@ -61,7 +61,7 @@ Early: it works end to end on a real VPS with a macOS client. Binaries and updat
 - [Security](docs/security.md): what to keep in place, in order of weight
 - [CLI reference](docs/cli.md)
 - [Previews](docs/previews.md): a dev server with an HTTPS address
-- [Builds](docs/builds.md): on the server, or on a client over SSH
+- [Builds](docs/builds.md): on the server, or on a client with `corami exec`
 - [Backup](docs/backup.md): what to save and how
 - [Architecture](docs/architecture.md): how it is built
 - [Internals](docs/internals.md): invariants the code relies on

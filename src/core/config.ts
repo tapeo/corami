@@ -24,6 +24,13 @@ export interface CoramiPaths {
   logs: string;
   syncState: string;
   daemonToken: string;
+  exec: string;
+  execRules: string;
+  execPending: string;
+  execRunning: string;
+  execLog: string;
+  execState: string;
+  execKnownHosts: string;
 }
 
 export function homeDirectory(): string {
@@ -43,15 +50,24 @@ export function paths(): CoramiPaths {
   }
 
   const root = join(home, '.corami');
+  const logs = join(root, 'logs');
+  const exec = join(root, 'exec');
 
   return {
     root,
     config: join(root, 'config.json'),
     bin: join(root, 'bin'),
     state: join(root, 'state.db'),
-    logs: join(root, 'logs'),
+    logs,
     syncState: join(root, 'sync-state.json'),
     daemonToken: join(root, 'daemon-token'),
+    exec,
+    execRules: join(exec, 'rules.json'),
+    execPending: join(exec, 'pending'),
+    execRunning: join(exec, 'running'),
+    execLog: join(logs, 'exec.log'),
+    execState: join(exec, 'state.json'),
+    execKnownHosts: join(exec, 'known_hosts'),
   };
 }
 

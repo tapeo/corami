@@ -442,7 +442,7 @@ describe('cli', () => {
       (command: { name: string }) => command.name,
     );
 
-    expect(names).toEqual(['doctor', 'git', 'project', 'serve', 'setup', 'sync', 'update']);
+    expect(names).toEqual(['doctor', 'exec', 'git', 'project', 'serve', 'setup', 'sync', 'update']);
     expect((await corami(['daemon', '--help'])).exitCode).toBe(0);
   });
 

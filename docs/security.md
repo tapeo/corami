@@ -57,9 +57,13 @@ With `accept` nothing asks for a second factor when a connection starts. The MFA
 
 Remove the device from the tailnet in the [Tailscale console](https://login.tailscale.com/admin/machines). Once it is out, it no longer has an address in the tailnet, and the server refuses the connections the policy does not allow.
 
-## Builds on the Mac
+## Commands on a client
 
-A build on a client runs over the Remote Login of macOS, with the key of the server in the `authorized_keys` of the Mac user. A key without limits lets anything that runs on the server run anything on the Mac, with the credentials of that user. Limit it to the single script it needs with `command="..."`, or give it a dedicated macOS user. The steps are in [builds.md](builds.md#on-a-client-over-ssh).
+`corami exec` runs a command of the server on a client, inside the synced copy. The client turns the channel on in its terminal with `corami exec allow`, and turns it off with `corami exec deny`. The server reaches the client through a key line in `~/.ssh/authorized_keys` limited with `restrict,from=...,command="... exec gate"`, and sshd must accept keys only: `exec allow` writes `/etc/ssh/sshd_config.d/100-corami.conf` with sudo when passwords are on.
+
+The rules and the approval are on the client. `ask` is the default, `deny` wins, and the agent on the server cannot read or change them: every payload passes through the gate, and the file of the rules is not reachable from the server. A rule limits the command, not what it does: `flutter run` runs code of the project, and `allow npx *` allows everything. `exec rule allow` says so when a rule covers a program that runs arbitrary code.
+
+Checks: `exec.remote_login`, `exec.sshd` and `exec.allowed` on a client; `exec.clients` on the server.
 
 ## Keys and env files
 

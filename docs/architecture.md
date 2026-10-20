@@ -26,6 +26,7 @@ Implementation details of v1. The invariants of the code, the reasons a name can
   - [Dev servers that check the Host header](#dev-servers-that-check-the-host-header)
   - [Local preview](#local-preview)
 - [Builds and runs](#builds-and-runs)
+  - [Commands on a client](#commands-on-a-client)
 - [Worktrees](#worktrees)
 - [Verification for agents](#verification-for-agents)
   - [Instructions for the agent](#instructions-for-the-agent)
@@ -75,7 +76,7 @@ Implementation details of v1. The invariants of the code, the reasons a name can
 
 Corami takes care of server, network, sync, previews and verification. It **does not install and does not choose** Node, pnpm, Bun, Flutter, FVM, Java, Android SDK, Xcode or CocoaPods: the user (or the agent) installs them on every machine, as they prefer.
 
-- Corami starts no project process and runs no build. Dev servers and builds are commands of the user or of the agent, run where the tools are: the server for most projects, a client over SSH when only that machine can do it (see [builds.md](builds.md)).
+- Corami starts no project process and runs no build. Dev servers and builds are commands of the user or of the agent, run where the tools are: the server for most projects, a client with `corami exec` when only that machine can do it (see [builds.md](builds.md)).
 - There is no configuration file in the repository. A project is a folder on the server; the sync and the previews find it by its path.
 - There is no stack specific code in Corami. The few rules a dev server must respect to be reachable are in [previews.md](previews.md).
 
@@ -119,7 +120,7 @@ Editing files by hand from the phone would need a web editor on the server (e.g.
 | Component | Role | Notes |
 |---|---|---|
 | `corami` CLI | all | compiled Bun, one file per platform |
-| `corami daemon` | server | API: project registry, previews, git state |
+| `corami daemon` | server | API: project registry, previews, git state, registered clients and the exec key |
 | git service | all | service unit that keeps `.git` aligned with `origin` on every side (launchd, user systemd, scheduled task), installed by `corami setup client` and by `corami setup server`. On Linux the output goes to the journal, on macOS to `~/.corami/logs/git-watch.log` |
 | Tailscale | all | private network, MagicDNS, Tailscale SSH, HTTPS and identity headers with `tailscale serve` |
 | Mutagen | client | two-way sync towards the server over SSH. Mutagen installs its agent on the server by itself. Its daemon runs as a service, installed by `corami setup client` |
@@ -146,12 +147,13 @@ corami/
     main.ts
     cli/
       commands/           one file per group: setup, setup-client, doctor, project,
-                          serve, sync, git, update
+                          serve, sync, git, update, exec
       output.ts           JSON envelope, TTY tables, exit codes
       server-client.ts    HTTP client towards the daemon
     daemon/
       server.ts           HTTP routing and authentication with the Tailscale headers
       api.ts              projects, previews, git state
+      exec-api.ts         exec key, registered clients, probe
       previews.ts         serve rules: apply, remove, reconcile
     core/
       config.ts           global config and paths
@@ -160,10 +162,11 @@ corami/
       pinned-tools.ts     version and sha256 of Mutagen
       local-copy.ts       path rules: what the sync, the import and the copy removal never carry
       git.ts, git-align.ts, git-follow.ts
+      exec-rules.ts, exec-gate.ts, exec-ssh-keys.ts, exec-sshd.ts, exec-errors.ts
       paths and helper modules: doctor, errors, exec,
       last-change, release, state, transfer
     integrations/
-      tailscale.ts  mutagen.ts  service.ts  ssh.ts  systemd.ts
+      tailscale.ts  mutagen.ts  service.ts  ssh.ts  ssh-exec.ts  systemd.ts
   scripts/
     install.sh
     install.ps1
@@ -180,6 +183,9 @@ corami/
 | State | `~/.corami/state.db` | |
 | Daemon token | `~/.corami/daemon-token` (0600) | |
 | Service logs | `~/.corami/logs/` (git watch) | `~/.corami/logs/` |
+| Exec channel | `~/.corami/exec/` (key of the clients, `known_hosts`) | `~/.corami/exec/` (rules, pending, running, state) |
+| Exec key | `~/.ssh/id_ed25519_corami_exec` | |
+| Exec log | | `~/.corami/logs/exec.log` |
 | Projects | `~/projects/<project>`, or the folder chosen with `--server-path` | the folder given as the argument of `project add` and kept by the session. Never guessed |
 
 Every service listens on `127.0.0.1:<port>`. `tailscale serve` exposes the same port number over HTTPS on the tailnet (see "Network and security").
@@ -285,11 +291,25 @@ To open the server preview from a client, the same HTTPS address is used, withou
 
 ## Builds and runs
 
-Nothing in Corami runs a build or a project command. The details, including builds on a client over SSH and the rules for keys, are in [builds.md](builds.md).
+Nothing in Corami runs a build or a project command. The details, including builds on a client with `corami exec` and the rules for keys, are in [builds.md](builds.md).
 
 - **Dependencies:** each machine installs them with the command of the project (`pnpm install`, `flutter pub get`). Lockfiles are synced, the dependency folders are not, because they contain native binaries and absolute paths of the machine.
 - **Advice, not obligations:** pnpm with its global store (same file system as the local copies, for hard links), FVM with `.fvmrc` for Flutter. Corami does not check them.
 - **A long build on the server** competes with the previews for CPU: run it with `nice` and close the toolchain daemons at the end (`gradlew --stop`).
+
+### Commands on a client
+
+`corami exec` runs a command of the server inside the synced copy of a client. The agent lives on the server; a simulator, `xcodebuild` or a device plugged into a Mac need the Mac.
+
+- The client turns the channel on with `corami exec allow`, in its terminal. Before it, sshd must accept keys only: `exec allow` reads the effective configuration and offers the drop-in `/etc/ssh/sshd_config.d/100-corami.conf`.
+- The permission is a line of `~/.ssh/authorized_keys` on the client: `restrict,from="<tailnet IPs of the server>",command="<corami> exec gate"`. `restrict` removes pty, forwarding and X11; `from=` limits the key to the server.
+- The rules live on the client, in `~/.corami/exec/rules.json`: `allow`, `ask` and `deny` on `argv`, matched token by token, `*` only as the last token, `deny` wins, default `ask`. The agent cannot read or change them: the server reaches the client only through the gate.
+- The server sends a base64url JSON in `SSH_ORIGINAL_COMMAND`: `{ "v": 1, "project": "myapp", "argv": [...] }`. The gate decides, waits for approval up to 10 minutes, flushes the sync, runs `[$SHELL, "-lc", "exec \"$@\"", ...argv]` in the copy, and streams stdout, stderr and the exit code back.
+- A new command waits in `~/.corami/exec/pending/` and `corami exec approve` answers it; a notification tries to reach the graphical session on macOS and Linux. Without approval the server sees a Corami error with the fix.
+- Running commands are in `~/.corami/exec/running/`: `exec deny` stops them and removes the key line.
+- Output is the exception to the CLI contract: without `--json` it is the stdout and stderr of the command, even without a TTY. `--json` collects them in the envelope with `client`, `project`, `exit_code`, `stdout`, `stderr`, `duration_ms`.
+- The server keeps `clients(name, ssh_host, ssh_user, os, host_key, allowed, updated_at)`, the dedicated key `~/.ssh/id_ed25519_corami_exec` and `~/.corami/exec/known_hosts`, with `StrictHostKeyChecking=yes`: no trust on first use.
+- `GET /v1/exec/key` gives the public key and the tailnet addresses; `PUT /v1/clients/<name>` registers the client with its host key; `POST /v1/clients/<name>/probe` enters with a probe payload, which executes nothing.
 
 ## Worktrees
 
@@ -499,21 +519,27 @@ All routes are under `/v1`, authenticated with the Tailscale identity headers an
 | PUT | `/projects/:project/previews/:name` | register or move a preview: `{ "target_port": 3000 }` |
 | DELETE | `/projects/:project/previews/:name` | remove the preview and its serve rule |
 | GET | `/previews` | every preview with `url` and `responding` |
+| GET | `/exec/key` | public key of the dedicated exec key and the tailnet addresses of the server |
+| GET | `/clients` | registered clients, with `allowed` |
+| PUT | `/clients/:name` | register a client: `{ "ssh_host": ..., "ssh_user": ..., "os": ..., "host_key": ..., "allowed": ... }`; the host key goes into `known_hosts` |
+| POST | `/clients/:name/probe` | enters the client with a probe payload, which executes nothing |
 
 ### SQLite tables
 
 ```
 projects(name, path, repo_url, created_at, owned)
 previews(project, name, public_port, target_port, created_at)
+clients(name, ssh_host, ssh_user, os, host_key, allowed, updated_at)
 ```
 
-`owned` tells a folder Corami made (a clone, an import) from one registered where it was. A database written before the column existed fills it with the rule of the day, "inside the projects root".
+`owned` tells a folder Corami made (a clone, an import) from one registered where it was. A database written before the column existed fills it with the rule of the day, "inside the projects root". `allowed` in `clients` is what the last `corami exec allow` or `exec deny` said: the truth of the channel is the key line on the client, not the row.
 
 ## CLI output contract
 
 - With a TTY stdout: tables and text. Without a TTY or with `--json`: JSON.
 - In a terminal, `project add` and the setup show the phase they are running on one line, erased when the phase ends. A bar with a percentage appears only where a real counter knows the total: the bytes of the upload, the bytes of the sync (the files when the size is not known), the objects of a clone. With `--json`, or without a terminal, that line is not drawn and the output does not change.
 - The text of `setup server` and `setup client` ends with the commands to run next, on the other machine or for the first project. The JSON does not carry them.
+- `corami exec --on` is the exception: without `--json` it passes stdout, stderr and the exit code of the command through, even without a TTY. `--json` collects them in the envelope.
 - Envelope:
 
 ```json

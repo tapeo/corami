@@ -131,7 +131,7 @@ Copy this into the `AGENTS.md` of the project, with the project name in place of
 - The project lives on the server, synced with every client. The dev server runs on the server, not on this machine: `systemd-run --user --unit <project>-web --collect pnpm exec next dev -H 127.0.0.1 -p 3000`.
 - Give the preview an address: `corami serve 3000` (from `~/projects/<project>`), then read `url` from the JSON. `corami serve ls` lists the addresses.
 - After every UI change, open that URL with the browser of this harness (or a browser tool it offers) and read the console and the failed requests there, then take the screenshot. The page is in a secure context because the address is HTTPS.
-- Builds run where the tools are: on the server, or on a client over SSH. See docs/builds.md in the Corami repository.
+- Builds run where the tools are: on the server, or on a client with `corami exec`. A command that needs a device on a client goes through `corami exec --on <client> -- <command>`: the client allowed it with `corami exec allow`, and a new command waits for `corami exec approve` there. See docs/builds.md in the Corami repository.
 ```
 
 Corami ships no checker of its own: the preview is a normal HTTPS page, and the browser of the harness, or a Playwright or chrome-devtools MCP, can click, fill forms and log in.
@@ -184,4 +184,4 @@ Start with `corami doctor`: it says what is missing and the step that fixes it.
 | The preview answers on the wrong port | `corami serve <port>` again: the URL stays the same |
 | Slow transfers between client and server | `tailscale status` says whether the connection is direct or through a relay |
 
-Next: [builds](builds.md) on the server or on the Mac over SSH, and the [CLI reference](cli.md).
+Next: [builds](builds.md) on the server or on the Mac with `corami exec`, and the [CLI reference](cli.md).

@@ -102,19 +102,19 @@ export async function runRouter(options: RouterOptions): Promise<number> {
 
   if (result.data !== undefined) {
     emit(success(result.data), options.output);
-    return 0;
+    return result.exitCode ?? 0;
   }
 
   if (result.text !== undefined) {
     if (options.output.json) {
       emit(success({ text: result.text }), options.output);
-      return 0;
+      return result.exitCode ?? 0;
     }
 
     process.stdout.write(`${result.text}\n`);
   }
 
-  return 0;
+  return result.exitCode ?? 0;
 }
 
 function declaresVersion(command: CommandSpec | undefined): boolean {

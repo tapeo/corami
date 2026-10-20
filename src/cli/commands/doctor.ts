@@ -2,7 +2,8 @@ import { existsSync, readdirSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { basename, join } from 'node:path';
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
-import { health, listProjects } from '@/cli/server-client.ts';
+import { readSshdConfig, remoteLoginOn, shortName } from '@/cli/exec-client-system.ts';
+import { health, listClients, listProjects } from '@/cli/server-client.ts';
 import { projectRoot, projectsRootFor, readGlobalConfig } from '@/core/config.ts';
 import {
   type CheckResult,
@@ -14,6 +15,8 @@ import {
 } from '@/core/doctor.ts';
 import { toCoramiError } from '@/core/errors.ts';
 import { run as runCommand } from '@/core/exec.ts';
+import { findExecLine } from '@/core/exec-ssh-keys.ts';
+import { sshdAcceptsPasswords } from '@/core/exec-sshd.ts';
 import { findTool, MUTAGEN } from '@/core/pinned-tools.ts';
 import { orphanServerFolders, serverPathsOf } from '@/core/project-add.ts';
 import { canSudo, ownerOfServer, privilegedGroups } from '@/core/server-user.ts';
@@ -35,8 +38,9 @@ import {
   serviceDirHint,
   servicePlatform,
 } from '@/integrations/service.ts';
+import { sshDir } from '@/integrations/ssh.ts';
 import { homeDirectoryForUser, systemctlAsUser } from '@/integrations/systemd.ts';
-import { sshState, tailnetLogins } from '@/integrations/tailscale.ts';
+import { peers, sshState, tailnetLogins } from '@/integrations/tailscale.ts';
 
 const STATUS_LABEL: Record<CheckStatus, string> = {
   ok: 'ok',
@@ -73,6 +77,7 @@ async function collectChecks(): Promise<CheckResult[]> {
     checkDaemon(),
     checkSsh(),
     checkPeople(),
+    checkExec(),
   ]);
 
   return groups.flat();
@@ -147,6 +152,135 @@ async function checkSsh(): Promise<CheckResult[]> {
   }
 
   return checks;
+}
+
+async function checkExec(): Promise<CheckResult[]> {
+  const config = await readGlobalConfig().catch(() => undefined);
+
+  if (config?.role === 'client') {
+    return checkExecClient(config.server_host ?? '');
+  }
+
+  if (config?.role === 'server') {
+    return checkExecServer();
+  }
+
+  return [];
+}
+
+async function checkExecClient(serverHost: string): Promise<CheckResult[]> {
+  const server = shortName(serverHost);
+  const checks: CheckResult[] = [];
+  const remote = await remoteLoginOn();
+
+  if (remote === true) {
+    checks.push({
+      id: 'exec.remote_login',
+      status: 'ok',
+      summary: 'Remote Login is on',
+    });
+  } else if (remote === false) {
+    checks.push({
+      id: 'exec.remote_login',
+      status: 'warn',
+      summary: 'Remote Login is off: the server cannot reach this machine',
+      fix: 'Turn on Remote Login in the Sharing settings',
+    });
+  } else {
+    checks.push({
+      id: 'exec.remote_login',
+      status: 'skip',
+      summary: 'Remote Login cannot be read without administrator access',
+      fix: 'Check System Settings > General > Sharing > Remote Login',
+    });
+  }
+
+  const authorized = await authorizedKeysText();
+  const line = findExecLine(authorized, server);
+
+  if (line === undefined) {
+    checks.push({
+      id: 'exec.allowed',
+      status: 'ok',
+      summary: `The channel is off: ${server} cannot run commands here`,
+    });
+  } else {
+    checks.push({
+      id: 'exec.allowed',
+      status: 'ok',
+      summary: `The channel is on: ${server} can ask to run commands here`,
+    });
+  }
+
+  if (line !== undefined) {
+    const keysOnly = !sshdAcceptsPasswords(await readSshdConfig());
+
+    if (keysOnly) {
+      checks.push({
+        id: 'exec.sshd',
+        status: 'ok',
+        summary: 'sshd accepts keys only',
+      });
+    } else {
+      checks.push({
+        id: 'exec.sshd',
+        status: 'warn',
+        summary: 'The channel is on while sshd accepts passwords',
+        fix: 'Write /etc/ssh/sshd_config.d/100-corami.conf with PasswordAuthentication no and KbdInteractiveAuthentication no',
+      });
+    }
+  }
+
+  return checks;
+}
+
+async function authorizedKeysText(): Promise<string> {
+  try {
+    return await Bun.file(join(sshDir(), 'authorized_keys')).text();
+  } catch {
+    return '';
+  }
+}
+
+async function checkExecServer(): Promise<CheckResult[]> {
+  const clients = await listClients().catch(() => []);
+  const list = await peers().catch(() => []);
+  const unreachable = clients.filter((client) => {
+    const peer = list.find(
+      (entry) => entry.hostName === client.name || entry.dnsName.split('.')[0] === client.name,
+    );
+
+    return client.allowed && (peer === undefined || !peer.online);
+  });
+
+  if (clients.length === 0) {
+    return [
+      {
+        id: 'exec.clients',
+        status: 'ok',
+        summary: 'No clients are registered',
+      },
+    ];
+  }
+
+  if (unreachable.length === 0) {
+    return [
+      {
+        id: 'exec.clients',
+        status: 'ok',
+        summary: `${clients.length} ${clients.length === 1 ? 'client is' : 'clients are'} registered and reachable`,
+      },
+    ];
+  }
+
+  return [
+    {
+      id: 'exec.clients',
+      status: 'warn',
+      summary: `Clients that allow commands but are unreachable: ${unreachable.map((client) => client.name).join(', ')}`,
+      fix: 'Wake them, or check Tailscale on both machines',
+    },
+  ];
 }
 
 async function checkPeople(): Promise<CheckResult[]> {
