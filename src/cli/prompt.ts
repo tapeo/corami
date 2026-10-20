@@ -13,7 +13,12 @@ export interface Prompter {
   progress(line: string): void;
   ask(question: string, initial?: string): Promise<string>;
   confirm(question: string, fallback: boolean): Promise<boolean>;
-  choose<T>(question: string, choices: Choice<T>[], fallback?: number): Promise<T>;
+  choose<T>(
+    question: string,
+    choices: Choice<T>[],
+    fallback?: number,
+    signal?: AbortSignal,
+  ): Promise<T>;
 }
 
 export function canPrompt(output: OutputOptions): boolean {
@@ -62,7 +67,7 @@ export function terminalPrompter(): Prompter {
       }
     },
 
-    async choose(question, choices, fallback = 0) {
+    async choose(question, choices, fallback = 0, signal) {
       clear();
       process.stdout.write(`${question}\n`);
 
@@ -71,7 +76,7 @@ export function terminalPrompter(): Prompter {
       }
 
       for (;;) {
-        const answer = await readLine(`Choice [${fallback + 1}]: `);
+        const answer = await readLine(`Choice [${fallback + 1}]: `, '', signal);
         const index = parseChoice(answer, choices.length, fallback);
         const picked = index === undefined ? undefined : choices[index];
 
@@ -85,13 +90,14 @@ export function terminalPrompter(): Prompter {
   };
 }
 
-async function readLine(prompt: string, initial = ''): Promise<string> {
+async function readLine(prompt: string, initial = '', signal?: AbortSignal): Promise<string> {
   const reader = createInterface({ input: process.stdin, output: process.stdout });
 
   reader.on('SIGINT', () => stop(reader));
 
   try {
-    const answer = reader.question(prompt);
+    const answer =
+      signal === undefined ? reader.question(prompt) : reader.question(prompt, { signal });
 
     if (initial !== '') {
       reader.write(initial);
@@ -100,7 +106,12 @@ async function readLine(prompt: string, initial = ''): Promise<string> {
     const given = (await answer).trim();
 
     return given === '' ? initial : given;
-  } catch {
+  } catch (error) {
+    if (signal?.aborted === true) {
+      process.stdout.write('\n');
+      throw error;
+    }
+
     return stop(reader);
   } finally {
     reader.close();

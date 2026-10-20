@@ -2,7 +2,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { basename, join } from 'node:path';
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
-import { readSshdConfig, remoteLoginOn, shortName } from '@/cli/exec-client-system.ts';
+import { readSshdConfig, shortName } from '@/cli/exec-client-system.ts';
 import { health, listClients, listProjects } from '@/cli/server-client.ts';
 import { projectRoot, projectsRootFor, readGlobalConfig } from '@/core/config.ts';
 import {
@@ -14,7 +14,7 @@ import {
   checkTailscale,
 } from '@/core/doctor.ts';
 import { toCoramiError } from '@/core/errors.ts';
-import { run as runCommand } from '@/core/exec.ts';
+import { commandPath, run as runCommand } from '@/core/exec.ts';
 import { findExecLine } from '@/core/exec-ssh-keys.ts';
 import { sshdAcceptsPasswords } from '@/core/exec-sshd.ts';
 import { findTool, MUTAGEN } from '@/core/pinned-tools.ts';
@@ -33,6 +33,7 @@ import {
 } from '@/core/ssh-policy.ts';
 import { daemonServiceActive } from '@/integrations/mutagen.ts';
 import {
+  execApproverSpec,
   gitWatchSpec,
   serviceActive,
   serviceDirHint,
@@ -171,30 +172,6 @@ async function checkExec(): Promise<CheckResult[]> {
 async function checkExecClient(serverHost: string): Promise<CheckResult[]> {
   const server = shortName(serverHost);
   const checks: CheckResult[] = [];
-  const remote = await remoteLoginOn();
-
-  if (remote === true) {
-    checks.push({
-      id: 'exec.remote_login',
-      status: 'ok',
-      summary: 'Remote Login is on',
-    });
-  } else if (remote === false) {
-    checks.push({
-      id: 'exec.remote_login',
-      status: 'warn',
-      summary: 'Remote Login is off: the server cannot reach this machine',
-      fix: 'Turn on Remote Login in the Sharing settings',
-    });
-  } else {
-    checks.push({
-      id: 'exec.remote_login',
-      status: 'skip',
-      summary: 'Remote Login cannot be read without administrator access',
-      fix: 'Check System Settings > General > Sharing > Remote Login',
-    });
-  }
-
   const authorized = await authorizedKeysText();
   const line = findExecLine(authorized, server);
 
@@ -229,9 +206,36 @@ async function checkExecClient(serverHost: string): Promise<CheckResult[]> {
         fix: 'Write /etc/ssh/sshd_config.d/100-corami.conf with PasswordAuthentication no and KbdInteractiveAuthentication no',
       });
     }
+
+    checks.push(await checkApprovalDialog());
   }
 
   return checks;
+}
+
+async function checkApprovalDialog(): Promise<CheckResult> {
+  const running = await serviceActive(execApproverSpec(process.execPath)).catch(() => false);
+
+  if (!running) {
+    return {
+      id: 'exec.approver',
+      status: 'warn',
+      summary:
+        'The approval dialog does not run: new commands are answered only with corami exec approve',
+      fix: 'Run corami exec allow again',
+    };
+  }
+
+  if (process.platform === 'linux' && (await commandPath('zenity')) === undefined) {
+    return {
+      id: 'exec.approver',
+      status: 'warn',
+      summary: 'zenity is missing: the approval dialog cannot open',
+      fix: 'Answer with corami exec approve, or install zenity',
+    };
+  }
+
+  return { id: 'exec.approver', status: 'ok', summary: 'The approval dialog runs' };
 }
 
 async function authorizedKeysText(): Promise<string> {

@@ -16,7 +16,13 @@ import {
   replaceBinary,
 } from '@/core/release.ts';
 import { ownerBinary, ownerOfServer } from '@/core/server-user.ts';
-import { gitWatchSpec, restartService, serviceActive } from '@/integrations/service.ts';
+import {
+  execApproverSpec,
+  gitWatchSpec,
+  restartService,
+  type ServiceSpec,
+  serviceActive,
+} from '@/integrations/service.ts';
 import { homeDirectoryForUser, systemctlAsUser, userId } from '@/integrations/systemd.ts';
 import { VERSION } from '@/version.ts';
 
@@ -68,6 +74,7 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
   const copiedToOwner = await copyToOwner();
   const restarted = await restartDaemon();
   const watchRestarted = await restartGitWatch();
+  const approverRestarted = await restartIfActive(execApproverSpec(binary));
 
   const summary = {
     from: VERSION,
@@ -76,6 +83,7 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
     account_binary_updated: copiedToOwner,
     restarted_daemon: restarted,
     restarted_git_watch: watchRestarted,
+    restarted_exec_approver: approverRestarted,
   };
 
   if (context.output.json) {
@@ -89,6 +97,7 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
       copiedToOwner ? 'The account that owns the projects runs the same binary.' : '',
       restarted ? 'Daemon service restarted.' : '',
       watchRestarted ? 'Git alignment service restarted.' : '',
+      approverRestarted ? 'Approval dialog restarted.' : '',
     ]
       .filter((line) => line !== '')
       .join('\n'),
@@ -264,6 +273,10 @@ async function restartGitWatch(): Promise<boolean> {
     return (await systemctlAsUser(owner, ['restart', spec.name])).ok;
   }
 
+  return restartIfActive(spec);
+}
+
+async function restartIfActive(spec: ServiceSpec): Promise<boolean> {
   const active = await serviceActive(spec).catch(() => false);
 
   if (!active) {

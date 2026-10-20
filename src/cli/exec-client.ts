@@ -12,10 +12,8 @@ import {
   clientOs,
   gateCommand,
   hostKey,
-  loginPathMissing,
   readSshdConfig,
   reloadSshd,
-  remoteLoginOn,
   tailnetIdentity,
   writeSshdKeysOnly,
 } from '@/cli/exec-client-system.ts';
@@ -24,14 +22,14 @@ import {
   listRunning,
   removeExecState,
   removePending,
-  writeDecision,
   writeExecState,
 } from '@/cli/exec-files.ts';
 import { canPrompt, terminalPrompter } from '@/cli/prompt.ts';
 import { execKey, probeClient, putClient } from '@/cli/server-client.ts';
-import { CoramiError } from '@/core/errors.ts';
+import { CoramiError, toCoramiError } from '@/core/errors.ts';
 import { authorizedKeyLine, findExecLine, withoutExecLine } from '@/core/exec-ssh-keys.ts';
 import { sshdAcceptsPasswords, sshdKeysOnlyText } from '@/core/exec-sshd.ts';
+import { execApproverSpec, installService, removeService } from '@/integrations/service.ts';
 
 export async function allow(context: CommandContext): Promise<CommandResult> {
   const { server } = await clientConfig();
@@ -45,17 +43,6 @@ export async function allow(context: CommandContext): Promise<CommandResult> {
   }
 
   const prompter = terminalPrompter();
-  const remote = await remoteLoginOn();
-
-  if (remote === false) {
-    throw new CoramiError({
-      code: 'config_invalid',
-      message: 'Remote Login is off on this machine',
-      fix: 'Turn on Remote Login in the Sharing settings, then run corami exec allow again',
-    });
-  }
-
-  prompter.say(remote === true ? '✓ Remote Login is on' : 'Remote Login: unknown');
 
   if (sshdAcceptsPasswords(await readSshdConfig())) {
     prompter.say(
@@ -112,7 +99,9 @@ export async function allow(context: CommandContext): Promise<CommandResult> {
   prompter.say(
     `The server ${server} will be able to ask to run commands on this machine, as you, inside the copies of your projects.`,
   );
-  prompter.say('Nothing runs until you allow it: every new command asks first.');
+  prompter.say(
+    'Nothing runs until you allow it: every new command asks first, in a dialog on this machine.',
+  );
   prompter.say('You can turn it off at any time with: corami exec deny');
   prompter.say();
 
@@ -173,7 +162,10 @@ export async function allow(context: CommandContext): Promise<CommandResult> {
     throw error;
   }
 
-  const missing = await loginPathMissing();
+  const dialog = await installService(execApproverSpec(process.execPath)).catch((error) => ({
+    installed: false,
+    detail: toCoramiError(error).message,
+  }));
 
   prompter.say(
     `✓ Key of ${server} added, only from ${serverKey.ips.join(', ')} and only for corami exec`,
@@ -181,9 +173,11 @@ export async function allow(context: CommandContext): Promise<CommandResult> {
   prompter.say(`✓ Registered on the server as ${identity.name}`);
   prompter.say(`✓ Checked from the server: ${server} reached this machine`);
 
-  if (missing.length > 0) {
+  if (dialog.installed) {
+    prompter.say('✓ Approval dialog on: new commands ask here, or in corami exec approve');
+  } else {
     prompter.say(
-      `⚠ The login shell does not see ${missing.join(', ')}: a rule that needs it will fail. Move it to .zprofile or .profile.`,
+      `⚠ Approval dialog not installed (${dialog.detail}): answer with corami exec approve`,
     );
   }
 
@@ -208,15 +202,10 @@ export async function deny(context: CommandContext): Promise<CommandResult> {
   }
 
   for (const request of waiting) {
-    await writeDecision(request.id, { decision: 'deny' });
-
-    if (request.pid !== undefined && isAlive(request.pid)) {
-      continue;
-    }
-
     await removePending(request.id);
   }
 
+  const dialogRemoved = await removeService(execApproverSpec(process.execPath)).catch(() => false);
   const informed = await informServer(false);
 
   if (context.output.json) {
@@ -226,6 +215,7 @@ export async function deny(context: CommandContext): Promise<CommandResult> {
         removed: line !== undefined,
         stopped,
         cancelled: waiting.length,
+        dialog_removed: dialogRemoved,
         server_informed: informed,
       },
     };
@@ -235,6 +225,10 @@ export async function deny(context: CommandContext): Promise<CommandResult> {
     `✓ Key of ${server} removed: the server can no longer run commands here`,
     `✓ Stopped ${stopped} running ${stopped === 1 ? 'command' : 'commands'}`,
   ];
+
+  if (dialogRemoved) {
+    lines.push('✓ Approval dialog removed');
+  }
 
   if (waiting.length > 0) {
     lines.push(
@@ -247,13 +241,4 @@ export async function deny(context: CommandContext): Promise<CommandResult> {
   );
 
   return { text: lines.join('\n') };
-}
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }

@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 
 import { paths } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
@@ -9,7 +9,6 @@ export interface PendingRequest {
   project: string;
   argv: string[];
   created_at: string;
-  pid?: number | undefined;
 }
 
 export interface PendingDecision {
@@ -107,9 +106,21 @@ export async function removePending(id: string): Promise<void> {
   await removeFile(decisionPath(id));
 }
 
-export async function writeDecision(id: string, decision: PendingDecision): Promise<void> {
-  ensureExecDirs();
-  await Bun.write(decisionPath(id), `${JSON.stringify(decision)}\n`);
+export function isPending(id: string): boolean {
+  return existsSync(pendingPath(id));
+}
+
+export function writeDecision(id: string, decision: PendingDecision): boolean {
+  if (!isPending(id)) {
+    return false;
+  }
+
+  try {
+    writeFileSync(decisionPath(id), `${JSON.stringify(decision)}\n`, { flag: 'wx' });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function readDecision(id: string): Promise<PendingDecision | undefined> {
@@ -268,7 +279,6 @@ function parsePending(text: string): PendingRequest | undefined {
       project: record.project,
       argv: tokens,
       created_at: record.created_at,
-      pid: typeof record.pid === 'number' ? record.pid : undefined,
     };
   } catch {
     return undefined;

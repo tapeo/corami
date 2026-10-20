@@ -1,7 +1,8 @@
 import type { CommandSpec } from '@/cli/command.ts';
+import { approve, approver } from '@/cli/exec-approver.ts';
 import { allow, deny } from '@/cli/exec-client.ts';
 import { runGate } from '@/cli/exec-gate-run.ts';
-import { approve, rule, rules } from '@/cli/exec-rules-cli.ts';
+import { rule, rules } from '@/cli/exec-rules-cli.ts';
 import { remote, status } from '@/cli/exec-server.ts';
 
 export const execCommand: CommandSpec = {
@@ -35,7 +36,7 @@ export const execCommand: CommandSpec = {
     },
     {
       name: 'approve',
-      summary: 'Answers the commands that are waiting here',
+      summary: 'Answers the requests of the server as they arrive, in a terminal on the client',
       usage: 'corami exec approve',
       examples: ['corami exec approve'],
       run: approve,
@@ -73,6 +74,13 @@ export const execCommand: CommandSpec = {
       usage: 'corami exec gate',
       hidden: true,
       run: runGate,
+    },
+    {
+      name: 'approver',
+      summary: 'Shows the approval dialog of the requests of the server',
+      usage: 'corami exec approver',
+      hidden: true,
+      run: approver,
     },
   ],
 };

@@ -72,6 +72,6 @@ export function remoteExecError(failure: RemoteFailure): CoramiError | undefined
   return new CoramiError({
     code: 'server_unreachable',
     message: `Cannot reach ${failure.client}`,
-    fix: `Wake ${failure.client}, or check Tailscale on both machines`,
+    fix: `Wake ${failure.client}, check Tailscale on both machines and that sshd runs on ${failure.client} (Remote Login in the Sharing settings on macOS)`,
   });
 }

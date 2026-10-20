@@ -33,12 +33,12 @@ Setup, once:
 2. On the Mac: `corami setup client <server>`, then `corami exec allow` in its terminal.
 3. On the server: `corami exec status` lists the client as allowed and online.
 
-`exec allow` offers to close sshd to passwords, adds the key of the server to `authorized_keys` limited to the gate, registers the host key of the Mac on the server and checks the path from the server. The rules and the approval are on the Mac: `corami exec approve` answers the commands that wait, and `corami exec rule` adds them in advance. A command that does not arrive at an approval within 10 minutes fails with a Corami error. If the harness closes the connection before it, the harness timeout wins: add the rules first, or approve before running.
+`exec allow` offers to close sshd to passwords, adds the key of the server to `authorized_keys` limited to the gate, registers the host key of the Mac on the server, checks the path from the server and installs the approval dialog. The rules and the approval are on the Mac: a new command opens a dialog with *Allow once*, *Always allow* and *Deny*, `corami exec approve` answers the same requests from a terminal, also over ssh from a phone, and `corami exec rule` adds rules in advance. A command not answered within 60 seconds fails with a Corami error, and the agent can run it again.
 
 The rest of the notes stay:
 
 - The Mac must be awake, otherwise the command fails: the agent sees the error and can say so.
-- The login shell of an SSH session reads `.zshenv`, `.zprofile` and `.zlogin`, not `.zshrc`. `exec allow` compares the `PATH` of the login shell with the one of the interactive shell and says what to move. On Linux the same rule holds for `.profile`.
+- The login shell of an SSH session reads `.zshenv`, `.zprofile` and `.zlogin`, not `.zshrc`: a `PATH` the commands need goes in `.zprofile`. On Linux the same rule holds for `.profile`.
 - Over SSH the login keychain can be locked and `codesign` fails. For builds without signing (`--no-codesign`) nothing is needed; for a signed build run `security unlock-keychain` before it.
 - The artifact stays on the Mac: publish from there, or copy the file with `scp`. Bringing it back to the server is still in the [v2](v2/README.md#remote-runs).
 
@@ -69,7 +69,7 @@ A simulator, an emulator or a phone plugged into the Mac is driven by an MCP ser
 
 `mobile-mcp` drives Android and iOS simulators and devices, with screenshots. `xcodebuildmcp` runs `xcodebuild` and `simctl` ([docs](https://www.xcodebuildmcp.com/docs/clients)). The project names the copy the tools work in, and the gate sends the server's stdio to them.
 
-The first run asks for the exact command on the Mac: choose "Always allow exactly this command", not `npx *`. If the harness closes the connection before someone answers, add the two rules first from the Mac. When the harness closes the MCP server, the gate closes the processes on the Mac.
+The first run asks on the Mac. For `npx` and the other programs that run arbitrary code, *Always allow* allows exactly that command, never `npx *`. If nobody answers within 60 seconds, add the two rules first from the Mac with `corami exec rule allow`. When the harness closes the MCP server, the gate closes the processes on the Mac.
 
 ## What Corami does not do
 

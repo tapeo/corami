@@ -150,7 +150,7 @@ Topics postponed after v1. They are ideas, not decisions: they will be analysed 
 **What has emerged:**
 - Sync of worktrees, together with the [parallel previews](#parallel-previews).
 - `.git` lives on both sides with its own git commands, and the two repositories align by hand (done in v1). Syncing the same `.git` between two machines, instead, stays risky: without a lock two git commands together can corrupt the repository.
-- A watcher on the client that reinstalls the dependencies when the lockfile changes would need an always-on service on the client, which does not exist in v1. The same service would avoid Remote Login for the [remote runs](#remote-runs) and let a command survive a lost connection.
+- A watcher on the client that reinstalls the dependencies when the lockfile changes would need an always-on service on the client that runs commands, while in v1 the only one there answers approvals. The same service would avoid Remote Login for the [remote runs](#remote-runs) and let a command survive a lost connection.
 
 **To clarify:**
 - Whether a reliable lock for git is feasible on top of Mutagen, to keep a single `.git` synced instead of one per side.

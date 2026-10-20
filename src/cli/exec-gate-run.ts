@@ -1,10 +1,9 @@
-import { existsSync } from 'node:fs';
-
 import type { CommandContext, CommandResult } from '@/cli/command.ts';
-import { notifyApproval, tailnetIdentity } from '@/cli/exec-client-system.ts';
+import { tailnetIdentity } from '@/cli/exec-client-system.ts';
 import {
   appendExecLog,
   ensureExecDirs,
+  isPending,
   newExecId,
   readDecision,
   readRules,
@@ -13,8 +12,8 @@ import {
   writePending,
   writeRunning,
 } from '@/cli/exec-files.ts';
-import { paths } from '@/core/config.ts';
 import { CoramiError, toCoramiError } from '@/core/errors.ts';
+import { APPROVAL_WAIT_MS, approvalSeconds } from '@/core/exec-approval.ts';
 import { gateErrorLine } from '@/core/exec-errors.ts';
 import {
   type GateCommand,
@@ -25,7 +24,6 @@ import {
 import { decide, ruleText } from '@/core/exec-rules.ts';
 import { MutagenEngine } from '@/integrations/mutagen.ts';
 
-const APPROVAL_TIMEOUT_MS = 600_000;
 const POLL_MS = 500;
 
 export async function runGate(context: CommandContext): Promise<CommandResult> {
@@ -142,78 +140,95 @@ async function runCommand(request: GateCommand): Promise<CommandResult> {
 
 async function waitForApproval(request: GateCommand, client: string): Promise<void> {
   const id = newExecId();
+  const command = request.argv.join(' ');
   const started = Date.now();
-  let interrupted = false;
-  const interrupt = () => {
-    interrupted = true;
-  };
-
-  process.on('SIGHUP', interrupt);
-  process.on('SIGTERM', interrupt);
+  let lost = false;
+  const stopWatching = watchConnection(() => {
+    lost = true;
+  });
 
   await writePending({
     id,
     project: request.project,
     argv: request.argv,
     created_at: new Date().toISOString(),
-    pid: process.pid,
   });
 
-  notifyApproval(request.project, request.argv);
-  process.stderr.write(`Waiting for approval on ${client}: ${request.argv.join(' ')}\n`);
+  process.stderr.write(`Waiting for approval on ${client}: ${command}\n`);
 
   try {
     for (;;) {
       const decision = await readDecision(id);
 
-      if (decision !== undefined) {
-        await removePending(id);
+      if (decision?.decision === 'allow') {
+        return;
+      }
 
-        if (decision.decision === 'allow') {
-          return;
-        }
-
+      if (decision?.decision === 'deny') {
         logDecision(request, 'deny', 'ask', started, 1);
 
+        throw new CoramiError({ code: 'generic', message: `Denied on ${client}: ${command}` });
+      }
+
+      if (!isPending(id)) {
         throw new CoramiError({
           code: 'generic',
-          message: `Denied on ${client}: ${request.argv.join(' ')}`,
+          message: `The request was cancelled on ${client}: ${command}`,
         });
       }
 
-      if (!existsSync(pendingFile(id))) {
-        throw new CoramiError({
-          code: 'generic',
-          message: `The request for ${request.argv.join(' ')} disappeared on ${client}`,
-          fix: `On ${client}, run corami exec approve`,
-        });
-      }
-
-      if (interrupted) {
-        await removePending(id);
-
+      if (lost) {
         throw new CoramiError({
           code: 'generic',
           message: 'The connection closed while waiting for approval',
         });
       }
 
-      if (Date.now() - started >= APPROVAL_TIMEOUT_MS) {
-        await removePending(id);
-
+      if (Date.now() - started >= APPROVAL_WAIT_MS) {
         throw new CoramiError({
           code: 'generic',
-          message: `Not approved on ${client} within 10 minutes: ${request.argv.join(' ')}`,
-          fix: `On ${client}, run corami exec approve, or add a rule with corami exec rule allow -- ${request.argv.join(' ')}`,
+          message: `Not answered on ${client} within ${approvalSeconds()} seconds: ${command}`,
+          fix: `Run the command again and answer the dialog on ${client}, or keep corami exec approve open there. corami doctor on ${client} checks the dialog`,
         });
       }
 
       await Bun.sleep(POLL_MS);
     }
   } finally {
-    process.off('SIGHUP', interrupt);
-    process.off('SIGTERM', interrupt);
+    stopWatching();
+    await removePending(id);
   }
+}
+
+function watchConnection(onLost: () => void): () => void {
+  const parent = process.ppid;
+  const signals: NodeJS.Signals[] = ['SIGHUP', 'SIGTERM', 'SIGINT'];
+  let fired = false;
+  const fire = () => {
+    if (fired) {
+      return;
+    }
+
+    fired = true;
+    onLost();
+  };
+  const timer = setInterval(() => {
+    if (process.ppid !== parent) {
+      fire();
+    }
+  }, POLL_MS);
+
+  for (const signal of signals) {
+    process.on(signal, fire);
+  }
+
+  return () => {
+    clearInterval(timer);
+
+    for (const signal of signals) {
+      process.off(signal, fire);
+    }
+  };
 }
 
 async function execute(
@@ -234,13 +249,9 @@ async function execute(
     detached: true,
   });
 
-  const kill = () => {
+  const stopWatching = watchConnection(() => {
     killGroup(child.pid);
-  };
-
-  process.on('SIGHUP', kill);
-  process.on('SIGTERM', kill);
-  process.on('SIGINT', kill);
+  });
 
   await writeRunning({
     id,
@@ -252,9 +263,7 @@ async function execute(
 
   const exitCode = await child.exited;
 
-  process.off('SIGHUP', kill);
-  process.off('SIGTERM', kill);
-  process.off('SIGINT', kill);
+  stopWatching();
   await removeRunning(id);
 
   try {
@@ -315,8 +324,4 @@ function signalGroup(pid: number, signal: NodeJS.Signals): void {
       return;
     }
   }
-}
-
-function pendingFile(id: string): string {
-  return `${paths().execPending}/${id}.json`;
 }

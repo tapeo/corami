@@ -158,40 +158,6 @@ function includeFiles(pattern: string): string[] {
   }
 }
 
-export async function remoteLoginOn(): Promise<boolean | undefined> {
-  if (process.platform === 'darwin') {
-    const result = await run('systemsetup', ['-getremotelogin'], { timeoutMs: 10_000 });
-    const output = `${result.stdout}\n${result.stderr}`;
-
-    if (/remote login:\s*on/i.test(output)) {
-      return true;
-    }
-
-    if (/remote login:\s*off/i.test(output)) {
-      return false;
-    }
-
-    return undefined;
-  }
-
-  if (process.platform === 'linux') {
-    const sshd = await run('systemctl', ['is-active', 'sshd']);
-
-    if (sshd.exitCode === 127) {
-      return undefined;
-    }
-
-    if (sshd.ok) {
-      return true;
-    }
-
-    const ssh = await run('systemctl', ['is-active', 'ssh']);
-    return ssh.ok;
-  }
-
-  return undefined;
-}
-
 export async function writeSshdKeysOnly(content: string): Promise<boolean> {
   ensureExecDir();
 
@@ -236,50 +202,6 @@ async function runInteractive(command: string, args: string[]): Promise<number> 
   } catch {
     return 127;
   }
-}
-
-export async function loginPathMissing(): Promise<string[]> {
-  const shell = process.env.SHELL ?? '/bin/sh';
-  const [login, interactive] = await Promise.all([
-    run(shell, ['-lc', 'printf %s "$PATH"'], { timeoutMs: 10_000 }),
-    run(shell, ['-ic', 'printf %s "$PATH"'], { timeoutMs: 10_000 }),
-  ]);
-
-  if (!login.ok || !interactive.ok) {
-    return [];
-  }
-
-  const inLogin = new Set(login.stdout.split(':'));
-  const inInteractive = interactive.stdout.split(':').filter((entry) => entry !== '');
-
-  return inInteractive.filter((entry) => !inLogin.has(entry));
-}
-
-export function notifyApproval(project: string, argv: string[]): void {
-  const command = argv.join(' ');
-  let child: ReturnType<typeof Bun.spawn> | undefined;
-
-  try {
-    if (process.platform === 'linux') {
-      child = Bun.spawn({
-        cmd: ['notify-send', 'corami', `${project}: ${command}`],
-        stdout: 'ignore',
-        stderr: 'ignore',
-      });
-    } else if (process.platform === 'darwin') {
-      const text = `${project}: ${command}`.replace(/"/g, '\\"');
-
-      child = Bun.spawn({
-        cmd: ['osascript', '-e', `display notification "${text}" with title "corami"`],
-        stdout: 'ignore',
-        stderr: 'ignore',
-      });
-    }
-  } catch {
-    return;
-  }
-
-  child?.unref();
 }
 
 export function ensureExecDir(): void {

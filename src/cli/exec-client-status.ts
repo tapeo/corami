@@ -48,7 +48,7 @@ export async function clientStatus(context: CommandContext): Promise<CommandResu
     `Server        ${server}${addresses.length === 0 ? '' : `, from ${addresses.join(', ')}`}`,
     `sshd          ${keysOnly ? 'keys only' : 'accepts passwords'}`,
     `Rules         ${list.length}${list.length === 0 ? '' : ' (corami exec rules)'}`,
-    `Waiting       ${pending.length === 0 ? 'none' : `${pending.length} (corami exec approve)`}`,
+    `Waiting       ${pending.length === 0 ? 'none' : `${pending.length} (answer in the dialog, or with corami exec approve)`}`,
     `Running       ${describeRunning(running)}`,
     'Last commands ~/.corami/logs/exec.log',
   ];

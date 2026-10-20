@@ -57,7 +57,7 @@ A role and flags after `--` go to the setup. Without a terminal it installs the 
 | `corami-git-watch` | server and clients: systemd on Linux, launchd agent `dev.corami.git-watch` on macOS, scheduled task on Windows | keeps `.git` aligned with `origin` | both setups, step `git-watch` |
 | Mutagen daemon | clients: user systemd unit `corami-mutagen` on Linux, launchd agent `io.mutagen.mutagen` on macOS, logon registration on Windows | carries the sync sessions, also after a reboot | `corami setup client`, step `mutagen-daemon` |
 
-`corami doctor` reports a service that is not running and the step that installs it again. On the server it also reports the folders of the projects root that no project names, and the ones an import that stopped left behind. It reports how Tailscale SSH treats `root` and the other accounts of the machine, whether the tailnet holds people besides the owner, and on a client whether Remote Login, sshd and the exec channel are in order: the remedies are in [security.md](security.md).
+`corami doctor` reports a service that is not running and the step that installs it again. On the server it also reports the folders of the projects root that no project names, and the ones an import that stopped left behind. It reports how Tailscale SSH treats `root` and the other accounts of the machine, whether the tailnet holds people besides the owner, and on a client whether sshd, the exec channel and its approval dialog are in order: the remedies are in [security.md](security.md).
 
 ## Projects
 
@@ -141,13 +141,13 @@ Every side is a peer and follows only `origin`: `corami git watch` runs one cycl
 | `corami exec status` | all | on the client: channel, sshd, rules, waiting and running commands. On the server: the registered clients, allowed and online |
 | `corami exec allow` | client, terminal | turns the channel on: sshd to keys only, the key of the server in `authorized_keys`, the registration and a check from the server |
 | `corami exec deny` | client | removes the key line, stops the running commands, cancels the waiting ones and informs the server |
-| `corami exec approve` | client, terminal | answers the commands that wait: once, always, or deny |
+| `corami exec approve` | client, terminal | stays open and answers the requests of the server as they arrive: once, always, or deny. Also over ssh, from a phone |
 | `corami exec rule allow\|deny\|rm [--project <name>] -- <command>` | client | adds or removes a rule |
 | `corami exec rules` | client | lists the rules |
 
 A rule is a list of tokens compared with `argv`, token by token. `*` is only the last token and covers any rest, even empty. `deny` wins over `allow`, and a command with no rule asks. `--project` limits a rule to one project. A rule limits the command, not what it does: `flutter run` runs project code and `allow npx *` allows everything, so `exec rule allow` warns when it covers a program that runs arbitrary code.
 
-The first command of a series asks on the client, in the terminal that runs `corami exec approve`. The wait is 10 minutes. The bash tool of a harness may have a shorter timeout: when the harness closes the command, the request disappears from the client. Add the rules first, or approve before running.
+A command with no rule asks on the client. A dialog opens on the screen of the client with *Allow once*, *Always allow* and *Deny*; a terminal that runs `corami exec approve` asks the same question, and the first answer wins. *Always allow* adds the rule of the first two tokens and `*`, or of the exact command for a program that runs arbitrary code (`npx`, `node`, `bash`...). The wait is 60 seconds, shorter than the timeout of the bash tool of a harness: without an answer the server sees a Corami error and the agent can run the command again. When the connection closes while it waits, or while the command runs, the gate cancels the request or stops the command.
 
 ```bash
 # on the client, once
@@ -197,7 +197,7 @@ An MCP server can run on the client through the same channel. The first run asks
 }
 ```
 
-Allow exactly that command, not `npx *`. When the harness closes the MCP server, the connection ends and the gate closes the processes of the command on the client.
+For `npx` and the other programs that run arbitrary code, *Always allow* allows exactly that command, not `npx *`. When the harness closes the MCP server, the connection ends and the gate closes the processes of the command on the client.
 
 ## Output examples
 

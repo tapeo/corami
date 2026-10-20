@@ -61,9 +61,9 @@ Remove the device from the tailnet in the [Tailscale console](https://login.tail
 
 `corami exec` runs a command of the server on a client, inside the synced copy. The client turns the channel on in its terminal with `corami exec allow`, and turns it off with `corami exec deny`. The server reaches the client through a key line in `~/.ssh/authorized_keys` limited with `restrict,from=...,command="... exec gate"`, and sshd must accept keys only: `exec allow` writes `/etc/ssh/sshd_config.d/100-corami.conf` with sudo when passwords are on.
 
-The rules and the approval are on the client. `ask` is the default, `deny` wins, and the agent on the server cannot read or change them: every payload passes through the gate, and the file of the rules is not reachable from the server. A rule limits the command, not what it does: `flutter run` runs code of the project, and `allow npx *` allows everything. `exec rule allow` says so when a rule covers a program that runs arbitrary code.
+The rules and the approval are on the client. `ask` is the default, `deny` wins, and the agent on the server cannot read or change them: every payload passes through the gate, and the file of the rules is not reachable from the server. A new command is answered in a dialog on the client or in `corami exec approve`; the command is shown as text, never run as a script or read as markup. A rule limits the command, not what it does: `flutter run` runs code of the project, and `allow npx *` allows everything. `exec rule allow` says so when a rule covers a program that runs arbitrary code.
 
-Checks: `exec.remote_login`, `exec.sshd` and `exec.allowed` on a client; `exec.clients` on the server.
+Checks: `exec.allowed`, `exec.sshd` and `exec.approver` on a client; `exec.clients` on the server.
 
 ## Keys and env files
 
