@@ -7,7 +7,7 @@ Short notes on the invariants the code relies on: rules whose reason a name cann
 - An existing project accepts `[A-Za-z0-9][A-Za-z0-9._-]*`. A new one must match `[A-Za-z][A-Za-z0-9-]*`: the Mutagen session is named after the project, and Mutagen accepts letters, digits and dashes, starting with a letter. A dot or an underscore would pass every other check and fail at `mutagen sync create`, after the project is already on the server.
 - The name is one path segment, under `~/projects` by default. `.`, `..`, a separator and an empty name are refused in the client and again in the daemon.
 - Project folders may not overlap: the same folder, or one inside the other. Two projects would sync the same files.
-- The local copy is never derived from the name. The session's folder wins, and a different folder asked for it is a move, refused. Without a session, a folder inside or around another copy is refused, because the sync would write into that project, and a non-empty folder is refused.
+- The local copy is never derived from the name. The session's folder wins, and a different folder asked for it is a move, refused. Without a session, a folder inside or around another copy is refused, because the sync would write into that project, and a non-empty folder is refused. The one exception is the folder of an import: it is not empty, and it becomes the copy. Nothing writes into it but the sync, in `two-way-safe` mode.
 - `syncName` turns a folder into a session name: dots, underscores and spaces become dashes, runs collapse, leading and trailing dashes go.
 - The deepest containing path wins when copies are nested.
 - `~/projects` sits directly in the owner's home: the account exists for the projects, and `~/corami/projects` would repeat the name. The path stays POSIX even on a Windows client.
@@ -22,6 +22,9 @@ Short notes on the invariants the code relies on: rules whose reason a name cann
 - The staging folder of an import is next to the project, so the rename stays on one filesystem and the name of the project stays free until the registration. A stopped import leaves the staging, never a folder that no project names.
 - `sameRepository` compares URLs by host (lower case) and path (case sensitive), ignoring the user, the port and a trailing `.git`. The scp and the ssh/https forms of one repository are the same.
 - The local folder of an import is read with the rules of its platform: on Windows `C:\Users\me` is not a POSIX path. The home folder itself is refused, a folder inside it is a project.
+- An import writes nothing into the local folder: it sends an archive to the server, verifies the two sides, and the folder becomes the copy as it is. When the session cannot be created the project goes off the server again, and there is no local restore to do. Do not bring back a rename, a backup folder or a copy of the files: the two copies the import already has (the folder and the verified staging folder) are the whole safety net.
+- The first cycle of a session created on an existing folder has no ancestor, so `two-way-safe` writes a file that exists on one side only and records a conflict for a file that differs on both, keeping both versions. That is why the folder of an import can be the copy.
+- `._*` is out of the archive (macOS writes AppleDouble files next to the real ones) and out of the sync: the server is Linux and would keep them as debris of one machine.
 
 ## Sync
 

@@ -1,16 +1,3 @@
-import {
-  cpSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readlinkSync,
-  renameSync,
-  rmdirSync,
-  rmSync,
-  symlinkSync,
-} from 'node:fs';
-import { join } from 'node:path';
-
 import type { CommandResult } from '@/cli/command.ts';
 import {
   checkServerFolder,
@@ -32,11 +19,11 @@ import {
 } from '@/cli/server-client.ts';
 import { readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError, type ErrorCode } from '@/core/errors.ts';
-import { run } from '@/core/exec.ts';
 import { copyInventory, type InventoryEntry, symlinkPortable } from '@/core/local-copy.ts';
 import { importStagingPath, serverPathFrom } from '@/core/project-add.ts';
-import { isFolderEmpty, validNewProjectName } from '@/core/projects.ts';
+import { validNewProjectName } from '@/core/projects.ts';
 import { sshFailureFix } from '@/core/ssh-policy.ts';
+import { conflictFix, conflictLabel } from '@/core/sync-conflicts.ts';
 import {
   archivePlan,
   factsMatch,
@@ -160,7 +147,7 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     steps.push({
       step: 'transfer',
       status: 'skipped',
-      summary: 'Would copy the repository to the server',
+      summary: 'Would copy the repository to the server, and the folder would become its copy',
     });
     return finish(options, steps, projectName, target, options.serverPath);
   }
@@ -304,34 +291,18 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
     summary: `Registered on the server as ${projectName}, in ${serverPath}`,
   });
 
-  const backup = `${target}.corami-backup-${moment}`;
-
-  try {
-    renameSync(target, backup);
-  } catch (error) {
-    const taken = await removeProject(projectName).then(
-      () => true,
-      () => false,
-    );
-
-    steps.push({
-      step: 'local',
-      status: 'failed',
-      summary: `The folder of this machine could not move: ${asMessage(error)}`,
-      detail: taken
-        ? 'The project was taken off the server again: nothing is left there without a copy'
-        : `The project stays on the server, with no copy. Remove it with corami project rm ${projectName} --on server --yes`,
-    });
-    return finish(options, steps, projectName, target, serverPath);
-  }
-
-  steps.push({ step: 'local', status: 'done', summary: `Local folder moved to ${backup}` });
-
   let localCopy = target;
 
   try {
     const sync = await progress.wait('sync', 'Creating the local copy', () =>
-      createSyncFor({ project: projectName, localPath: target, serverPath, user, engine }),
+      createSyncFor({
+        project: projectName,
+        localPath: target,
+        serverPath,
+        user,
+        engine,
+        importing: true,
+      }),
     );
     localCopy = sync.local;
   } catch (error) {
@@ -339,66 +310,35 @@ export async function runImport(options: ImportOptions): Promise<CommandResult> 
       () => true,
       () => false,
     );
-    const restored = taken && restoreBackup(backup, target);
 
     steps.push({
       step: 'sync',
       status: 'failed',
       code: error instanceof CoramiError ? error.code : 'generic',
       summary: 'The local copy could not be created',
-      detail: `${asMessage(error)}. ${
+      detail: `${asMessage(error)}. The folder of this machine was never moved nor changed. ${
         taken
-          ? `The project was taken off the server again: nothing is left there without a copy. ${
-              restored
-                ? `The folder of this machine is back at ${target}`
-                : `The folder of this machine stays at ${backup}`
-            }`
-          : 'The project stays on the server, with no copy'
+          ? 'The project was taken off the server again: nothing is left there without a copy'
+          : `The project stays on the server, with no copy. Remove it with corami project rm ${projectName} --on server --yes`
       }`,
     });
     return finish(options, steps, projectName, target, serverPath);
   }
 
-  steps.push({ step: 'sync', status: 'done', summary: `Local copy created in ${localCopy}` });
-
-  if (
-    await progress.wait('local', 'Restoring the git directory', () =>
-      restoreGitDirectory(backup, localCopy),
-    )
-  ) {
-    steps.push({
-      step: 'git',
-      status: 'done',
-      summary: 'Git directory restored in the local copy, separate from the server',
-    });
-  }
-
-  const restored = await progress.wait(
-    'local',
-    'Bringing back the files of this machine',
-    async () => restoreLocalFiles(backup, localCopy, localFiles),
-  );
-
-  if (restored > 0) {
-    steps.push({
-      step: 'local',
-      status: 'done',
-      summary: `${restored} files of this machine copied back into the new copy`,
-    });
-  }
+  steps.push({ step: 'sync', status: 'done', summary: `Local copy in ${localCopy}` });
 
   if (progress.interactive) {
-    steps.push(await firstSyncStep(progress, engine, projectName));
+    steps.push(...(await firstSyncSteps(progress, engine, projectName)));
   }
 
   return finish(options, steps, projectName, target, serverPath);
 }
 
-async function firstSyncStep(
+async function firstSyncSteps(
   progress: ProgressReporter,
   engine: MutagenEngine,
   project: string,
-): Promise<StepResult> {
+): Promise<StepResult[]> {
   const settled = await progress.count(
     'first-sync',
     'Waiting for the first sync',
@@ -407,100 +347,52 @@ async function firstSyncStep(
   );
 
   if (settled === undefined) {
-    return {
-      step: 'first-sync',
-      status: 'waiting',
-      summary: 'The state of the first sync could not be read: corami sync status shows it',
-    };
+    return [
+      {
+        step: 'first-sync',
+        status: 'waiting',
+        summary: 'The state of the first sync could not be read: corami sync status shows it',
+      },
+    ];
   }
 
   if (settled.state === 'halted') {
-    return {
-      step: 'first-sync',
-      status: 'skipped',
-      summary: `The first sync stopped: ${settled.activity}`,
-      detail: 'corami sync status shows the session; Ctrl+C leaves it running',
-    };
+    return [
+      {
+        step: 'first-sync',
+        status: 'skipped',
+        summary: `The first sync stopped: ${settled.activity}`,
+        detail: 'corami sync status shows the session; Ctrl+C leaves it running',
+      },
+    ];
   }
 
-  return {
-    step: 'first-sync',
-    status: 'done',
-    summary: `Local copy complete: ${describeCount(settled.files ?? 0, 'file', 'files')}`,
-  };
+  const steps: StepResult[] = [
+    {
+      step: 'first-sync',
+      status: 'done',
+      summary: `Local copy complete: ${describeCount(settled.files ?? 0, 'file', 'files')}`,
+    },
+  ];
+  const session = await engine.status(project).catch(() => undefined);
+  const conflicts = session?.conflicts ?? [];
+
+  if (conflicts.length > 0) {
+    steps.push({
+      step: 'conflicts',
+      status: 'waiting',
+      summary: `${describeCount(conflicts.length, 'file changed', 'files changed')} on both sides: both versions are kept`,
+      detail: `${conflicts.slice(0, 8).map(conflictLabel).join(', ')}${
+        conflicts.length > 8 ? ', ...' : ''
+      }. ${conflictFix(project, conflicts)}`,
+    });
+  }
+
+  return steps;
 }
 
 function asMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function restoreBackup(backup: string, target: string): boolean {
-  if (existsSync(target)) {
-    if (!isFolderEmpty(target)) {
-      return false;
-    }
-
-    try {
-      rmdirSync(target);
-    } catch {
-      return false;
-    }
-  }
-
-  try {
-    renameSync(backup, target);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function restoreGitDirectory(backup: string, target: string): Promise<boolean> {
-  const source = join(backup, '.git');
-
-  if (!existsSync(source)) {
-    return false;
-  }
-
-  mkdirSync(target, { recursive: true });
-  const copied = await run('cp', ['-R', source, join(target, '.git')]);
-  return copied.ok;
-}
-
-export function restoreLocalFiles(backup: string, target: string, files: InventoryEntry[]): number {
-  let restored = 0;
-
-  for (const file of files) {
-    const from = join(backup, file.path);
-    const to = join(target, file.path);
-
-    if (!existsSync(from) && file.kind !== 'link') {
-      continue;
-    }
-
-    mkdirSync(join(to, '..'), { recursive: true });
-
-    if (file.kind === 'link') {
-      const link = readlinkSync(from);
-
-      if (existsSync(to)) {
-        if (lstatSync(to).isDirectory()) {
-          continue;
-        }
-
-        rmSync(to, { force: true });
-      }
-
-      symlinkSync(link, to);
-      restored += 1;
-      continue;
-    }
-
-    cpSync(from, to, { recursive: true, force: true, verbatimSymlinks: true });
-    restored += 1;
-  }
-
-  return restored;
 }
 
 function isPortable(entry: InventoryEntry): boolean {

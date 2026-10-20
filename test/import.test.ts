@@ -1,17 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  readlinkSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { restoreLocalFiles, runImport } from '@/cli/commands/import.ts';
+import { runImport } from '@/cli/commands/import.ts';
 import { countingStream, gzipStream, remoteExtractCommand } from '@/cli/commands/import-remote.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { shellQuote } from '@/core/exec.ts';
@@ -45,6 +37,10 @@ describe('sync ignores', () => {
     expect(DEFAULT_IGNORES).toContain('**/android/local.properties');
     expect(DEFAULT_IGNORES).toContain('**/ios/Flutter/Generated.xcconfig');
     expect(DEFAULT_IGNORES).toContain('**/ios/.symlinks/');
+  });
+
+  test('leave out the AppleDouble files the import does not carry', () => {
+    expect(DEFAULT_IGNORES).toContain('._*');
   });
 
   test('nothing about keys or env files: they are files of the project', () => {
@@ -168,32 +164,6 @@ describe('the archive', () => {
     expect(raw.length).toBe(counted);
     expect(raw.length % 512).toBe(0);
     expect(Buffer.from(raw).includes('notes.txt')).toBe(true);
-  });
-});
-
-describe('the copy that comes back', () => {
-  test('a link keeps its target and a folder of this machine keeps its links', async () => {
-    const backup = await mkdtemp(join(tmpdir(), 'corami-backup-'));
-    const target = await mkdtemp(join(tmpdir(), 'corami-copy-'));
-    const outside = await mkdtemp(join(tmpdir(), 'corami-outside-'));
-
-    mkdirSync(join(backup, 'android'), { recursive: true });
-    mkdirSync(join(backup, 'ios', '.symlinks', 'plugins'), { recursive: true });
-    writeFileSync(join(backup, 'android', 'local.properties'), 'sdk.dir=/opt');
-    symlinkSync(outside, join(backup, 'pub-cache'));
-    symlinkSync(
-      '/Users/me/.pub-cache/camera',
-      join(backup, 'ios', '.symlinks', 'plugins', 'camera'),
-    );
-
-    const entries = copyInventory(backup).localOnly;
-    expect(restoreLocalFiles(backup, target, entries)).toBe(entries.length);
-
-    expect(readlinkSync(join(target, 'pub-cache'))).toBe(outside);
-    expect(lstatSync(join(target, 'ios', '.symlinks')).isDirectory()).toBe(true);
-    expect(readlinkSync(join(target, 'ios', '.symlinks', 'plugins', 'camera'))).toBe(
-      '/Users/me/.pub-cache/camera',
-    );
   });
 });
 

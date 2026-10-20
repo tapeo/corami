@@ -151,8 +151,9 @@ export async function copyPlace(
     requested,
     session: existing === undefined ? undefined : canonicalPath(existing.beta),
     others: others.map((session) => canonicalPath(session.beta)),
-    exists: !importing && requested !== undefined && existsSync(requested),
-    empty: importing || (requested !== undefined && isFolderEmpty(requested)),
+    exists: requested !== undefined && existsSync(requested),
+    empty: requested !== undefined && isFolderEmpty(requested),
+    importing,
   });
 
   if (target === 'existing' && existing !== undefined) {
@@ -207,6 +208,7 @@ export interface CreateSyncOptions {
   serverPath?: string | undefined;
   user?: string | undefined;
   engine?: MutagenEngine | undefined;
+  importing?: boolean | undefined;
 }
 
 function serverFolder(
@@ -243,7 +245,12 @@ export async function createSyncFor(options: CreateSyncOptions): Promise<{
   const detail = await projectOnServerOrFail(options.project);
 
   const serverPath = serverFolder(options.project, detail, options.serverPath);
-  const place = await copyPlace(engine, options.project, options.localPath);
+  const place = await copyPlace(
+    engine,
+    options.project,
+    options.localPath,
+    options.importing === true,
+  );
 
   if (place.session !== undefined) {
     return { session: place.session, local: place.local, created: false };

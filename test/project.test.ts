@@ -297,6 +297,18 @@ describe('localCopyTarget', () => {
     ).toBe('not-empty');
   });
 
+  test('takes the folder of an import as the copy, files and all', () => {
+    expect(
+      localCopyTarget({
+        ...fresh,
+        requested: '/Users/me/dev/myapp',
+        exists: true,
+        empty: false,
+        importing: true,
+      }),
+    ).toBe('create');
+  });
+
   test('refuses a folder inside the copy of another project, or around it', () => {
     const others = ['/Users/me/dev/site'];
 

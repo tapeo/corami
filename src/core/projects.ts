@@ -54,6 +54,7 @@ export function localCopyTarget(state: {
   others: string[];
   exists: boolean;
   empty: boolean;
+  importing?: boolean | undefined;
 }): LocalCopyTarget {
   if (state.session !== undefined) {
     return state.requested === undefined || state.requested === state.session ? 'existing' : 'move';
@@ -69,7 +70,7 @@ export function localCopyTarget(state: {
     return 'nested';
   }
 
-  if (state.exists && !state.empty) {
+  if (state.importing !== true && state.exists && !state.empty) {
     return 'not-empty';
   }
 

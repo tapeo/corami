@@ -50,7 +50,7 @@ export function mutagenPattern(rule: PathRule): string {
 }
 
 export const DEFAULT_IGNORES = PATH_RULES.filter(
-  (rule) => rule.class !== 'synced' && rule.pattern !== '.git' && rule.pattern !== '._*',
+  (rule) => rule.class !== 'synced' && rule.pattern !== '.git',
 ).map(mutagenPattern);
 
 export function sessionName(project: string): string {

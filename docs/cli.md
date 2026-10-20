@@ -65,7 +65,7 @@ Every project lives on the server **and** on the machines that work on it, with 
 
 | Command | Description |
 |---|---|
-| `corami project add <folder> [--server-path <folder>] [--name <name>] [--dry-run]` | copies a folder of this machine to the server, git history included, which becomes the source of truth; the folder stays here as the copy, with a backup next to it. This is what `project add` does with no source flag |
+| `corami project add <folder> [--server-path <folder>] [--name <name>] [--dry-run]` | copies a folder of this machine to the server, git history included, which becomes the source of truth; the folder stays here and becomes the copy, its files untouched. This is what `project add` does with no source flag |
 | `corami project add <folder> --from-git <url> [--server-path <folder>] [--name <name>] [--dry-run]` | clones the repository on the server, then creates the copy here |
 | `corami project add <folder> --from-server (--server-path <folder> \| --name <name>) [--dry-run]` | the folder is already on the server: it is registered if it was not, then the copy is created here. This is also how a second client takes its copy |
 | `corami project ls` | list with the previews of each project |
