@@ -5,10 +5,12 @@ import { paths, readGlobalConfig } from '@/core/config.ts';
 import { run } from '@/core/exec.ts';
 import { replaceBinary } from '@/core/release.ts';
 import {
+  execApproverSpec,
   gitWatchSpec,
-  restartService,
+  launchAgentPath,
+  refreshService,
   type ServiceSpec,
-  serviceActive,
+  serviceInstalled,
   servicePlatform,
 } from '@/integrations/service.ts';
 
@@ -44,21 +46,30 @@ const services: Array<{ spec: ServiceSpec; fix: string; expected: boolean }> = [
         : 'corami setup client <server> --step git-watch',
     expected: role !== undefined,
   },
+  {
+    spec: execApproverSpec(target),
+    fix: 'corami exec allow',
+    expected: false,
+  },
 ];
 
-const active: ServiceSpec[] = [];
+function hasUnitFile(spec: ServiceSpec): boolean {
+  return servicePlatform() === 'macos' && existsSync(launchAgentPath(spec));
+}
+
+const installedServices: ServiceSpec[] = [];
 const missing: Array<{ name: string; fix: string }> = [];
 
 for (const service of services) {
-  if (await serviceActive(service.spec)) {
-    active.push(service.spec);
+  if ((await serviceInstalled(service.spec)) || hasUnitFile(service.spec)) {
+    installedServices.push(service.spec);
   } else if (service.expected) {
     missing.push({ name: service.spec.name, fix: service.fix });
   }
 }
 
 if (windows) {
-  for (const spec of active) {
+  for (const spec of installedServices) {
     await run('schtasks', ['/end', '/tn', spec.name]);
   }
 }
@@ -78,19 +89,20 @@ console.log(`Installed ${source} to ${target} (version ${installed ?? 'unknown'}
 
 let failed = false;
 
-for (const spec of active) {
+for (const spec of installedServices) {
   const scope = servicePlatform() === 'linux' ? ` (${spec.systemdScope ?? 'user'})` : '';
+  const refreshed = await refreshService(spec);
 
-  if (await restartService(spec)) {
-    console.log(`Restarted ${spec.name}${scope}`);
+  if (refreshed.ok) {
+    console.log(`Restarted ${spec.name}${scope}: ${refreshed.detail}`);
   } else {
     failed = true;
-    console.error(`Could not restart ${spec.name}${scope}`);
+    console.error(`Could not restart ${spec.name}${scope}: ${refreshed.detail}`);
   }
 }
 
-if (active.length === 0) {
-  console.log('No running Corami service to restart');
+if (installedServices.length === 0) {
+  console.log('No Corami service to restart');
 }
 
 for (const service of missing) {

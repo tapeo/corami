@@ -23,6 +23,25 @@ export interface ServiceResult {
   detail: string;
 }
 
+export type ServiceHealthStatus = 'running' | 'stopped' | 'absent';
+
+export interface ServiceHealth {
+  status: ServiceHealthStatus;
+  detail: string;
+}
+
+export interface LaunchdState {
+  loaded: boolean;
+  running: boolean;
+  pid: number;
+  exitCode: number | undefined;
+}
+
+export interface ServiceRefresh {
+  ok: boolean;
+  detail: string;
+}
+
 export type ServicePlatform = 'macos' | 'linux' | 'windows' | 'other';
 
 const PRODUCT_PREFIX = 'corami-';
@@ -46,6 +65,43 @@ export function servicePlatform(): ServicePlatform {
   }
 
   return 'other';
+}
+
+export function parseLaunchdPrint(text: string): LaunchdState {
+  const state = /^[ \t]*state = (.*?)[ \t]*$/m.exec(text);
+  const pid = /^[ \t]*pid = (\d+)$/m.exec(text);
+  const lastExit = /^[ \t]*last exit code = (-?\d+)/m.exec(text);
+
+  return {
+    loaded: state !== null,
+    running: state?.[1] === 'running' && pid !== null,
+    pid: pid === null ? 0 : Number(pid[1]),
+    exitCode: lastExit === null ? undefined : Number(lastExit[1]),
+  };
+}
+
+export function describeLaunchdState(state: LaunchdState): string {
+  if (!state.loaded) {
+    return 'not loaded';
+  }
+
+  if (state.running) {
+    return 'running';
+  }
+
+  if (state.exitCode === undefined) {
+    return 'loaded, not running';
+  }
+
+  if (state.exitCode === 78) {
+    return 'exits at start with code 78 (EX_CONFIG, the launch constraint of the binary)';
+  }
+
+  if (state.exitCode < 0) {
+    return `stopped by signal ${-state.exitCode}`;
+  }
+
+  return `exits at start with code ${state.exitCode}`;
 }
 
 export function renderLaunchAgent(spec: ServiceSpec): string {
@@ -179,8 +235,45 @@ export async function restartService(spec: ServiceSpec): Promise<boolean> {
   return false;
 }
 
-export async function serviceActive(spec: ServiceSpec): Promise<boolean> {
+export async function serviceHealth(spec: ServiceSpec): Promise<ServiceHealth> {
   const platform = servicePlatform();
+
+  if (platform === 'macos') {
+    const launchd = await launchdState(spec);
+
+    if (launchd === undefined) {
+      return { status: 'absent', detail: 'not loaded' };
+    }
+
+    return {
+      status: launchd.running ? 'running' : 'stopped',
+      detail: describeLaunchdState(launchd),
+    };
+  }
+
+  const active = await serviceRunning(spec);
+
+  return { status: active ? 'running' : 'stopped', detail: active ? 'running' : 'not running' };
+}
+
+export async function serviceActive(spec: ServiceSpec): Promise<boolean> {
+  return (await serviceHealth(spec)).status === 'running';
+}
+
+export async function serviceInstalled(spec: ServiceSpec): Promise<boolean> {
+  if (servicePlatform() !== 'macos') {
+    return serviceActive(spec);
+  }
+
+  return (await launchdState(spec)) !== undefined;
+}
+
+async function serviceRunning(spec: ServiceSpec): Promise<boolean> {
+  const platform = servicePlatform();
+
+  if (platform === 'macos') {
+    return (await launchdState(spec))?.running === true;
+  }
 
   if (platform === 'linux') {
     const first = spec.systemdScope ?? 'user';
@@ -197,14 +290,6 @@ export async function serviceActive(spec: ServiceSpec): Promise<boolean> {
     return false;
   }
 
-  if (platform === 'macos') {
-    const result = await run('launchctl', [
-      'print',
-      `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL_PREFIX}.${serviceShortName(spec.name)}`,
-    ]);
-    return result.ok;
-  }
-
   if (platform === 'windows') {
     const result = await run('schtasks', [
       '/query',
@@ -217,13 +302,21 @@ export async function serviceActive(spec: ServiceSpec): Promise<boolean> {
   return false;
 }
 
-async function installLaunchAgent(spec: ServiceSpec): Promise<ServiceResult> {
-  const dir = join(homedir(), 'Library', 'LaunchAgents');
-  const path = join(dir, `${LAUNCHD_LABEL_PREFIX}.${serviceShortName(spec.name)}.plist`);
+export async function refreshService(
+  spec: ServiceSpec,
+  timeoutMs = 10_000,
+): Promise<ServiceRefresh> {
+  if (servicePlatform() !== 'macos') {
+    const restarted = await restartService(spec);
+
+    return { ok: restarted, detail: restarted ? 'restarted' : 'restart failed' };
+  }
+
+  const path = launchAgentPath(spec);
   const uid = process.getuid?.() ?? 0;
 
   try {
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(dirname(path), { recursive: true });
 
     if (spec.logFile !== undefined) {
       mkdirSync(dirname(spec.logFile), { recursive: true });
@@ -231,22 +324,14 @@ async function installLaunchAgent(spec: ServiceSpec): Promise<ServiceResult> {
 
     await Bun.write(path, renderLaunchAgent(spec));
   } catch (error) {
-    return {
-      installed: false,
-      path,
-      detail: error instanceof Error ? error.message : String(error),
-    };
+    return { ok: false, detail: error instanceof Error ? error.message : String(error) };
   }
 
   await run('launchctl', ['bootout', `gui/${uid}`, path]);
-  const boot = await run('launchctl', ['bootstrap', `gui/${uid}`, path]);
+  const boot = await bootstrapLaunchAgent(path, uid);
 
   if (!boot.ok) {
-    return {
-      installed: false,
-      path,
-      detail: (boot.stderr || boot.stdout).trim().split('\n').slice(0, 2).join(' '),
-    };
+    return { ok: false, detail: boot.detail };
   }
 
   await run('launchctl', [
@@ -254,7 +339,68 @@ async function installLaunchAgent(spec: ServiceSpec): Promise<ServiceResult> {
     `gui/${uid}/${LAUNCHD_LABEL_PREFIX}.${serviceShortName(spec.name)}`,
   ]);
 
-  return { installed: true, path, detail: 'launchd agent' };
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const health = await serviceHealth(spec);
+
+    if (health.status === 'running') {
+      return { ok: true, detail: 'registered again and running' };
+    }
+
+    await Bun.sleep(250);
+  }
+
+  return { ok: false, detail: `registered again, but ${(await serviceHealth(spec)).detail}` };
+}
+
+async function launchdState(spec: ServiceSpec): Promise<LaunchdState | undefined> {
+  const result = await run('launchctl', [
+    'print',
+    `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL_PREFIX}.${serviceShortName(spec.name)}`,
+  ]);
+
+  return result.ok ? parseLaunchdPrint(result.stdout) : undefined;
+}
+
+async function bootstrapLaunchAgent(
+  path: string,
+  uid: number,
+): Promise<{ ok: boolean; detail: string }> {
+  let detail = '';
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const boot = await run('launchctl', ['bootstrap', `gui/${uid}`, path]);
+
+    if (boot.ok) {
+      return { ok: true, detail: 'bootstrapped' };
+    }
+
+    detail = (boot.stderr || boot.stdout).trim().split('\n').slice(0, 2).join(' ');
+    await Bun.sleep(250);
+  }
+
+  return { ok: false, detail };
+}
+
+export function launchAgentPath(spec: ServiceSpec): string {
+  return join(
+    homedir(),
+    'Library',
+    'LaunchAgents',
+    `${LAUNCHD_LABEL_PREFIX}.${serviceShortName(spec.name)}.plist`,
+  );
+}
+
+async function installLaunchAgent(spec: ServiceSpec): Promise<ServiceResult> {
+  const path = launchAgentPath(spec);
+  const refreshed = await refreshService(spec);
+
+  if (!refreshed.ok) {
+    return { installed: false, path, detail: refreshed.detail };
+  }
+
+  return { installed: true, path, detail: refreshed.detail };
 }
 
 async function installScheduledTask(spec: ServiceSpec): Promise<ServiceResult> {

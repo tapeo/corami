@@ -51,8 +51,8 @@ The command (`scripts/dev-install.ts`):
 
 1. compiles `dist/corami` with `bun run bin`;
 2. installs it in place of `~/.corami/bin/corami`, where both the `corami` command in the PATH and the services point;
-3. restarts the services active on this machine, `corami-daemon` and `corami-git-watch`, in the systemd scope they are installed in (user or system);
-4. lists the expected services that are not running, with the command to install them.
+3. restarts the services installed on this machine, `corami-daemon`, `corami-git-watch` and `corami-exec-approver`, in the systemd scope they are installed in (user or system). On macOS it registers the launch agents again with `bootout` and `bootstrap`, because a restart after a change of binary can fail on the launch constraint of the previous one;
+4. lists the expected services that are not installed, with the command to install them.
 
 Example on a server:
 
@@ -81,7 +81,7 @@ That way the installation of the services stays single, the one a user goes thro
 
 ### By hand
 
-When the steps are needed without the script. The binary is replaced with a rename, not by overwriting it: on Linux a running executable cannot be rewritten, and on macOS a signed binary rewritten in place is killed at the next launch. The services keep going with the old binary until they are restarted.
+When the steps are needed without the script. The binary is replaced with a rename, not by overwriting it: on Linux a running executable cannot be rewritten, and on macOS a signed binary rewritten in place is killed at the next launch. The services keep going with the old binary until they are restarted. On macOS a restarted agent can refuse to start with `EX_CONFIG` (78) when launchd keeps the launch constraint of the previous binary: register the agent again instead, with `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/dev.corami.git-watch.plist` and then `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.corami.git-watch.plist`.
 
 Linux:
 
@@ -100,7 +100,8 @@ macOS:
 ```bash
 bun run bin
 cp dist/corami ~/.corami/bin/corami.new && mv -f ~/.corami/bin/corami.new ~/.corami/bin/corami
-launchctl kickstart -k gui/$(id -u)/dev.corami.git-watch
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/dev.corami.git-watch.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.corami.git-watch.plist
 ```
 
 Windows, from PowerShell. A running executable is locked: first the scheduled task is stopped, then the copy, then the task starts again.
@@ -132,4 +133,4 @@ On a freshly created VPS, instead of the restart you run `ssh -t root@<vps> cora
 corami update --force
 ```
 
-The local build declares `dev`, which cannot be compared with a version number: without `--force` `corami update` sees nothing newer. With `--force` it downloads the latest release, verifies the sum, replaces the binary and restarts the git alignment and, when it is a user service, the daemon. A daemon installed as a system service is restarted by hand: `systemctl restart corami-daemon`.
+The local build declares `dev`, which cannot be compared with a version number: without `--force` `corami update` sees nothing newer. With `--force` it downloads the latest release, verifies the sum, replaces the binary and restarts the git alignment and, when it is a user service, the daemon. On macOS the launch agents are registered again. A daemon installed as a system service is restarted by hand: `systemctl restart corami-daemon`.

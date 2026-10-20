@@ -418,6 +418,10 @@ async function status(context: CommandContext): Promise<{ data?: unknown; text?:
 
     if (entry !== undefined) {
       lines.push(`  git: local ${entry.client} / server ${entry.server}`);
+
+      if (!entry.watch) {
+        lines.push('  to fix: corami setup client <server> --step git-watch');
+      }
     }
   }
 
@@ -446,10 +450,15 @@ export function describeAge(iso: string): string {
   return `${Math.floor(hours / 24)} days ago`;
 }
 
-async function gitStatesFor(
-  sessions: SyncSession[],
-): Promise<
-  Array<{ project: string; local: string; status: string; client: string; server: string }>
+async function gitStatesFor(sessions: SyncSession[]): Promise<
+  Array<{
+    project: string;
+    local: string;
+    status: string;
+    client: string;
+    server: string;
+    watch: boolean;
+  }>
 > {
   const rows: Array<{
     project: string;
@@ -457,17 +466,20 @@ async function gitStatesFor(
     status: string;
     client: string;
     server: string;
+    watch: boolean;
   }> = [];
 
   for (const session of sessions) {
     const sides = await gitSides(session.project, session.beta).catch(() => undefined);
+    const watch = sides?.watch ?? true;
 
     rows.push({
       project: session.project,
       local: session.beta,
       status: sides?.status ?? 'unknown',
-      client: describeOrigin(sides?.client),
+      client: describeOrigin(sides?.client, watch),
       server: describeOrigin(sides?.server),
+      watch,
     });
   }
 

@@ -163,7 +163,7 @@ export function originChangeJson(
   };
 }
 
-export function describeOrigin(status: GitOriginStatus | undefined): string {
+export function describeOrigin(status: GitOriginStatus | undefined, watch = true): string {
   if (status === undefined) {
     return 'n/a';
   }
@@ -173,15 +173,22 @@ export function describeOrigin(status: GitOriginStatus | undefined): string {
       return 'aligned with origin';
     case 'ahead':
       return 'commits to publish (push)';
-    case 'behind':
-      return status.filesHere
+    case 'behind': {
+      const text = status.filesHere
         ? `behind (${status.reason ?? 'to update'})`
         : 'behind, waiting for the sync files';
+
+      return watch || !status.move ? text : `${text}, git alignment service not running`;
+    }
     case 'diverged':
       return 'diverged from origin';
     default:
       return `n/a (${status.reason ?? 'unknown'})`;
   }
+}
+
+export function originNeedsWatch(status: GitOriginStatus | undefined): boolean {
+  return status?.status === 'behind' && status.move;
 }
 
 export { CYCLE_MS as ORIGIN_CYCLE_MS };

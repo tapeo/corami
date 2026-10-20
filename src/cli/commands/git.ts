@@ -13,10 +13,12 @@ import {
   ORIGIN_CYCLE_MS,
   originChanged,
   originChangeJson,
+  originNeedsWatch,
   originStatusJson,
 } from '@/core/git-follow.ts';
 import { listProjects } from '@/core/state.ts';
 import { MutagenEngine } from '@/integrations/mutagen.ts';
+import { gitWatchSpec, serviceHealth } from '@/integrations/service.ts';
 
 export interface GitSides {
   local: string;
@@ -24,13 +26,18 @@ export interface GitSides {
   client: GitOriginStatus;
   server: GitOriginStatus | undefined;
   status: GitRelationStatus;
+  watch: boolean;
 }
 
 export async function gitSides(project: string, local: string): Promise<GitSides> {
   const client = await gitOriginState(local);
   const server = await projectGitOrigin(project).catch(() => undefined);
+  const watch = originNeedsWatch(client)
+    ? (await serviceHealth(gitWatchSpec(process.execPath)).catch(() => undefined))?.status ===
+      'running'
+    : true;
 
-  return { project, local, client, server, status: client.status };
+  return { project, local, client, server, status: client.status, watch };
 }
 
 export function summarizeSide(state: GitRepoState | undefined): string {

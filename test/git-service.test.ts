@@ -9,9 +9,16 @@ import {
   type GitOriginStatus,
   originChanged,
   originChangeJson,
+  originNeedsWatch,
 } from '@/core/git-follow.ts';
 import { mutagenDaemonSpec } from '@/integrations/mutagen.ts';
-import { gitWatchSpec, renderLaunchAgent, renderScheduledTask } from '@/integrations/service.ts';
+import {
+  describeLaunchdState,
+  gitWatchSpec,
+  parseLaunchdPrint,
+  renderLaunchAgent,
+  renderScheduledTask,
+} from '@/integrations/service.ts';
 import { renderUnit } from '@/integrations/systemd.ts';
 
 function origin(overrides: Partial<GitOriginStatus> = {}): GitOriginStatus {
@@ -67,6 +74,22 @@ describe('origin summary', () => {
     expect(describeOrigin(origin({ status: 'unknown', reason: 'no_upstream' }))).toContain(
       'no_upstream',
     );
+  });
+
+  test('ties the alignment to the service only when the update could run', () => {
+    const behind = origin({ status: 'behind', move: true });
+
+    expect(describeOrigin(behind)).toBe('behind (to update)');
+    expect(describeOrigin(behind, false)).toBe(
+      'behind (to update), git alignment service not running',
+    );
+    expect(originNeedsWatch(behind)).toBe(true);
+
+    const staged = origin({ status: 'behind', reason: 'staged', move: false });
+
+    expect(describeOrigin(staged, false)).toBe('behind (staged)');
+    expect(originNeedsWatch(staged)).toBe(false);
+    expect(originNeedsWatch(origin())).toBe(false);
   });
 
   test('writes one json line for each change of state', () => {
@@ -201,5 +224,77 @@ describe('service paths', () => {
     expect(renderScheduledTask(gitWatchSpec('/opt/corami & co/corami'))).toContain(
       '<Command>/opt/corami &amp; co/corami</Command>',
     );
+  });
+});
+
+describe('launchd state', () => {
+  test('an agent that runs has its process', () => {
+    const state = parseLaunchdPrint(
+      [
+        'gui/501/dev.corami.git-watch = {',
+        '\tactive count = 1',
+        '\tpath = /Users/me/Library/LaunchAgents/dev.corami.git-watch.plist',
+        '\ttype = LaunchAgent',
+        '\tstate = running',
+        '',
+        '\tprogram = /Users/me/.corami/bin/corami',
+        '\tpid = 4242',
+        '',
+        '\tjob state = running',
+        '}',
+      ].join('\n'),
+    );
+
+    expect(state).toEqual({ loaded: true, running: true, pid: 4242, exitCode: undefined });
+    expect(describeLaunchdState(state)).toBe('running');
+  });
+
+  test('an agent that cannot start is loaded and stopped', () => {
+    const state = parseLaunchdPrint(
+      [
+        'gui/501/dev.corami.git-watch = {',
+        '\tactive count = 0',
+        '\tstate = spawn scheduled',
+        '\truns = 1646',
+        '\tlast exit code = 78: EX_CONFIG',
+        '',
+        '\tjob state = spawn failed',
+        '}',
+      ].join('\n'),
+    );
+
+    expect(state.loaded).toBe(true);
+    expect(state.running).toBe(false);
+    expect(state.exitCode).toBe(78);
+    expect(describeLaunchdState(state)).toContain('78');
+    expect(describeLaunchdState(state)).toContain('launch constraint');
+  });
+
+  test('an agent stopped by a signal says the signal', () => {
+    const state = parseLaunchdPrint(
+      ['\tstate = spawn scheduled', '\tlast exit code = -15', '\tjob state = not running'].join(
+        '\n',
+      ),
+    );
+
+    expect(state.running).toBe(false);
+    expect(state.exitCode).toBe(-15);
+    expect(describeLaunchdState(state)).toBe('stopped by signal 15');
+  });
+
+  test('an agent that is loaded without an exit code is not running', () => {
+    const state = parseLaunchdPrint('\tstate = spawn scheduled\n\tjob state = not running');
+    expect(state.running).toBe(false);
+    expect(describeLaunchdState(state)).toBe('loaded, not running');
+  });
+
+  test('an agent that launchd does not know is absent', () => {
+    const state = parseLaunchdPrint(
+      'Could not find service "dev.corami.git-watch" in domain for user',
+    );
+
+    expect(state.loaded).toBe(false);
+    expect(state.running).toBe(false);
+    expect(describeLaunchdState(state)).toBe('not loaded');
   });
 });

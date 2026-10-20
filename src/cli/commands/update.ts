@@ -19,9 +19,11 @@ import { ownerBinary, ownerOfServer } from '@/core/server-user.ts';
 import {
   execApproverSpec,
   gitWatchSpec,
-  restartService,
+  refreshService,
+  type ServiceRefresh,
   type ServiceSpec,
-  serviceActive,
+  serviceInstalled,
+  servicePlatform,
 } from '@/integrations/service.ts';
 import { homeDirectoryForUser, systemctlAsUser, userId } from '@/integrations/systemd.ts';
 import { VERSION } from '@/version.ts';
@@ -73,8 +75,13 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
   replaceBinary(binary, downloaded.path);
   const copiedToOwner = await copyToOwner();
   const restarted = await restartDaemon();
-  const watchRestarted = await restartGitWatch();
-  const approverRestarted = await restartIfActive(execApproverSpec(binary));
+  const watch = await refreshGitWatch(binary);
+  const approver = await refreshIfInstalled(execApproverSpec(binary));
+  const failures = [watch, approver].flatMap((result) =>
+    result === undefined || result.ok
+      ? []
+      : [{ name: result.name, detail: result.detail, fix: result.fix }],
+  );
 
   const summary = {
     from: VERSION,
@@ -82,8 +89,9 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
     binary,
     account_binary_updated: copiedToOwner,
     restarted_daemon: restarted,
-    restarted_git_watch: watchRestarted,
-    restarted_exec_approver: approverRestarted,
+    restarted_git_watch: watch?.ok === true,
+    restarted_exec_approver: approver?.ok === true,
+    service_failures: failures,
   };
 
   if (context.output.json) {
@@ -96,8 +104,12 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
       `Binary: ${binary}`,
       copiedToOwner ? 'The account that owns the projects runs the same binary.' : '',
       restarted ? 'Daemon service restarted.' : '',
-      watchRestarted ? 'Git alignment service restarted.' : '',
-      approverRestarted ? 'Approval dialog restarted.' : '',
+      watch?.ok === true ? 'Git alignment service registered again and running.' : '',
+      approver?.ok === true ? 'Approval dialog registered again and running.' : '',
+      ...failures.map(
+        (failure) =>
+          `${failure.name} not running after the update: ${failure.detail}. ${failure.fix}`,
+      ),
     ]
       .filter((line) => line !== '')
       .join('\n'),
@@ -259,31 +271,55 @@ async function restartDaemon(): Promise<boolean> {
   return (await run('systemctl', ['restart', 'corami-daemon'])).ok;
 }
 
-async function restartGitWatch(): Promise<boolean> {
-  const spec = gitWatchSpec(resolveBinary());
+interface ServiceRefreshOutcome extends ServiceRefresh {
+  name: string;
+  fix: string;
+}
+
+async function refreshGitWatch(binary: string): Promise<ServiceRefreshOutcome | undefined> {
+  const spec = gitWatchSpec(binary);
   const owner = await configuredServerUser();
 
-  if (owner !== undefined && owner !== userInfo().username) {
+  if (servicePlatform() !== 'macos' && owner !== undefined && owner !== userInfo().username) {
     const active = await systemctlAsUser(owner, ['is-active', spec.name]);
 
     if (active.stdout.trim() !== 'active') {
-      return false;
+      return undefined;
     }
 
-    return (await systemctlAsUser(owner, ['restart', spec.name])).ok;
+    const restarted = (await systemctlAsUser(owner, ['restart', spec.name])).ok;
+
+    return {
+      name: spec.name,
+      ok: restarted,
+      detail: restarted ? 'restarted' : 'restart failed',
+      fix: 'Run corami setup server --step git-watch as the account that owns the projects',
+    };
   }
 
-  return restartIfActive(spec);
+  return refreshIfInstalled(spec);
 }
 
-async function restartIfActive(spec: ServiceSpec): Promise<boolean> {
-  const active = await serviceActive(spec).catch(() => false);
+async function refreshIfInstalled(spec: ServiceSpec): Promise<ServiceRefreshOutcome | undefined> {
+  const installed = await serviceInstalled(spec).catch(() => false);
 
-  if (!active) {
-    return false;
+  if (!installed) {
+    return undefined;
   }
 
-  return restartService(spec).catch(() => false);
+  const refreshed = await refreshService(spec).catch((error: unknown) => ({
+    ok: false,
+    detail: error instanceof Error ? error.message : String(error),
+  }));
+
+  return {
+    ...refreshed,
+    name: spec.name,
+    fix:
+      spec.name === 'corami-git-watch'
+        ? 'Run corami setup client <server> --step git-watch on a client, or corami setup server --step git-watch on the server'
+        : 'Run corami exec allow again',
+  };
 }
 
 export const updateCommand: CommandSpec = {

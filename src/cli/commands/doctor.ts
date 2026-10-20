@@ -35,8 +35,10 @@ import { daemonServiceActive } from '@/integrations/mutagen.ts';
 import {
   execApproverSpec,
   gitWatchSpec,
-  serviceActive,
+  launchAgentPath,
+  type ServiceHealth,
   serviceDirHint,
+  serviceHealth,
   servicePlatform,
 } from '@/integrations/service.ts';
 import { sshDir } from '@/integrations/ssh.ts';
@@ -214,14 +216,15 @@ async function checkExecClient(serverHost: string): Promise<CheckResult[]> {
 }
 
 async function checkApprovalDialog(): Promise<CheckResult> {
-  const running = await serviceActive(execApproverSpec(process.execPath)).catch(() => false);
+  const health = await serviceHealth(execApproverSpec(process.execPath)).catch(() => undefined);
 
-  if (!running) {
+  if (health?.status !== 'running') {
     return {
       id: 'exec.approver',
       status: 'warn',
       summary:
         'The approval dialog does not run: new commands are answered only with corami exec approve',
+      ...(health === undefined ? {} : { detail: `The service is ${health.detail}` }),
       fix: 'Run corami exec allow again',
     };
   }
@@ -533,15 +536,25 @@ function namesOf(paths: string[]): string {
   return paths.map((path) => basename(path)).join(', ');
 }
 
+async function accountGitHealth(user: string, name: string): Promise<ServiceHealth | undefined> {
+  const active = (await systemctlAsUser(user, ['is-active', name])).stdout.trim() === 'active';
+
+  if (active) {
+    return { status: 'running', detail: 'running' };
+  }
+
+  return { status: 'stopped', detail: 'not running' };
+}
+
 async function checkGitService(): Promise<CheckResult[]> {
   const spec = gitWatchSpec(process.execPath);
   const account = await serverAccount();
-  const active =
+  const health =
     account === undefined
-      ? await serviceActive(spec).catch(() => false)
-      : (await systemctlAsUser(account.user, ['is-active', spec.name])).stdout.trim() === 'active';
+      ? await serviceHealth(spec).catch(() => undefined)
+      : await accountGitHealth(account.user, spec.name);
 
-  if (active) {
+  if (health?.status === 'running') {
     return [
       {
         id: 'git.service',
@@ -553,13 +566,15 @@ async function checkGitService(): Promise<CheckResult[]> {
 
   const dir =
     account === undefined ? serviceDirHint() : join(account.home, '.config', 'systemd', 'user');
+  const detail = `The service is ${health?.detail ?? 'absent'}. Expected under ${dir} (${servicePlatform()})`;
+  const waiting = servicePlatform() === 'macos' && existsSync(launchAgentPath(spec));
 
   return [
     {
       id: 'git.service',
       status: 'warn',
       summary: 'git alignment service not running',
-      detail: `Expected under ${dir} (${servicePlatform()})`,
+      detail: waiting ? `${detail}. The plist is there, launchd does not hold the agent` : detail,
       fix: 'corami setup client <server> --step git-watch on a client, corami setup server --step git-watch on the server',
     },
   ];
