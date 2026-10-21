@@ -16,6 +16,7 @@ import {
 import { toCoramiError } from '@/core/errors.ts';
 import { run as runCommand } from '@/core/exec.ts';
 import { findExecLine } from '@/core/exec-ssh-keys.ts';
+import { ignoreDrift, ignoresFor } from '@/core/ignore-file.ts';
 import { findTool, MUTAGEN } from '@/core/pinned-tools.ts';
 import { orphanServerFolders, serverPathsOf } from '@/core/project-add.ts';
 import { canSudo, ownerOfServer, privilegedGroups } from '@/core/server-user.ts';
@@ -30,7 +31,7 @@ import {
   sshPolicyText,
   sshRootText,
 } from '@/core/ssh-policy.ts';
-import { daemonServiceActive } from '@/integrations/mutagen.ts';
+import { daemonServiceActive, MutagenEngine } from '@/integrations/mutagen.ts';
 import {
   gitWatchSpec,
   launchAgentPath,
@@ -73,7 +74,9 @@ async function collectChecks(): Promise<CheckResult[]> {
     checkPinnedTools(),
     checkGitService(),
     checkSyncDaemon(),
+    checkSyncIgnores(),
     checkServerAccount(),
+    checkServerDisk(),
     checkOrphanFolders(),
     checkDaemon(),
     checkSsh(),
@@ -419,6 +422,100 @@ async function projectsFolderForServer(): Promise<string> {
   const home = await homeDirectoryForUser(user);
 
   return home === undefined ? projectRoot() : projectsRootFor(home);
+}
+
+async function checkSyncIgnores(): Promise<CheckResult[]> {
+  const config = await readGlobalConfig().catch(() => undefined);
+
+  if (config?.role !== 'client') {
+    return [];
+  }
+
+  const sessions = await new MutagenEngine().sessions();
+
+  if (sessions === undefined || sessions.length === 0) {
+    return [];
+  }
+
+  const stale = sessions
+    .map((session) => ({ session, drift: ignoreDrift(session.ignore, ignoresFor(session.beta)) }))
+    .filter(({ drift }) => drift.missing.length > 0 || drift.extra.length > 0);
+
+  if (stale.length === 0) {
+    return [
+      {
+        id: 'mutagen.ignores',
+        status: 'ok',
+        summary: 'Every session carries the current exclusions',
+      },
+    ];
+  }
+
+  return [
+    {
+      id: 'mutagen.ignores',
+      status: 'warn',
+      summary: `${stale.length} sessions carry older exclusions`,
+      detail: stale
+        .map(({ session, drift }) => {
+          const parts = [
+            drift.missing.length > 0 ? `missing ${drift.missing.join(', ')}` : '',
+            drift.extra.length > 0 ? `no longer ignored ${drift.extra.join(', ')}` : '',
+          ].filter((part) => part !== '');
+
+          return `${session.project}: ${parts.join('; ')}`;
+        })
+        .join('\n'),
+      fix: `corami sync refresh ${stale[0]?.session.project ?? '<project>'}`,
+    },
+  ];
+}
+
+async function checkServerDisk(): Promise<CheckResult[]> {
+  const config = await readGlobalConfig().catch(() => undefined);
+
+  if (config?.role !== 'server') {
+    return [];
+  }
+
+  const projects = await projectsFolderForServer();
+  const result = await runCommand('df', ['-Pk', projects]);
+
+  if (!result.ok) {
+    return [];
+  }
+
+  const line = result.stdout.trim().split('\n').pop() ?? '';
+  const fields = line.split(/\s+/);
+  const blocks = Number(fields[1]);
+  const available = Number(fields[3]);
+
+  if (!Number.isFinite(blocks) || !Number.isFinite(available) || blocks <= 0) {
+    return [];
+  }
+
+  const freePercent = Math.round((available / blocks) * 100);
+
+  if (freePercent >= 10) {
+    return [
+      {
+        id: 'server.disk',
+        status: 'ok',
+        summary: `${freePercent}% of the projects filesystem is free`,
+        detail: projects,
+      },
+    ];
+  }
+
+  return [
+    {
+      id: 'server.disk',
+      status: 'fail',
+      summary: `${freePercent}% of the projects filesystem is free`,
+      detail: projects,
+      fix: 'A build cache that the sync carries is the usual cause: corami sync status on the client names the heavy folders, add them to .coramiignore there',
+    },
+  ];
 }
 
 async function checkOrphanFolders(): Promise<CheckResult[]> {

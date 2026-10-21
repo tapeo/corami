@@ -24,6 +24,10 @@ export interface SyncSession {
   conflicts: string[];
   lastError: string | undefined;
   localLinks: string[];
+  ignore: string[];
+  serverHost: string;
+  serverUser: string;
+  serverPath: string;
 }
 
 export interface SyncEngine {
@@ -222,6 +226,7 @@ export function parseSessions(raw: string): SyncSession[] {
     }
 
     const described = describeProblems(record);
+    const server = describeServer(record.alpha);
 
     sessions.push({
       name,
@@ -233,10 +238,35 @@ export function parseSessions(raw: string): SyncSession[] {
       conflicts: collectConflicts(record),
       lastError: described.error,
       localLinks: described.links,
+      ignore: collectIgnores(record),
+      serverHost: server.host,
+      serverUser: server.user,
+      serverPath: server.path,
     });
   }
 
   return sessions;
+}
+
+export function collectIgnores(record: Record<string, unknown>): string[] {
+  const ignore = asRecord(record.ignore);
+  const paths = ignore?.paths;
+
+  if (!Array.isArray(paths)) {
+    return [];
+  }
+
+  return paths.filter((entry): entry is string => typeof entry === 'string');
+}
+
+function describeServer(value: unknown): { host: string; user: string; path: string } {
+  const record = asRecord(value);
+
+  return {
+    host: typeof record?.host === 'string' ? record.host : '',
+    user: typeof record?.user === 'string' ? record.user : '',
+    path: typeof record?.path === 'string' ? record.path : '',
+  };
 }
 
 function describeEndpoint(value: unknown): string {
@@ -277,6 +307,16 @@ const SYNC_ACTIVITY: Record<string, string> = {
   watching: 'Waiting for the first cycle to finish',
   disconnected: 'Waiting for the server',
 };
+
+export function syncActivityText(status: string, lastError?: string): string {
+  const error = (lastError ?? '').trim();
+
+  if (error !== '') {
+    return `Retrying: ${(error.split('\n')[0] ?? '').slice(0, 80)}`;
+  }
+
+  return SYNC_ACTIVITY[status] ?? 'Waiting for the sync';
+}
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null
@@ -356,10 +396,7 @@ export function syncProgress(raw: string, project: string): SyncProgress | undef
     };
   }
 
-  const activity =
-    lastError === ''
-      ? (SYNC_ACTIVITY[status] ?? 'Waiting for the sync')
-      : `Retrying: ${(lastError.split('\n')[0] ?? '').slice(0, 80)}`;
+  const activity = syncActivityText(status, lastError);
 
   return { state: 'waiting', activity };
 }

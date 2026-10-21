@@ -24,6 +24,9 @@ export const PATH_RULES: PathRule[] = [
   { pattern: '.dart_tool', class: 'regenerable', directories: true },
   { pattern: '.fvm', class: 'regenerable', directories: true },
   { pattern: 'Pods', class: 'regenerable', directories: true },
+  { pattern: '.build', class: 'regenerable', directories: true },
+  { pattern: 'DerivedData', class: 'regenerable', directories: true },
+  { pattern: 'xcuserdata', class: 'regenerable', directories: true },
   { pattern: '.gradle', class: 'regenerable', directories: true },
   { pattern: 'ephemeral', class: 'regenerable', directories: true },
   { pattern: '.venv', class: 'regenerable', directories: true },
@@ -256,6 +259,68 @@ function toPosix(path: string): string {
 
 export function findLocalOnlyFiles(root: string, limit = 200): InventoryEntry[] {
   return copyInventory(root).localOnly.slice(0, limit);
+}
+
+export interface HeavyEntry {
+  path: string;
+  kind: 'file' | 'dir';
+  bytes: number;
+}
+
+export interface HeavyLimits {
+  fileBytes: number;
+  folderBytes: number;
+  limit: number;
+}
+
+export const HEAVY_LIMITS: HeavyLimits = {
+  fileBytes: 500 * 1024 * 1024,
+  folderBytes: 2 * 1024 * 1024 * 1024,
+  limit: 5,
+};
+
+export function heavyEntries(
+  inventory: Inventory,
+  limits: HeavyLimits = HEAVY_LIMITS,
+): HeavyEntry[] {
+  const folders = new Map<string, number>();
+  const heavy: HeavyEntry[] = [];
+
+  for (const entry of inventory.synced) {
+    if (entry.kind === 'file' && entry.bytes >= limits.fileBytes) {
+      heavy.push({ path: entry.path, kind: 'file', bytes: entry.bytes });
+    }
+
+    if (entry.kind === 'dir') {
+      continue;
+    }
+
+    const segments = entry.path.split('/');
+
+    for (let index = 1; index < segments.length; index += 1) {
+      const folder = segments.slice(0, index).join('/');
+
+      folders.set(folder, (folders.get(folder) ?? 0) + entry.bytes);
+    }
+  }
+
+  for (const [path, bytes] of folders) {
+    if (bytes >= limits.folderBytes) {
+      heavy.push({ path, kind: 'dir', bytes });
+    }
+  }
+
+  return heavy
+    .sort((left, right) => right.bytes - left.bytes || (left.path < right.path ? -1 : 1))
+    .slice(0, limits.limit);
+}
+
+export function heavyInFolder(root: string, limits: HeavyLimits = HEAVY_LIMITS): HeavyEntry[] {
+  try {
+    return heavyEntries(copyInventory(root), limits);
+  } catch {
+    return [];
+  }
 }
 
 export function directorySize(root: string): number {

@@ -184,6 +184,32 @@ describe('mutagen parsing', () => {
     expect(session?.conflicts).toEqual(['app/page.tsx']);
   });
 
+  test('reads the exclusions and the server endpoint', () => {
+    const record = [
+      {
+        name: 'corami-demo',
+        status: 'watching',
+        alpha: { protocol: 'ssh', user: 'corami', host: 'vps', path: '/home/corami/projects/demo' },
+        beta: { protocol: 'local', path: '/Users/me/demo' },
+        ignore: { paths: ['node_modules/', '.build/'] },
+      },
+    ];
+
+    const [session] = parseSessions(JSON.stringify(record));
+    expect(session?.ignore).toEqual(['node_modules/', '.build/']);
+    expect(session?.serverHost).toBe('vps');
+    expect(session?.serverUser).toBe('corami');
+    expect(session?.serverPath).toBe('/home/corami/projects/demo');
+  });
+
+  test('a session without exclusions has an empty list', () => {
+    const record = [{ name: 'corami-demo', status: 'watching', alpha: {}, beta: {} }];
+    const [session] = parseSessions(JSON.stringify(record));
+
+    expect(session?.ignore).toEqual([]);
+    expect(session?.serverHost).toBe('');
+  });
+
   test('reads problems from the endpoints', () => {
     const record = { beta: { transitionProblems: ['cannot create root'] } };
     expect(collectConflicts(record)).toEqual([]);
@@ -243,6 +269,10 @@ describe('removal checks', () => {
     conflicts: [],
     lastError: undefined,
     localLinks: [],
+    ignore: [],
+    serverHost: 'vps',
+    serverUser: 'corami',
+    serverPath: '~/projects/demo',
   };
 
   function fakeEngine(session: SyncSession | undefined, failFlush = false): RemovalEngine {

@@ -33,6 +33,13 @@ describe('classifyPath', () => {
     ['packages/web/node_modules/left-pad/index.js', 'regenerable'],
     ['build/app.aab', 'regenerable'],
     ['ios/Pods/Headers/foo.h', 'regenerable'],
+    ['.build/CompilationCache.noindex/generic/v1.1/data.v1', 'regenerable'],
+    ['packages/app/.build/debug/app', 'regenerable'],
+    ['DerivedData/Build/Products/Debug-iphoneos/app.app/app', 'regenerable'],
+    [
+      'Sorumi.xcodeproj/xcuserdata/matteo.xcuserdatad/UserInterfaceState.xcuserstate',
+      'regenerable',
+    ],
     ['.DS_Store', 'regenerable'],
     ['src/._page.tsx', 'regenerable'],
     ['android/local.properties', 'local_only'],
@@ -64,6 +71,8 @@ describe('classifyPath', () => {
   test('a folder rule only matches a folder', () => {
     expect(classifyPath('build')).toBe('synced');
     expect(classifyPath('build', true)).toBe('regenerable');
+    expect(classifyPath('.build', true)).toBe('regenerable');
+    expect(classifyPath('Sorumi.xcodeproj/xcuserdata', true)).toBe('regenerable');
     expect(classifyPath('apps/demo/ios/.symlinks')).toBe('synced');
     expect(classifyPath('apps/demo/ios/.symlinks', true)).toBe('local_only');
   });
@@ -124,6 +133,9 @@ describe('mutagenPattern', () => {
 
   test('the session ignores carry one of each', () => {
     expect(DEFAULT_IGNORES).toContain('**/ios/.symlinks/');
+    expect(DEFAULT_IGNORES).toContain('.build/');
+    expect(DEFAULT_IGNORES).toContain('DerivedData/');
+    expect(DEFAULT_IGNORES).toContain('xcuserdata/');
     expect(DEFAULT_IGNORES).not.toContain('.git/');
   });
 });

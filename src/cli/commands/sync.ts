@@ -17,7 +17,15 @@ import { readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { type CopyGitResult, type GitProgress, giveCopyGit } from '@/core/git.ts';
 import { describeOrigin } from '@/core/git-follow.ts';
+import {
+  IGNORE_FILE,
+  ignoreDrift,
+  ignoresFor,
+  projectIgnores,
+  refreshPlan,
+} from '@/core/ignore-file.ts';
 import { lastChange } from '@/core/last-change.ts';
+import { type HeavyEntry, heavyInFolder } from '@/core/local-copy.ts';
 import {
   isFolderEmpty,
   isWithin,
@@ -25,6 +33,7 @@ import {
   projectOfCopy,
   unexpandedHome,
 } from '@/core/projects.ts';
+import { formatBytes } from '@/core/sizes.ts';
 import { conflictCopies, conflictFix, conflictLabel } from '@/core/sync-conflicts.ts';
 import { MutagenEngine, type SyncProgress, type SyncSession } from '@/integrations/mutagen.ts';
 
@@ -264,7 +273,7 @@ export async function createSyncFor(options: CreateSyncOptions): Promise<{
     serverUser: user,
     serverPath,
     localPath: place.local,
-    ignore: [],
+    ignore: projectIgnores(place.local),
   });
 
   return {
@@ -329,7 +338,10 @@ export async function waitFirstSync(
   engine: MutagenEngine,
   project: string,
   update: (progress: SyncProgress) => void,
+  timeoutMs = 0,
 ): Promise<SyncProgress | undefined> {
+  const start = Date.now();
+
   for (;;) {
     const progress = await engine.progress(project);
 
@@ -340,6 +352,10 @@ export async function waitFirstSync(
     update(progress);
 
     if (progress.state === 'done' || progress.state === 'halted') {
+      return progress;
+    }
+
+    if (timeoutMs > 0 && Date.now() - start >= timeoutMs) {
       return progress;
     }
 
@@ -370,6 +386,13 @@ async function status(context: CommandContext): Promise<{ data?: unknown; text?:
     project: session.project,
     last_change: newestMtime(session.beta),
   }));
+  const heavy = filled
+    .filter((session) => project !== undefined || session.status !== 'watching')
+    .map((session) => ({ project: session.project, entries: heavyOf(session.beta) }));
+  const ignores = filled.map((session) => ({
+    project: session.project,
+    ...ignoreDrift(session.ignore, ignoresFor(session.beta)),
+  }));
 
   if (context.output.json) {
     const described = filled.map((session) => ({
@@ -377,7 +400,7 @@ async function status(context: CommandContext): Promise<{ data?: unknown; text?:
       conflicts: conflictCopies(session),
     }));
 
-    return { data: { sessions: described, git, activity } };
+    return { data: { sessions: described, git, activity, heavy, ignores } };
   }
 
   if (filled.length === 0) {
@@ -410,6 +433,40 @@ async function status(context: CommandContext): Promise<{ data?: unknown; text?:
       lines.push(`  symlinks of this machine, not synced: ${session.localLinks.join(', ')}`);
     }
 
+    const drift = ignores.find((entry) => entry.project === session.project);
+
+    if (drift !== undefined && (drift.missing.length > 0 || drift.extra.length > 0)) {
+      const parts: string[] = [];
+
+      if (drift.missing.length > 0) {
+        parts.push(`missing ${drift.missing.join(', ')}`);
+      }
+
+      if (drift.extra.length > 0) {
+        parts.push(`no longer ignored ${drift.extra.join(', ')}`);
+      }
+
+      const force = drift.extra.length > 0 ? ' --force, which carries them again' : '';
+
+      lines.push(
+        `  ignores out of date: ${parts.join(', ')}. To fix: corami sync refresh ${session.project}${force}`,
+      );
+    }
+
+    const heaviest = heavy.find((entry) => entry.project === session.project)?.entries ?? [];
+
+    for (const entry of heaviest) {
+      const where = entry.kind === 'dir' ? `${entry.path}/` : entry.path;
+      lines.push(`  heavy, carried on every change: ${where} (${formatBytes(entry.bytes)})`);
+    }
+
+    const largest = heaviest[0];
+
+    if (largest !== undefined) {
+      const where = largest.kind === 'dir' ? `${largest.path}/` : largest.path;
+      lines.push(`  to stop carrying it: add ${where} to .coramiignore`);
+    }
+
     if (session.lastError !== undefined) {
       lines.push(`  last error: ${session.lastError}`);
     }
@@ -426,6 +483,10 @@ async function status(context: CommandContext): Promise<{ data?: unknown; text?:
   }
 
   return { text: lines.join('\n') };
+}
+
+export function heavyOf(root: string): HeavyEntry[] {
+  return heavyInFolder(root);
 }
 
 export function describeAge(iso: string): string {
@@ -581,6 +642,105 @@ export async function removeLocalCopy(
       `To get it back: corami project add ${localPath} --from-server --name ${project}`,
     ].join('\n'),
   };
+}
+
+async function refresh(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
+  const project = await projectNameOf(context.args.positionals[0]);
+  const engine = new MutagenEngine();
+  const sessions = await syncSessions(engine);
+  const session = sessions.find((entry) => entry.project === project);
+
+  if (session === undefined) {
+    throw new CoramiError({
+      code: 'usage',
+      message: `No sync session for ${project} on this machine`,
+      fix: 'corami sync status lists the sessions of this machine',
+    });
+  }
+
+  if (session.serverHost === '' || session.serverPath === '') {
+    throw new CoramiError({
+      code: 'config_invalid',
+      message: `The session of ${project} does not say where the project is on the server`,
+      fix: `Run corami sync status ${project} and check the alpha endpoint`,
+    });
+  }
+
+  const ignores = projectIgnores(session.beta);
+  const expected = ignoresFor(session.beta);
+  const plan = refreshPlan(session.ignore, expected, booleanFlag(context.args, 'force'));
+
+  if (plan.current) {
+    return context.output.json
+      ? { data: { project, refreshed: false, ignores } }
+      : { text: `The sync of ${project} already carries the current exclusions.` };
+  }
+
+  if (plan.refuse) {
+    throw new CoramiError({
+      code: 'usage',
+      message: `The session of ${project} leaves out ${plan.extra.join(', ')}, which this Corami would carry`,
+      fix: `Run corami sync refresh ${project} --force only if those files may reach the server. A key or an env file must stay on this machine: keep the session as it is`,
+    });
+  }
+
+  let flushed = true;
+
+  try {
+    await engine.flush(project);
+  } catch {
+    flushed = false;
+  }
+
+  await engine.terminate(project);
+  await engine.create({
+    project,
+    serverHost: session.serverHost,
+    serverUser: session.serverUser,
+    serverPath: session.serverPath,
+    localPath: session.beta,
+    ignore: ignores,
+  });
+
+  const progress = await waitFirstSync(engine, project, () => undefined, 120_000);
+  const after = await engine.status(project);
+  const conflicts = after?.conflicts ?? [];
+  const data = {
+    project,
+    refreshed: true,
+    flushed,
+    pending: progress?.state === 'waiting',
+    status: after?.status ?? 'unknown',
+    conflicts,
+    ignores,
+  };
+
+  if (context.output.json) {
+    return { data };
+  }
+
+  const lines = [
+    flushed
+      ? `The sync of ${project} is recreated with the current exclusions.`
+      : `The session of ${project} was stuck, so its queue was not flushed. The sync is recreated with the current exclusions.`,
+    `Exclusions from ${IGNORE_FILE}: ${ignores.length === 0 ? 'none' : ignores.join(', ')}`,
+    after === undefined
+      ? 'The new session is not listed yet: corami sync status follows it.'
+      : `State: ${after.status}, conflicts: ${conflicts.length}.`,
+  ];
+
+  if (progress?.state === 'waiting') {
+    lines.push('The first cycle is still running: corami sync status follows it.');
+  }
+
+  if (conflicts.length > 0) {
+    lines.push(
+      'The two sides had different content, so those files are now conflicts. No file was lost.',
+      `To resolve: ${conflictFix(project, conflicts)}`,
+    );
+  }
+
+  return { text: lines.join('\n') };
 }
 
 async function stop(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
@@ -785,18 +945,6 @@ export function newestMtime(root: string): string {
   return new Date(newest.modifiedAt).toISOString();
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-
-  if (bytes < 1024 * 1024) {
-    return `${Math.round(bytes / 1024)} KB`;
-  }
-
-  return `${Math.round(bytes / (1024 * 1024))} MB`;
-}
-
 const DRY_RUN_FLAG = { name: 'dry-run', description: 'Show what it would do' };
 
 export const syncCommand: CommandSpec = {
@@ -811,6 +959,24 @@ export const syncCommand: CommandSpec = {
       arguments: 1,
       examples: ['corami sync status', 'corami sync status myapp'],
       run: status,
+    },
+    {
+      name: 'refresh',
+      summary: 'Recreates the session with the exclusions of the project',
+      usage: 'corami sync refresh [<project>] [--force]',
+      arguments: 1,
+      flags: [
+        {
+          name: 'force',
+          description: 'Also stops ignoring the paths this Corami would carry',
+        },
+      ],
+      examples: [
+        'corami sync refresh',
+        'corami sync refresh myapp',
+        'corami sync refresh myapp --force',
+      ],
+      run: refresh,
     },
     {
       name: 'flush',

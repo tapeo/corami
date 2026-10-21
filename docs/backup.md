@@ -18,7 +18,7 @@ Corami does not back anything up: it is yours to choose. The server is the sourc
 | Harness sessions | e.g. `~/.local/share/opencode` | the history of the agents, if you want it |
 | Container data | the Docker volumes | databases and services of the projects, if the data matters |
 
-What not to save, because every machine rebuilds it: `node_modules`, `.next`, `.turbo`, `dist`, `build`, `coverage`, `.dart_tool`, `.fvm`, `Pods`, `.gradle`, `ephemeral`, `.venv`, `__pycache__` and the other folders of the `regenerable` class in `src/core/local-copy.ts`. `~/.corami/state.db` holds the project registry and the preview addresses: both are recreated by `corami project add` and `corami serve`, so saving it is optional.
+What not to save, because every machine rebuilds it: `node_modules`, `.next`, `.turbo`, `dist`, `build`, `coverage`, `.dart_tool`, `.fvm`, `Pods`, `.build`, `DerivedData`, `xcuserdata`, `.gradle`, `ephemeral`, `.venv`, `__pycache__` and the other folders of the `regenerable` class in `src/core/local-copy.ts`. `~/.corami/state.db` holds the project registry and the preview addresses: both are recreated by `corami project add` and `corami serve`, so saving it is optional.
 
 A key, an env file and a service account JSON are files of the project like any other: they are synced, so every machine that has a copy has them, and the backup of the server holds what is on the server. If a key must not leave one machine, keep it out of the project folder (a path outside it, a variable of the machine, a secret manager): Corami does not treat the files differently, and never prints their content in a log.
 
@@ -49,7 +49,8 @@ set -e
 export RESTIC_REPOSITORY=s3:s3.example.com/bucket/corami
 export RESTIC_PASSWORD_FILE="$HOME/.corami/restic-password"
 restic backup \
-  --exclude node_modules --exclude .next --exclude build --exclude Pods \
+  --exclude node_modules --exclude .next --exclude build --exclude Pods --exclude .build \
+  --exclude DerivedData --exclude xcuserdata \
   --exclude '.dart_tool' --exclude '.fvm' \
   "$HOME/projects" "$HOME/.corami/config.json" "$HOME/.ssh"
 restic forget --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune

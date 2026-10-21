@@ -113,6 +113,7 @@ On a client the folder is not the one of the server: `corami serve rm <name>` th
 | Command | Where | Description |
 |---|---|---|
 | `corami sync status [project]` | client | state, conflicts with their local and server paths, last error, last change and git state of the two sides towards `origin` |
+| `corami sync refresh [project] [--force]` | client | terminates the session and creates it again with `DEFAULT_IGNORES` plus `.coramiignore`, then waits for the first cycle. Without `--force` it refuses when the session leaves out paths this Corami would carry |
 | `corami sync flush [project]` | client | flushes the session queue |
 | `corami project rm <name> --on client --yes [--force] [--dry-run]` | client | removes only the local copy, the folder of its session, after the checks. The project is always named, never taken from the current folder |
 | `corami sync stop [<project>]` | client | stops the sync of this copy and keeps the files. The way out of a copy whose project is gone from the server, where `corami project rm --on client` would be deleting the last copy of the work |
@@ -171,7 +172,7 @@ Output is the exception to the contract above: without `--json` it is the stdout
 }
 ```
 
-The errors of Corami before the command starts use the usual envelope: `macbook is offline in the tailnet`, `macbook does not allow commands from this server`, `macbook denies this command: rm -rf build (rule: deny rm *)`, `macbook has no copy of myapp`, or `the sync of myapp on macbook is not up to date: the command did not start`.
+The errors of Corami before the command starts use the usual envelope: `macbook is offline in the tailnet`, `macbook does not allow commands from this server`, `macbook denies this command: rm -rf build (rule: deny rm *)`, `macbook has no copy of myapp`, or `the sync of myapp on macbook is not up to date: Scanning the files. .build/CompilationCache.noindex/ is 38 GB`.
 
 An MCP server can run on the client through the same channel. The first run asks for the exact command of the server:
 

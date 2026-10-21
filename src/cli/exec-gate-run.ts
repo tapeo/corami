@@ -8,7 +8,9 @@ import {
   gatePayload,
   parseGateRequest,
 } from '@/core/exec-gate.ts';
-import { MutagenEngine } from '@/integrations/mutagen.ts';
+import { type HeavyEntry, heavyInFolder } from '@/core/local-copy.ts';
+import { formatBytes } from '@/core/sizes.ts';
+import { MutagenEngine, type SyncSession, syncActivityText } from '@/integrations/mutagen.ts';
 
 const POLL_MS = 500;
 
@@ -57,6 +59,7 @@ async function runCommand(request: GateCommand): Promise<CommandResult> {
   const sessions = await engine.sessions();
   const copy = gateCopyDecision(sessions, request.project);
   const identity = await tailnetIdentity();
+  const session = sessions?.find((entry) => entry.project === request.project);
 
   if (copy === 'unavailable') {
     throw new CoramiError({
@@ -77,14 +80,12 @@ async function runCommand(request: GateCommand): Promise<CommandResult> {
   if (copy === 'pending') {
     throw new CoramiError({
       code: 'sync_pending',
-      message: `The sync of ${request.project} on ${identity.name} is not up to date: the command did not start`,
-      fix: `Run corami sync status on ${identity.name}`,
+      ...pendingExplanation(request.project, identity.name, session),
     });
   }
 
-  await flushOrFail(engine, request.project, identity.name);
+  await flushOrFail(engine, request.project, identity.name, session);
 
-  const session = sessions?.find((entry) => entry.project === request.project);
   const result = await execute(request, session?.beta ?? process.cwd());
 
   await engine.flush(request.project).catch(() => undefined);
@@ -92,14 +93,68 @@ async function runCommand(request: GateCommand): Promise<CommandResult> {
   return result;
 }
 
-async function flushOrFail(engine: MutagenEngine, project: string, client: string): Promise<void> {
+export interface PendingExplanation {
+  message: string;
+  fix: string;
+}
+
+export function pendingExplanation(
+  project: string,
+  client: string,
+  session: SyncSession | undefined,
+  heavy: HeavyEntry[] = heavyOf(session),
+): PendingExplanation {
+  const head = `The sync of ${project} on ${client} is not up to date`;
+
+  if (session === undefined) {
+    return {
+      message: `${head}: the command did not start`,
+      fix: `Run corami sync status on ${client}`,
+    };
+  }
+
+  const conflicts = session.conflicts.length;
+  const state =
+    conflicts > 0
+      ? `${conflicts} conflicts to resolve`
+      : syncActivityText(session.status, session.lastError);
+  const largest = heavy[0];
+
+  if (largest !== undefined) {
+    const where = largest.kind === 'dir' ? `${largest.path}/` : largest.path;
+    const others = heavy.length > 1 ? ` and ${heavy.length - 1} more` : '';
+
+    return {
+      message: `${head}: ${state}. ${where} is ${formatBytes(largest.bytes)}${others}`,
+      fix: `Add ${where} to .coramiignore in the project, then run corami sync refresh ${project} on ${client}`,
+    };
+  }
+
+  return { message: `${head}: ${state}`, fix: `Run corami sync status on ${client}` };
+}
+
+function heavyOf(session: SyncSession | undefined): HeavyEntry[] {
+  if (session === undefined) {
+    return [];
+  }
+
+  return heavyInFolder(session.beta);
+}
+
+async function flushOrFail(
+  engine: MutagenEngine,
+  project: string,
+  client: string,
+  session: SyncSession | undefined,
+): Promise<void> {
   try {
     await engine.flush(project);
   } catch {
+    const fresh = (await engine.sessions())?.find((entry) => entry.project === project);
+
     throw new CoramiError({
       code: 'sync_pending',
-      message: `The sync of ${project} on ${client} is not up to date: the command did not start`,
-      fix: `Run corami sync status on ${client}`,
+      ...pendingExplanation(project, client, fresh ?? session),
     });
   }
 }

@@ -91,8 +91,9 @@ Checks with a remedy for each item. One command: there are no areas.
 | `serve.rules` | the endpoints published with `tailscale serve` |
 | `net.exposed_ports` | ports listening outside `127.0.0.1` or on `0.0.0.0` (Docker iptables included) |
 | `mutagen.installed`, `mutagen.service` | Mutagen of the pinned version, `~/.corami/bin` in the PATH, the daemon service |
+| `mutagen.ignores` | on a client, the sessions whose ignores differ from `DEFAULT_IGNORES` plus `.coramiignore`, with `corami sync refresh` as the fix |
 | `git.service` | the git alignment service |
-| `server.*` | daemon reachable, account of the projects and its privileges, folders of the projects root that no project names |
+| `server.*` | daemon reachable, account of the projects and its privileges, folders of the projects root that no project names, free space of the projects filesystem (under 10% is a failure) |
 
 ## Roles
 
@@ -347,7 +348,7 @@ One table of rules in `local-copy.ts` (`PATH_RULES`) is the only source of the p
 
 | Class | Meaning | Example |
 |---|---|---|
-| `regenerable` | rebuilt by every machine, never carried | `node_modules/`, `dist/`, `._*`, `.DS_Store` |
+| `regenerable` | rebuilt by every machine, never carried | `node_modules/`, `dist/`, `.build/`, `DerivedData/`, `xcuserdata/`, `._*`, `.DS_Store` |
 | `local_only` | generated for one machine, with paths that would break the build of another | `android/local.properties`, `ios/Flutter/Generated.xcconfig`, `ios/.symlinks/` |
 
 A pattern without `/` matches the name at any level, one with `/` at any level too, exactly as in a gitignore: `ios/.symlinks` covers the app at the root and the one under `apps/demo`. A folder rule matches a folder only, so a file named `build` travels.
@@ -360,11 +361,14 @@ One walk of the folder, `copyInventory` in `local-copy.ts`, reads the table once
 
 Files generated with absolute paths of the machine (`Generated.xcconfig`, `local.properties`) stay excluded, otherwise they would break the build on the other machine. Lockfiles (`pubspec.lock`, `Podfile.lock`, JS lockfiles) are synced.
 
-A session already created keeps the ignores it was created with: to take the new list, the copy is removed with `corami project rm <project> --on client` and created again with `corami project add <folder> --from-server --name <project>`.
+**`.coramiignore` in the project.** A pattern the table does not know but the project does goes in `.coramiignore` at the root of the folder: one Mutagen pattern per line, `#` starts a comment, no negation, no absolute path, no `..`. The file travels with the project, so every machine reads the same rules, and the agent on the server can add one when a build writes a new cache. A bad line is a `config_invalid` error with its line number.
+
+**A session keeps the ignores it was created with.** `DEFAULT_IGNORES` and `.coramiignore` are read when the session is created. `corami sync status` compares the ignores of the session with the two lists and says `ignores out of date` when they differ, `corami doctor` reports the same as `mutagen.ignores`, and `corami sync refresh` terminates the session and creates it again with the current lists. Nothing is lost: the first cycle of a recreated session compares the two trees with no ancestor, so a file edited on both sides becomes a conflict, not a deletion. A session that leaves out paths this Corami would carry (typically `.env` and keys, from a version that excluded them) is not refreshed without `--force`, because those files would start traveling.
 
 ### State and conflicts
 
-- `corami sync status --json` reads `mutagen sync list --template '{{ json . }}'` and returns state, last cycle, conflicts and the last change.
+- `corami sync status --json` reads `mutagen sync list --template '{{ json . }}'` and returns state, last cycle, conflicts, the ignores of the session, the heavy entries and the last change.
+- **Heavy entries.** A file of 500 MB or more, or a folder of 2 GB or more among the ones the sync carries, is reported with its apparent size (the one Mutagen hashes and writes). A build cache no rule covers is the usual case: the sync stays in `Scanning files` on every change, and a sparse file of the client becomes a full one on the server. `corami sync status <project>` looks at the folder, and so does the `sync_pending` error of `corami exec`, which names the heaviest path and the ignore to add.
 - `corami sync status` shows the local and the server path of each conflict. To resolve one, delete the copy that should lose, on this machine or on the server: Mutagen then syncs the other one to both sides, which is the resolution method documented by Mutagen ([docs](https://mutagen.io/documentation/synchronization/)). No dedicated command: it would only wrap one deletion. The `sync_conflict` error of `corami project rm --on client` gives the same fix.
 - Sync hides behind a `SyncEngine` interface, so it can move to Syncthing if needed.
 
