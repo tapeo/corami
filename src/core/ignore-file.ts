@@ -89,6 +89,16 @@ export function ignoreDrift(
   return { missing, extra };
 }
 
+const LEGACY_GIT_IGNORE = '.git/';
+const GIT_PEER_IGNORE = '!/.git/corami/';
+
+export function keptIgnores(expected: string[], session: string[]): string[] {
+  const replaceable = (pattern: string): boolean =>
+    pattern !== LEGACY_GIT_IGNORE || !expected.includes(GIT_PEER_IGNORE);
+
+  return session.filter((pattern) => replaceable(pattern) && !expected.includes(pattern));
+}
+
 export interface RefreshPlan {
   current: boolean;
   refuse: boolean;

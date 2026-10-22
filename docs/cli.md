@@ -113,7 +113,7 @@ On a client the folder is not the one of the server: `corami serve rm <name>` th
 | Command | Where | Description |
 |---|---|---|
 | `corami sync status [project]` | client | state, conflicts with their local and server paths, last error, last change, git state of the two sides towards `origin` and the heads of the other machines. Anywhere else it stops with `config_invalid` |
-| `corami sync refresh [project] [--force]` | client | terminates the session and creates it again with the current exclusions (`GIT_IGNORES` and `DEFAULT_IGNORES`) plus `.coramiignore`, then waits for the first cycle. Without `--force` it refuses when the session leaves out paths this Corami would carry |
+| `corami sync refresh [project] [--force \| --keep-extra]` | client | terminates the session and creates it again with the current exclusions (`GIT_IGNORES` and `DEFAULT_IGNORES`) plus `.coramiignore`, then waits for the first cycle. Without a flag it refuses when the session leaves out paths this Corami would carry; `--keep-extra` adds the current exclusions and keeps the ones the session already has, the legacy `.git/` aside, which the git exchange replaces; `--force` drops the old ones |
 | `corami sync flush [project]` | client | flushes the session queue |
 | `corami project rm <name> --on client --yes [--force] [--dry-run]` | client | removes only the local copy, the folder of its session, after the checks. The project is always named, never taken from the current folder |
 | `corami sync stop [<project>]` | client | stops the sync of this copy and keeps the files. The way out of a copy whose project is gone from the server, where `corami project rm --on client` would be deleting the last copy of the work |

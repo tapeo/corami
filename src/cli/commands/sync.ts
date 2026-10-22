@@ -25,6 +25,7 @@ import {
   IGNORE_FILE,
   ignoreDrift,
   ignoresFor,
+  keptIgnores,
   projectIgnores,
   refreshPlan,
 } from '@/core/ignore-file.ts';
@@ -760,6 +761,16 @@ async function refresh(context: CommandContext): Promise<{ data?: unknown; text?
 
   const ignores = projectIgnores(session.beta);
   const expected = ignoresFor(session.beta);
+  const keepExtra = booleanFlag(context.args, 'keep-extra');
+
+  if (keepExtra && booleanFlag(context.args, 'force')) {
+    throw new CoramiError({
+      code: 'usage',
+      message: '--force and --keep-extra say opposite things',
+      fix: 'Use --keep-extra to add the current exclusions and keep the old ones, or --force to drop the old ones',
+    });
+  }
+
   const plan = refreshPlan(session.ignore, expected, booleanFlag(context.args, 'force'));
 
   if (plan.current) {
@@ -768,11 +779,11 @@ async function refresh(context: CommandContext): Promise<{ data?: unknown; text?
       : { text: `The sync of ${project} already carries the current exclusions.` };
   }
 
-  if (plan.refuse) {
+  if (plan.refuse && !keepExtra) {
     throw new CoramiError({
       code: 'usage',
       message: `The session of ${project} leaves out ${plan.extra.join(', ')}, which this Corami would carry`,
-      fix: `Run corami sync refresh ${project} --force only if those files may reach the server. A key or an env file must stay on this machine: keep the session as it is`,
+      fix: `Run corami sync refresh ${project} --keep-extra to add the current exclusions and keep the ones the session already has, or --force only if those files may reach the server`,
     });
   }
 
@@ -784,6 +795,8 @@ async function refresh(context: CommandContext): Promise<{ data?: unknown; text?
     flushed = false;
   }
 
+  const finalIgnores = keepExtra ? [...ignores, ...keptIgnores(expected, session.ignore)] : ignores;
+
   await engine.terminate(project);
   await publishPeerHead(session.beta);
   await engine.create({
@@ -792,7 +805,7 @@ async function refresh(context: CommandContext): Promise<{ data?: unknown; text?
     serverUser: session.serverUser,
     serverPath: session.serverPath,
     localPath: session.beta,
-    ignore: ignores,
+    ignore: finalIgnores,
   });
 
   const progress = await waitFirstSync(engine, project, () => undefined, 120_000);
@@ -805,7 +818,7 @@ async function refresh(context: CommandContext): Promise<{ data?: unknown; text?
     pending: progress?.state === 'waiting',
     status: after?.status ?? 'unknown',
     conflicts,
-    ignores,
+    ignores: finalIgnores,
   };
 
   if (context.output.json) {
@@ -816,7 +829,7 @@ async function refresh(context: CommandContext): Promise<{ data?: unknown; text?
     flushed
       ? `The sync of ${project} is recreated with the current exclusions.`
       : `The session of ${project} was stuck, so its queue was not flushed. The sync is recreated with the current exclusions.`,
-    `Exclusions from ${IGNORE_FILE}: ${ignores.length === 0 ? 'none' : ignores.join(', ')}`,
+    `Exclusions from ${IGNORE_FILE}: ${finalIgnores.length === 0 ? 'none' : finalIgnores.join(', ')}`,
     after === undefined
       ? 'The new session is not listed yet: corami sync status follows it.'
       : `State: ${after.status}, conflicts: ${conflicts.length}.`,
@@ -1056,12 +1069,16 @@ export const syncCommand: CommandSpec = {
     {
       name: 'refresh',
       summary: 'Recreates the session with the exclusions of the project',
-      usage: 'corami sync refresh [<project>] [--force]',
+      usage: 'corami sync refresh [<project>] [--force | --keep-extra]',
       arguments: 1,
       flags: [
         {
           name: 'force',
           description: 'Also stops ignoring the paths this Corami would carry',
+        },
+        {
+          name: 'keep-extra',
+          description: 'Adds the current exclusions and keeps the ones the session already has',
         },
       ],
       examples: [

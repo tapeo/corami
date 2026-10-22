@@ -9,6 +9,7 @@ import {
   IGNORE_FILE,
   ignoreDrift,
   ignoresFor,
+  keptIgnores,
   parseIgnores,
   projectIgnores,
   refreshPlan,
@@ -71,6 +72,22 @@ describe('the ignore file', () => {
     expect(ignoresFor(root).slice(-2)).toEqual(['.build/', 'CoverageReports/']);
     expect(ignoresFor(root).slice(0, GIT_IGNORES.length)).toEqual(GIT_IGNORES);
     expect(ignoresFor(root).slice(GIT_IGNORES.length, -2)).toEqual(DEFAULT_IGNORES);
+  });
+});
+
+describe('kept ignores', () => {
+  test('keeps what the session excludes and the current list does not', () => {
+    expect(keptIgnores(['a/', 'b/'], ['a/', 'old/', 'b/'])).toEqual(['old/']);
+  });
+
+  test('drops the legacy vcs marker when the git exchange replaces it', () => {
+    const expected = ['/.git/*', '!/.git/corami/', '*/**/.git', 'a/'];
+
+    expect(keptIgnores(expected, ['.git/', 'a/', 'old/'])).toEqual(['old/']);
+  });
+
+  test('keeps the vcs marker of a worktree, where no exchange replaces it', () => {
+    expect(keptIgnores(['a/'], ['.git/', 'a/'])).toEqual(['.git/']);
   });
 });
 
