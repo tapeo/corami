@@ -403,50 +403,43 @@ Caches outside the project folder (pnpm store, `~/.pub-cache`, Gradle caches, Xc
 
 ### Git
 
-Every side has its own `.git`: the client in the local copy, the server in the project folder. The sync ignores `.git`, so the two repositories never exchange their internal files. Commits are made where the work is happening, with git commands on the right side: on the server the agents do it, on the client the IDE or the shell.
+Every side has its own `.git`: the client in the local copy, the server in the project folder. The sync keeps the internals of `.git` out and carries one folder only, `.git/corami/`, where each machine publishes the commits `origin` does not have and the branch it is on. The two repositories never exchange their internal files, and a commit reaches the other sides even before a push.
 
-The two sides are **peers** and have **only `origin`**: no remote towards the other side, no added refs in the repositories. Each follows `origin` on its own, and what keeps them together is the sync, which carries the files from one to the other. Corami does one thing only: **it moves the HEAD of the side that is behind**. It never touches the files.
+**What each side publishes.** Per machine, two files in `.git/corami/`, with one writer each: `<machine>.json` with `branch`, `commit` and `branch_epoch`, and `<machine>.bundle`, made with `git bundle create <file> <branch> --not --remotes=origin`, so it holds the commits `origin` is missing and is absent when there are none. The machine name is the short tailnet name. Every file is written in `.git/`, which is ignored, and then renamed into `.git/corami/`, so a half-written file never travels. The rules are `/.git/*`, `!/.git/corami/` and `*/**/.git` (`GIT_IGNORES` in `src/integrations/mutagen.ts`). Mutagen scans an ignored folder only if the folder is there when the session is created, so `project add` and `sync refresh` publish the head of this machine before creating the session, and reset the session once when the folder appeared after it. A project whose root `.git` is a file, as a worktree writes it, keeps `--ignore-vcs` and gets no peer exchange.
 
-The rule is the same on both sides and is a pure function, `originRelation` in `src/core/git-align.ts`:
+**The move.** The same rule on both sides, still a pure function: the candidates are `origin/<branch>` and the bundles of the other machines on the same branch. The side moves only to the furthest candidate on a single line, the one that descends from HEAD and from every other candidate; when the candidates diverge among themselves it moves nowhere. The bundle is fetched into `FETCH_HEAD`, without a remote and without a ref. A bundle that needs a commit of `origin` this side does not have waits for the next fetch.
 
-- the side is on the same commit as `origin/<branch>`: `aligned`, nothing is touched;
-- the local commit is an **ancestor** of the one of `origin`: the side is behind. It moves with a mixed reset, which leaves the files alone;
-- the commit of `origin` is an **ancestor** of the local one: the side is ahead, and has **something to publish**. The cycle does nothing: the push is a manual act of whoever made the commit;
-- neither commit is an ancestor of the other: `diverged`, nothing is touched and it stays to be decided by hand;
-- detached HEAD, no upstream, something staged, a git operation in progress: it does not align, and the state says why.
-
-**Waiting for the files.** A commit that arrives from outside, a merged PR on GitHub for example, does not have its files on either side until someone runs `git pull`. Before moving the HEAD the cycle checks that the incoming changes **have arrived**: for every file changed between the HEAD and the destination the disk must differ from what it was before. An added file must be there, a deleted one must be gone. That way even a file the agent kept editing after the commit does not block the alignment, while a commit not yet delivered by the sync keeps it waiting.
+**Waiting for the files.** Before moving the HEAD the cycle checks that the incoming changes **have arrived**: a file added between the two commits must be on disk, a deleted one must be gone, a modified one must no longer carry the old content. An empty `.git/corami/` folder on a side is not a repository: `hasGitRepository` in `src/core/git.ts` asks for `.git/HEAD`.
 
 The HEAD move cannot jump over a just-made commit: `git update-ref refs/heads/<branch> <new> <old>` moves the ref only when the expected value still holds, and then `git reset -q` fixes the index. When a commit arrived in the meantime, nothing happens and the next cycle retries. On sides with something staged it waits: the reset is mixed and that work would be lost.
 
+**Branch switch: the last one wins.** The json of each machine carries a `branch_epoch`. A switch made by hand sets it to the highest value seen among the machines plus one; a machine that follows a switch adopts the epoch of the winner without raising it, so nothing bounces. The highest epoch wins, ties go to the machine name first in alphabetical order. A side follows only when the files of the target commit are here, nothing is staged, no operation is in progress, and its local ref is missing or an ancestor of the target. Then `git update-ref`, `git symbolic-ref` and a mixed reset, which leave the files alone, and the upstream when `origin` has that branch.
+
+**Divergence.** Two sides that commit from the same base with the shared working tree end with diverged histories. Nothing moves: the state says so and `corami sync status` suggests, on the side with fewer commits, `git reset <commit>` and a new commit of what remains. The mixed reset leaves the files alone and the history becomes linear.
+
 Who does what:
 
-- **The same cycle runs on both sides:** `corami git watch`, as a service installed by `corami setup client` on the client and by `corami setup server` on the server. On every side it runs one cycle right at startup and then one **every minute**: `git fetch origin`, the decision, the file check and, when needed, the move. The client works on the local copies (`session.beta`), the server on the projects of `listProjects()`. No file watchers, no event streams, no coordination between the sides: every side decides on its own, and only the sync ties them together. Every state change of a project produces a **JSON line** (`project`, `status`, `reason`, `from`, `to`, `upstream_commit`, `fetched`), and one also when the fetch towards `origin` stops succeeding or succeeds again: on the server it goes to the journal, on the Mac to `~/.corami/logs/git-watch.log`, and with `--json` the line goes to stderr, so stdout stays the only envelope of the command.
+- **The same cycle runs on both sides:** `corami git watch`, as a service installed by `corami setup client` on the client and by `corami setup server` on the server. On every side it checks the local refs of the project and the files of `.git/corami/` every **two seconds**, and every **minute** it runs `git fetch origin` and the move towards the refs of `origin`. The client works on the local copies (`session.beta`), the server on the projects of `listProjects()`. Every state change of a project produces a **JSON line** (`project`, `status`, `reason`, `from`, `to`, `upstream_commit`, `fetched`), plus a line when a commit of another machine is taken and when the branch changes: on the server it goes to the journal, on the Mac to `~/.corami/logs/git-watch.log`, and with `--json` the line goes to stderr, so stdout stays the only envelope of the command.
 - **The daemon never moves anything.** It answers with the state of the server (`GET /v1/projects/<p>/git/state`, which includes the relation with `origin` read without a fetch) and that is it.
-- **Passing outcomes retry by themselves.** When `origin` does not answer, when the network is not ready, when the files are not here yet, the next minute's cycle retries. A failed fetch does not block: the decision uses the refs of the last successful fetch.
+- **Passing outcomes retry by themselves.** When `origin` does not answer, when the network is not ready, when the files are not here yet, the next cycle retries. A failed fetch does not block: the decision uses the refs of the last successful fetch.
 
 What does not enter the alignment:
 
-- **The push is done by whoever makes the commit,** by hand: a commit that sits on one side only reaches the other **after** the push. Until then, on the other side the files are uncommitted changes. That goes for the agents on the server too: whoever commits there must `git push`.
-- **`origin` is the only place where things are published.** For a commit that arrived from outside (a merged PR on GitHub, another machine) a `git pull` is needed on any side: the other follows on the next cycle, once the sync has delivered the files. The alignment alone never `pull`s the files.
+- **A commit does not need a push to reach the other sides.** The bundle in `.git/corami/` carries it, so the other sides align on it within seconds. The push stays an act of whoever makes the commit, and it is what publishes the commit on `origin`: until then `git status` on the other sides says ahead of `origin`.
+- **`origin` stays the place where things are published.** For a commit that arrived from outside (a merged PR on GitHub, another machine) a `git pull` is needed on any side: the others follow once the sync has delivered the files. The alignment alone never `pull`s the files.
 - **Work in progress does not block the alignment.** On the side that moves, the uncommitted changes stay where they are. It waits only with something staged, on both sides, or with a git operation in progress.
-- **Branch change.** When a side moves to another branch, the other stays on its own and the files of the new branch reach it as changes: the state says so. To follow it without touching the files:
-
-  ```bash
-  git fetch origin && git branch <branch> origin/<branch> && git symbolic-ref HEAD refs/heads/<branch> && git reset
-  ```
 
 Manual commands:
 
 ```bash
-corami sync status               # the two sides and their relation with origin, per local copy
+corami sync status               # the two sides towards origin and the heads of the other machines, per local copy
 corami git watch [proj]          # the cycle of the service, in the foreground: useful to understand
 corami git watch [proj] --once   # one cycle only, without staying in listen mode
 ```
 
-- **The `.git` of a new local copy:** `corami project add` gives the copy its own repository. It reads the url of `origin` and the branch of the server from `GET /v1/projects/<p>/git/state`, clones without checkout into a temporary folder next to the copy and moves the `.git` in. When the branch of the server exists on `origin` the copy goes on it, otherwise it stays on the default branch and the command says so. `git reset` then rebuilds the index from `HEAD` without touching the files, which are the ones of the sync. The clone uses the git credentials of the client, never prompts, and when it fails the files are synced anyway: the command run again retries, and does nothing on a copy that already has its `.git`. `--no-git` skips it. From there the git watch service works on its own.
-- **Removing the local copy:** `corami project rm --on client` stops when the local `.git` has commits or stashes that exist in no remote. With a single remote, `origin`, git counts by itself: a commit the side has already pushed does not block, one never pushed does.
-- The alignment arrives at the next cycle, within a minute, not at the instant of the commit.
+- **The `.git` of a new local copy:** `corami project add` gives the copy its own repository. It reads the url of `origin` and the branch of the server from `GET /v1/projects/<p>/git/state`, clones without checkout into a temporary folder next to the copy and moves the `.git` in. When the branch of the server exists on `origin` the copy goes on it, otherwise it stays on the default branch and the command says so. `git reset` then rebuilds the index from `HEAD` without touching the files, which are the ones of the sync. The clone uses the git credentials of the client, never prompts, and when it fails the files are synced anyway: the command run again retries, and does nothing on a copy that already has its `.git`. `--no-git` skips it. From there the git watch service works on its own, and the sync of `.git/corami/` does not pass for a repository, so the clone still happens.
+- **Removing the local copy:** `corami project rm --on client` stops when the local `.git` has commits or stashes that exist in no remote and in no other machine, counted from `.git/corami/`. A commit pushed, or published by another side, does not block the removal.
+- The alignment arrives within seconds for the commits of a machine, within a minute for the refs of `origin`.
 
 ## Importing a local project
 

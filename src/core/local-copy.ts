@@ -3,6 +3,8 @@ import { join, relative, sep } from 'node:path';
 
 import { paths } from '@/core/config.ts';
 import { run } from '@/core/exec.ts';
+import { gitDir, hasGitRepository } from '@/core/git.ts';
+import { readPeerHeads } from '@/core/git-peers-sync.ts';
 
 export interface PathRule {
   pattern: string;
@@ -398,12 +400,22 @@ export async function rememberRemoval(entry: SyncStateEntry): Promise<void> {
   await Bun.write(syncState, `${JSON.stringify(state, null, 2)}\n`);
 }
 
+async function peerCommits(root: string): Promise<string[]> {
+  const dir = await gitDir(root);
+
+  if (dir === undefined) {
+    return [];
+  }
+
+  return readPeerHeads(dir).map((head) => head.commit);
+}
+
 export interface LocalGit {
   branch: string;
   onlyLocal: number;
 }
 export async function localGit(root: string): Promise<LocalGit | undefined> {
-  if (!existsSync(join(root, '.git'))) {
+  if (!hasGitRepository(root)) {
     return undefined;
   }
 
@@ -422,6 +434,7 @@ export async function localGit(root: string): Promise<LocalGit | undefined> {
     '--tags',
     '--not',
     '--remotes',
+    ...(await peerCommits(root)),
   ]);
   const stashes = await run('git', ['-C', root, 'stash', 'list']);
   const commitCount = Number(commits.stdout.trim());

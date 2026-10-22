@@ -31,7 +31,7 @@ describe('the reason of a pending sync', () => {
     expect(reason.message).toBe(
       'The sync of sorumi on tapeo is not up to date: Scanning the files',
     );
-    expect(reason.fix).toBe('Run corami sync status on tapeo');
+    expect(reason.fix).toBe('On tapeo, run corami sync status');
   });
 
   test('names the heavy folder and the way out', () => {

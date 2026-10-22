@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,7 +14,7 @@ import {
   refreshPlan,
   sameIgnores,
 } from '@/core/ignore-file.ts';
-import { DEFAULT_IGNORES } from '@/integrations/mutagen.ts';
+import { DEFAULT_IGNORES, GIT_IGNORES } from '@/integrations/mutagen.ts';
 
 describe('the ignore file', () => {
   test('reads one pattern per line, comments and blank lines skipped', () => {
@@ -53,6 +53,13 @@ describe('the ignore file', () => {
     const root = await mkdtemp(join(tmpdir(), 'corami-ignore-'));
 
     expect(projectIgnores(root)).toEqual([]);
+    expect(ignoresFor(root)).toEqual([...GIT_IGNORES, ...DEFAULT_IGNORES]);
+  });
+
+  test('a worktree keeps the vcs exclusion and no corami files', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'corami-ignore-'));
+    writeFileSync(join(root, '.git'), 'gitdir: /tmp/other\n');
+
     expect(ignoresFor(root)).toEqual(DEFAULT_IGNORES);
   });
 
@@ -62,7 +69,8 @@ describe('the ignore file', () => {
 
     expect(projectIgnores(root)).toEqual(['.build/', 'CoverageReports/']);
     expect(ignoresFor(root).slice(-2)).toEqual(['.build/', 'CoverageReports/']);
-    expect(ignoresFor(root).slice(0, DEFAULT_IGNORES.length)).toEqual(DEFAULT_IGNORES);
+    expect(ignoresFor(root).slice(0, GIT_IGNORES.length)).toEqual(GIT_IGNORES);
+    expect(ignoresFor(root).slice(GIT_IGNORES.length, -2)).toEqual(DEFAULT_IGNORES);
   });
 });
 

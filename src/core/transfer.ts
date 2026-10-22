@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readdirSync } from 'node:fs';
+import { lstatSync, readdirSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 import { run, shellQuote } from '@/core/exec.ts';
+import { hasGitRepository } from '@/core/git.ts';
 import { copyInventory, type Inventory } from '@/core/local-copy.ts';
 
 export function archiveList(root: string, inventory: Inventory = copyInventory(root)): string[] {
@@ -34,7 +35,7 @@ export function archiveBytes(root: string, inventory: Inventory = copyInventory(
 function gitEntries(root: string): { entries: string[]; bytes: number } {
   const git = join(root, '.git');
 
-  if (!existsSync(git)) {
+  if (!hasGitRepository(root)) {
     return { entries: [], bytes: 0 };
   }
 

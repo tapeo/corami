@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { redactUrl, run, shellQuote } from '@/core/exec.ts';
 import { type GitRepoState, notARepository } from '@/core/git-align.ts';
@@ -25,7 +25,21 @@ async function gitStep(
   return { ok: result.ok, detail: result.ok ? '' : failureDetail(result.stderr, fallback) };
 }
 
-async function gitDir(root: string): Promise<string | undefined> {
+export function hasGitRepository(root: string): boolean {
+  const entry = join(root, '.git');
+
+  if (!existsSync(entry)) {
+    return false;
+  }
+
+  if (statSync(entry).isFile()) {
+    return true;
+  }
+
+  return existsSync(join(entry, 'HEAD'));
+}
+
+export async function gitDir(root: string): Promise<string | undefined> {
   const result = await git(root, ['rev-parse', '--path-format=absolute', '--git-dir']);
   return result.ok && result.stdout !== '' ? result.stdout : undefined;
 }
@@ -130,6 +144,76 @@ export async function gitCompareAndSwap(
   return update.ok ? gitStep(root, ['reset', '--quiet', ref], 'git reset failed') : update;
 }
 
+export async function gitBundleCreate(
+  root: string,
+  file: string,
+  branch: string,
+): Promise<{ ok: boolean; detail: string }> {
+  return gitStep(
+    root,
+    ['bundle', 'create', file, branch, '--not', '--remotes=origin'],
+    'git bundle create failed',
+  );
+}
+
+export interface BundleFetch {
+  ok: boolean;
+  detail: string;
+  missingBase: boolean;
+}
+
+export async function gitBundleFetch(
+  root: string,
+  file: string,
+  branch: string,
+  timeoutMs = 60_000,
+): Promise<BundleFetch> {
+  const result = await git(root, ['fetch', '--quiet', file, branch], { timeoutMs });
+  const detail = result.ok ? '' : failureDetail(result.stderr, 'git fetch from the bundle failed');
+
+  return {
+    ok: result.ok,
+    detail,
+    missingBase: /prerequisite commits/i.test(result.stderr),
+  };
+}
+
+export async function gitSwitchTo(
+  root: string,
+  branch: string,
+  commit: string,
+  expected: string | undefined,
+): Promise<{ ok: boolean; detail: string }> {
+  const update =
+    expected === undefined
+      ? await gitStep(
+          root,
+          ['update-ref', `refs/heads/${branch}`, commit, ''],
+          'ref already exists',
+        )
+      : await gitStep(
+          root,
+          ['update-ref', `refs/heads/${branch}`, commit, expected],
+          'ref is not what was expected',
+        );
+
+  if (!update.ok) {
+    return update;
+  }
+
+  const moved = await gitStep(
+    root,
+    ['symbolic-ref', 'HEAD', `refs/heads/${branch}`],
+    'cannot move HEAD',
+  );
+
+  return moved.ok ? gitStep(root, ['reset', '--quiet'], 'git reset failed') : moved;
+}
+
+export async function gitSetUpstream(root: string, branch: string): Promise<void> {
+  await git(root, ['branch', '--quiet', '--set-upstream-to', `origin/${branch}`, branch]);
+}
+
 export function sshArgs(timeoutMs = 60_000): string[] {
   const seconds = Math.max(1, Math.round(timeoutMs / 1_000));
   return ['-c', `core.sshCommand=ssh -o BatchMode=yes -o ConnectTimeout=${seconds}`];
@@ -216,7 +300,7 @@ export async function giveCopyGit(options: {
 }): Promise<CopyGitResult> {
   const { local, originUrl, branch, onProgress } = options;
 
-  if (existsSync(join(local, '.git'))) {
+  if (hasGitRepository(local)) {
     return { status: 'skipped', summary: 'The local copy already has its .git' };
   }
 
@@ -301,14 +385,35 @@ export async function gitRefCommit(root: string, ref: string): Promise<string | 
   return result.ok && result.stdout !== '' ? result.stdout : undefined;
 }
 
-async function changedPaths(root: string, from: string, to: string): Promise<string[] | undefined> {
-  const result = await git(root, ['diff', '--name-only', '--no-renames', '-z', from, to]);
+interface ChangedEntry {
+  status: string;
+  path: string;
+}
+
+async function changedEntries(
+  root: string,
+  from: string,
+  to: string,
+): Promise<ChangedEntry[] | undefined> {
+  const result = await git(root, ['diff', '--name-status', '--no-renames', '-z', from, to]);
 
   if (!result.ok) {
     return undefined;
   }
 
-  return result.stdout.split('\0').filter((path) => path !== '');
+  const parts = result.stdout.split('\0').filter((part) => part !== '');
+  const entries: ChangedEntry[] = [];
+
+  for (let index = 0; index + 1 < parts.length; index += 2) {
+    const status = parts[index] ?? '';
+    const path = parts[index + 1] ?? '';
+
+    if (status !== '' && path !== '') {
+      entries.push({ status: status.charAt(0), path });
+    }
+  }
+
+  return entries;
 }
 
 async function treeHashes(
@@ -376,16 +481,17 @@ export async function filesArrived(root: string, from: string, to: string): Prom
     return false;
   }
 
-  const paths = await changedPaths(root, from, to);
+  const entries = await changedEntries(root, from, to);
 
-  if (paths === undefined) {
+  if (entries === undefined) {
     return false;
   }
 
-  if (paths.length === 0) {
+  if (entries.length === 0) {
     return true;
   }
 
+  const paths = entries.map((entry) => entry.path);
   const [before, now] = await Promise.all([
     treeHashes(root, from, paths),
     worktreeHashes(root, paths),
@@ -395,7 +501,26 @@ export async function filesArrived(root: string, from: string, to: string): Prom
     return false;
   }
 
-  return paths.every((path) => (before.get(path) ?? ':') !== (now.get(path) ?? '-'));
+  return entries.every((entry) => arrived(entry, before, now));
+}
+
+function arrived(
+  entry: ChangedEntry,
+  before: Map<string, string>,
+  now: Map<string, string>,
+): boolean {
+  const previous = before.get(entry.path) ?? ':';
+  const current = now.get(entry.path) ?? '-';
+
+  if (entry.status === 'A') {
+    return current !== '-';
+  }
+
+  if (entry.status === 'D') {
+    return current === '-';
+  }
+
+  return previous !== current;
 }
 
 function failureDetail(stderr: string, fallback: string): string {

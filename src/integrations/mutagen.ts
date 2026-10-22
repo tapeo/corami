@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -35,6 +35,7 @@ export interface SyncEngine {
   list(): Promise<SyncSession[]>;
   terminate(project: string): Promise<void>;
   flush(project: string): Promise<void>;
+  reset(project: string): Promise<void>;
   status(project: string): Promise<SyncSession | undefined>;
 }
 
@@ -56,6 +57,22 @@ export function mutagenPattern(rule: PathRule): string {
 export const DEFAULT_IGNORES = PATH_RULES.filter(
   (rule) => rule.class !== 'synced' && rule.pattern !== '.git',
 ).map(mutagenPattern);
+
+export const GIT_IGNORES = ['/.git/*', '!/.git/corami/', '*/**/.git'];
+
+export function isGitFile(root: string): boolean {
+  const entry = join(root, '.git');
+
+  return existsSync(entry) && !statSync(entry).isDirectory();
+}
+
+export function sessionIgnores(root: string): string[] {
+  if (isGitFile(root)) {
+    return DEFAULT_IGNORES;
+  }
+
+  return [...GIT_IGNORES, ...DEFAULT_IGNORES];
+}
 
 export function sessionName(project: string): string {
   return `corami-${project}`;
@@ -83,7 +100,8 @@ export class MutagenEngine implements SyncEngine {
 
   async create(options: CreateOptions): Promise<void> {
     const binary = await this.path();
-    const ignores = [...DEFAULT_IGNORES, ...options.ignore].flatMap((pattern) => [
+    const vcs = isGitFile(options.localPath) ? ['--ignore-vcs'] : [];
+    const ignores = [...sessionIgnores(options.localPath), ...options.ignore].flatMap((pattern) => [
       '--ignore',
       pattern,
     ]);
@@ -97,7 +115,7 @@ export class MutagenEngine implements SyncEngine {
         sessionName(options.project),
         '--mode',
         'two-way-safe',
-        '--ignore-vcs',
+        ...vcs,
         ...ignores,
         `${options.serverUser}@${options.serverHost}:${options.serverPath}`,
         options.localPath,
@@ -157,6 +175,10 @@ export class MutagenEngine implements SyncEngine {
 
   async terminate(project: string): Promise<void> {
     await this.simple(['sync', 'terminate', sessionName(project)]);
+  }
+
+  async reset(project: string): Promise<void> {
+    await this.simple(['sync', 'reset', sessionName(project)]);
   }
 
   async flush(project: string): Promise<void> {

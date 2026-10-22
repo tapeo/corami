@@ -4,7 +4,7 @@ import { join, posix } from 'node:path';
 import { homeDirectory, projectRoot } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { run, runOrThrow } from '@/core/exec.ts';
-import { gitOriginUrl, readGitState } from '@/core/git.ts';
+import { gitOriginUrl, hasGitRepository, readGitState } from '@/core/git.ts';
 import { gitStateJson } from '@/core/git-align.ts';
 import { gitOriginState, originStatusJson } from '@/core/git-follow.ts';
 import { moveStagingIntoPlace } from '@/core/import-staging.ts';
@@ -343,7 +343,7 @@ async function addProject(body: Record<string, unknown>, context: ApiContext): P
   }
 
   if (url !== undefined) {
-    if (existsSync(join(target, '.git'))) {
+    if (hasGitRepository(target)) {
       throw new CoramiError({
         code: 'project_exists',
         message: `Already a git repository: ${target}`,

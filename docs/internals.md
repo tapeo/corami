@@ -15,7 +15,7 @@ Short notes on the invariants the code relies on: rules whose reason a name cann
 ## Paths and the import
 
 - In the path rules the first match wins. A folder rule matches a folder, or a path through the folder, never a file with that name.
-- `.git` is the exception: the sync keeps it out with `--ignore-vcs`, the import carries it, because the project on the server is a clone with history and uncommitted work. A root `.git` that is a file, as a worktree writes it, is not project content. A `.git` deeper down is a submodule gitlink and travels.
+- `.git` is the exception: the sync keeps it out with `/.git/*` and `*/**/.git`, and lets through only `.git/corami/`, the folder where each machine publishes its unpushed commits and its branch (see "Git" in architecture.md). The import carries the whole `.git`, because the project on the server is a clone with history and uncommitted work. A root `.git` that is a file, as a worktree writes it, is not matched by those rules, so that project keeps `--ignore-vcs` and gets no peer exchange. A `.git` deeper down is a submodule gitlink and travels.
 - Only regular files and links are content: a FIFO, a socket and a device are not carried, and Mutagen leaves them untracked.
 - A link travels only when `symlinkPortable` accepts it: a relative target of safe characters that stays inside the folder. An absolute link, an unreadable one, or one that leaves the folder stays on this machine. Its size is the length of the target, never the content it points at.
 - A manifest line starts with the type (`f`, `d`, `l`), so a link and a file of the same name cannot pass for each other.

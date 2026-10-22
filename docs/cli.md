@@ -112,13 +112,13 @@ On a client the folder is not the one of the server: `corami serve rm <name>` th
 
 | Command | Where | Description |
 |---|---|---|
-| `corami sync status [project]` | client | state, conflicts with their local and server paths, last error, last change and git state of the two sides towards `origin` |
-| `corami sync refresh [project] [--force]` | client | terminates the session and creates it again with `DEFAULT_IGNORES` plus `.coramiignore`, then waits for the first cycle. Without `--force` it refuses when the session leaves out paths this Corami would carry |
+| `corami sync status [project]` | client | state, conflicts with their local and server paths, last error, last change, git state of the two sides towards `origin` and the heads of the other machines. Anywhere else it stops with `config_invalid` |
+| `corami sync refresh [project] [--force]` | client | terminates the session and creates it again with the current exclusions (`GIT_IGNORES` and `DEFAULT_IGNORES`) plus `.coramiignore`, then waits for the first cycle. Without `--force` it refuses when the session leaves out paths this Corami would carry |
 | `corami sync flush [project]` | client | flushes the session queue |
 | `corami project rm <name> --on client --yes [--force] [--dry-run]` | client | removes only the local copy, the folder of its session, after the checks. The project is always named, never taken from the current folder |
 | `corami sync stop [<project>]` | client | stops the sync of this copy and keeps the files. The way out of a copy whose project is gone from the server, where `corami project rm --on client` would be deleting the last copy of the work |
 | `corami sync prune --unused <duration> [--dry-run] [--yes]` | client | lists and removes the unused copies of this client; without `--yes` it touches nothing |
-| `corami git watch [project] [--once]` | all | the alignment cycle in the foreground: it runs as a service on the server and on every client |
+| `corami git watch [project] [--once]` | all | the alignment cycle in the foreground, as the service runs it: the commits of the other machines, then `origin` |
 
 `corami project ls` is the list to read for the copies of this machine: no daemon and no git, just the sessions of the engine, with the copies whose project is not on the server marked.
 
@@ -130,7 +130,7 @@ The folder of a copy is never guessed. `project add` needs it as the argument, a
 
 The account of the server for the sync and the import is `server_user` of the configuration, saved by `corami setup client`, then `user` of the health answer of the daemon, then `root`. `--user` overrides it for one command.
 
-Every side is a peer and follows only `origin`: `corami git watch` runs one cycle at startup and then one every minute, downloads the refs of `origin` and, when it is behind and the files have already arrived with the sync, moves its HEAD without touching the files. The push is done by whoever makes the commit: `git push` from the side that has the commits, and the other aligns after the push. A merged PR on GitHub enters with a `git pull` on any side, and the other follows when the files arrive with the sync.
+Every side is a peer with its own `.git`. Each publishes in `.git/corami/` the commits that `origin` does not have yet, as a bundle, and the branch it is on: the sync carries that folder, so the other sides read them even before a push. `corami git watch` checks the local refs and that folder every two seconds and, when a side is behind and the files have already arrived with the sync, moves its HEAD without touching the files. Every minute it also downloads the refs of `origin`. A branch switch made on one side is followed by the others, and the last switch wins. The push stays an act of whoever makes the commit: the other sides have the commit anyway, `origin` gets it when that side pushes. A merged PR on GitHub enters with a `git pull` on any side, and the others follow when the files arrive with the sync.
 
 ## Exec
 

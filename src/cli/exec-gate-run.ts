@@ -109,7 +109,7 @@ export function pendingExplanation(
   if (session === undefined) {
     return {
       message: `${head}: the command did not start`,
-      fix: `Run corami sync status on ${client}`,
+      fix: `On ${client}, run corami sync status`,
     };
   }
 
@@ -130,7 +130,7 @@ export function pendingExplanation(
     };
   }
 
-  return { message: `${head}: ${state}`, fix: `Run corami sync status on ${client}` };
+  return { message: `${head}: ${state}`, fix: `On ${client}, run corami sync status` };
 }
 
 function heavyOf(session: SyncSession | undefined): HeavyEntry[] {

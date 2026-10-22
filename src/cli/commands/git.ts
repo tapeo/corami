@@ -1,4 +1,8 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
+import { tailnetIdentity } from '@/cli/exec-client-system.ts';
 import { booleanFlag } from '@/cli/parser.ts';
 import { projectGitOrigin } from '@/cli/server-client.ts';
 import { readGlobalConfig } from '@/core/config.ts';
@@ -16,9 +20,19 @@ import {
   originNeedsWatch,
   originStatusJson,
 } from '@/core/git-follow.ts';
+import {
+  type PeerMove,
+  type PeerSwitch,
+  type PeerSyncResult,
+  peerFingerprint,
+  syncPeers,
+} from '@/core/git-peers-sync.ts';
 import { listProjects } from '@/core/state.ts';
 import { MutagenEngine } from '@/integrations/mutagen.ts';
 import { gitWatchSpec, serviceHealth } from '@/integrations/service.ts';
+
+const TICK_MS = 2_000;
+const FETCH_TICKS = Math.max(1, Math.round(ORIGIN_CYCLE_MS / TICK_MS));
 
 export interface GitSides {
   local: string;
@@ -87,6 +101,7 @@ async function rootsToWatch(single: string | undefined): Promise<WatchedRoot[]> 
 
 async function watch(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
   const single = context.args.positionals[0];
+  const machine = (await tailnetIdentity()).name;
 
   if (booleanFlag(context.args, 'once')) {
     const roots = await rootsToWatch(single);
@@ -99,10 +114,17 @@ async function watch(context: CommandContext): Promise<{ data?: unknown; text?: 
       });
     }
 
-    const results: Array<{ project: string; root: string; status: GitOriginStatus }> = [];
+    const results: Array<{
+      project: string;
+      root: string;
+      status: GitOriginStatus;
+      peers: PeerSyncResult;
+    }> = [];
 
     for (const item of roots) {
-      results.push({ ...item, status: await followOrigin(item.root) });
+      await followOrigin(item.root).catch(() => undefined);
+      const peers = await syncPeers(item.root, { machine }).catch(() => emptyPeers());
+      results.push({ ...item, status: await gitOriginState(item.root), peers });
     }
 
     if (context.output.json) {
@@ -112,6 +134,12 @@ async function watch(context: CommandContext): Promise<{ data?: unknown; text?: 
             project: row.project,
             root: row.root,
             ...originStatusJson(row.status),
+            peers: row.peers.peers.map((entry) => ({
+              machine: entry.machine,
+              branch: entry.branch,
+              commit: entry.commit,
+              branch_epoch: entry.branchEpoch,
+            })),
           })),
         },
       };
@@ -127,7 +155,11 @@ async function watch(context: CommandContext): Promise<{ data?: unknown; text?: 
   process.once('SIGTERM', () => abort.abort());
   const known = new Set<string>();
   const failing = new Map<string, boolean>();
+  const fingerprints = new Map<string, string>();
+  const config = await readGlobalConfig().catch(() => undefined);
+  const client = config?.role === 'client';
   let empty = false;
+  let turn = 0;
 
   while (!abort.signal.aborted) {
     const roots = await rootsToWatch(single).catch(() => []);
@@ -152,24 +184,62 @@ async function watch(context: CommandContext): Promise<{ data?: unknown; text?: 
         break;
       }
 
+      const fingerprint = peerFingerprint(item.root);
+      const fetchNow = turn % FETCH_TICKS === 0;
+
+      if (!fetchNow && fingerprints.get(item.project) === fingerprint) {
+        continue;
+      }
+
+      fingerprints.set(item.project, fingerprint);
+
       const before = await gitOriginState(item.root).catch(() => undefined);
-      const status = await followOrigin(item.root).catch(() => undefined);
+
+      if (fetchNow) {
+        await followOrigin(item.root).catch(() => undefined);
+      }
+
+      const peerDir = join(item.root, '.git', 'corami');
+      const existed = existsSync(peerDir);
+      const peers = await syncPeers(item.root, { machine }).catch(() => emptyPeers());
+
+      if (!existed && existsSync(peerDir) && client) {
+        await new MutagenEngine().reset(item.project).catch(() => undefined);
+      }
+
+      const status = await gitOriginState(item.root).catch(() => undefined);
 
       if (status === undefined) {
         continue;
+      }
+
+      const notes: string[] = [];
+
+      if (peers.moved !== undefined) {
+        notes.push(moveText(peers.moved));
+      }
+
+      if (peers.switched !== undefined) {
+        notes.push(switchText(peers.switched));
       }
 
       const nowFailing = fetchFailed(status);
       const wasFailing = failing.get(item.project) === true;
       failing.set(item.project, nowFailing);
 
-      if (!originChanged(before, status, wasFailing)) {
+      if (!originChanged(before, status, wasFailing) && notes.length === 0) {
         continue;
       }
 
       if (context.output.json) {
         const line = originChangeJson(item.project, status, before?.state.commit);
+
         process.stderr.write(`${JSON.stringify(line)}\n`);
+
+        for (const note of notes) {
+          process.stderr.write(`${JSON.stringify({ project: item.project, event: note })}\n`);
+        }
+
         continue;
       }
 
@@ -179,12 +249,29 @@ async function watch(context: CommandContext): Promise<{ data?: unknown; text?: 
           : `${item.project}: ${describeOrigin(status)}`;
 
       process.stdout.write(`${text}\n`);
+
+      for (const note of notes) {
+        process.stdout.write(`${item.project}: ${note}\n`);
+      }
     }
 
-    await sleep(ORIGIN_CYCLE_MS, abort.signal);
+    await sleep(TICK_MS, abort.signal);
+    turn += 1;
   }
 
   return { data: { stopped: true } };
+}
+
+function emptyPeers(): PeerSyncResult {
+  return { peers: [], moved: undefined, switched: undefined };
+}
+
+function moveText(move: PeerMove): string {
+  return `aligned with ${move.source} commit ${move.to.slice(0, 8)}`;
+}
+
+function switchText(switched: PeerSwitch): string {
+  return `branch ${switched.from} -> ${switched.to}, following ${switched.commit.slice(0, 8)}`;
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

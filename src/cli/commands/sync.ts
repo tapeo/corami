@@ -4,6 +4,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import type { CommandContext, CommandResult, CommandSpec } from '@/cli/command.ts';
 import { gitSides } from '@/cli/commands/git.ts';
 import { applyRemoval, planRemoval } from '@/cli/commands/sync-remove.ts';
+import { tailnetIdentity } from '@/cli/exec-client-system.ts';
 import { booleanFlag, stringFlag } from '@/cli/parser.ts';
 import type { ProgressUpdate } from '@/cli/progress.ts';
 import {
@@ -15,8 +16,11 @@ import {
 } from '@/cli/server-client.ts';
 import { readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
-import { type CopyGitResult, type GitProgress, giveCopyGit } from '@/core/git.ts';
+import { type CopyGitResult, type GitProgress, giveCopyGit, readGitState } from '@/core/git.ts';
+import { notARepository } from '@/core/git-align.ts';
 import { describeOrigin } from '@/core/git-follow.ts';
+import { type DivergenceAdvice, divergenceAdvice } from '@/core/git-peers.ts';
+import { type PeerSide, peerSides, syncPeers } from '@/core/git-peers-sync.ts';
 import {
   IGNORE_FILE,
   ignoreDrift,
@@ -266,6 +270,7 @@ export async function createSyncFor(options: CreateSyncOptions): Promise<{
   }
 
   mkdirSync(dirname(place.local), { recursive: true });
+  await publishPeerHead(place.local);
 
   await engine.create({
     project: options.project,
@@ -299,6 +304,11 @@ export async function createLocalCopy(options: CreateLocalCopyOptions): Promise<
     options.git === false
       ? ({ status: 'skipped', summary: 'Skipped with --no-git' } satisfies CopyGitResult)
       : await copyGit(options.project, result.local, options.onGitProgress);
+
+  if (result.session !== undefined && git.status === 'done') {
+    await publishPeerHead(result.local);
+    await (options.engine ?? new MutagenEngine()).reset(options.project).catch(() => undefined);
+  }
 
   return { ...result, git };
 }
@@ -363,6 +373,12 @@ export async function waitFirstSync(
   }
 }
 
+async function publishPeerHead(root: string): Promise<void> {
+  const machine = (await tailnetIdentity()).name;
+
+  await syncPeers(root, { machine }).catch(() => undefined);
+}
+
 export function syncUpdate(progress: SyncProgress): ProgressUpdate {
   if (progress.state === 'count') {
     return {
@@ -377,11 +393,13 @@ export function syncUpdate(progress: SyncProgress): ProgressUpdate {
 }
 
 async function status(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
+  await requireClient('status');
   const project = context.args.positionals[0];
   const engine = new MutagenEngine();
   const all = await syncSessions(engine);
   const filled = project === undefined ? all : all.filter((session) => session.project === project);
   const git = await gitStatesFor(filled);
+  const peers = await peersFor(filled);
   const activity = filled.map((session) => ({
     project: session.project,
     last_change: newestMtime(session.beta),
@@ -400,7 +418,7 @@ async function status(context: CommandContext): Promise<{ data?: unknown; text?:
       conflicts: conflictCopies(session),
     }));
 
-    return { data: { sessions: described, git, activity, heavy, ignores } };
+    return { data: { sessions: described, git, peers, activity, heavy, ignores } };
   }
 
   if (filled.length === 0) {
@@ -480,6 +498,16 @@ async function status(context: CommandContext): Promise<{ data?: unknown; text?:
         lines.push('  to fix: corami setup client <server> --step git-watch');
       }
     }
+
+    const machines = peers.find((row) => row.project === session.project);
+
+    for (const side of machines?.sides ?? []) {
+      lines.push(`  ${sideText(side)}`);
+    }
+
+    if (machines?.advice !== undefined) {
+      lines.push(`  to align: ${adviceText(machines.advice)}`);
+    }
   }
 
   return { text: lines.join('\n') };
@@ -509,6 +537,55 @@ export function describeAge(iso: string): string {
   }
 
   return `${Math.floor(hours / 24)} days ago`;
+}
+
+function sideText(side: PeerSide): string {
+  const where = `${side.branch} ${side.commit.slice(0, 8)}`;
+
+  if (side.relation === 'ahead' || side.relation === 'diverged') {
+    return `${side.machine}: ${where}, ${side.relation} ${side.ahead}`;
+  }
+
+  if (side.relation === 'behind') {
+    return `${side.machine}: ${where}, behind ${side.behind}`;
+  }
+
+  return `${side.machine}: ${where}, ${side.relation}`;
+}
+
+function adviceText(advice: DivergenceAdvice): string {
+  return `on ${advice.machine}, run git reset ${advice.resetTo.slice(0, 8)} and commit again what remains`;
+}
+
+async function peersFor(
+  sessions: SyncSession[],
+): Promise<Array<{ project: string; sides: PeerSide[]; advice: DivergenceAdvice | undefined }>> {
+  const machine = (await tailnetIdentity()).name;
+  const rows: Array<{
+    project: string;
+    sides: PeerSide[];
+    advice: DivergenceAdvice | undefined;
+  }> = [];
+
+  for (const session of sessions) {
+    const sides = await peerSides(session.beta, machine).catch(() => []);
+    const state = sides.find((side) => side.relation === 'diverged');
+    const own = await readGitState(session.beta).catch(() => notARepository());
+
+    rows.push({
+      project: session.project,
+      sides,
+      advice:
+        state === undefined
+          ? undefined
+          : divergenceAdvice([
+              { machine, ahead: state.behind, tip: own.commit },
+              { machine: state.machine, ahead: state.ahead, tip: state.commit },
+            ]),
+    });
+  }
+
+  return rows;
 }
 
 async function gitStatesFor(sessions: SyncSession[]): Promise<
@@ -545,6 +622,20 @@ async function gitStatesFor(sessions: SyncSession[]): Promise<
   }
 
   return rows;
+}
+
+async function requireClient(action: string): Promise<void> {
+  const config = await readGlobalConfig().catch(() => undefined);
+
+  if (config?.role === 'client') {
+    return;
+  }
+
+  throw new CoramiError({
+    code: 'config_invalid',
+    message: `corami sync ${action} runs on a client`,
+    fix: `On the client, run corami sync ${action} <project>`,
+  });
 }
 
 async function control(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
@@ -645,6 +736,7 @@ export async function removeLocalCopy(
 }
 
 async function refresh(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
+  await requireClient('refresh');
   const project = await projectNameOf(context.args.positionals[0]);
   const engine = new MutagenEngine();
   const sessions = await syncSessions(engine);
@@ -693,6 +785,7 @@ async function refresh(context: CommandContext): Promise<{ data?: unknown; text?
   }
 
   await engine.terminate(project);
+  await publishPeerHead(session.beta);
   await engine.create({
     project,
     serverHost: session.serverHost,

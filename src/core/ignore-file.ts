@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { CoramiError } from '@/core/errors.ts';
-import { DEFAULT_IGNORES } from '@/integrations/mutagen.ts';
+import { sessionIgnores } from '@/integrations/mutagen.ts';
 
 export const IGNORE_FILE = '.coramiignore';
 
@@ -66,7 +66,7 @@ export function projectIgnores(root: string): string[] {
 }
 
 export function ignoresFor(root: string): string[] {
-  return [...DEFAULT_IGNORES, ...projectIgnores(root)];
+  return [...sessionIgnores(root), ...projectIgnores(root)];
 }
 
 export function sameIgnores(left: string[], right: string[]): boolean {
