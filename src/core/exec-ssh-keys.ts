@@ -4,6 +4,8 @@ export interface AuthorizedKeyInput {
   server: string;
 }
 
+const GATE_KEY_OPTIONS = 'restrict,pty';
+
 export function execComment(server: string): string {
   return `corami-exec:${server}`;
 }
@@ -18,7 +20,11 @@ function escapeOption(value: string): string {
 }
 
 export function authorizedKeyLine(input: AuthorizedKeyInput): string {
-  return `command="${escapeOption(input.gateCommand)}" ${keyBody(input.publicKey)} ${execComment(input.server)}`;
+  return `${GATE_KEY_OPTIONS},command="${escapeOption(input.gateCommand)}" ${keyBody(input.publicKey)} ${execComment(input.server)}`;
+}
+
+export function isRestrictedLine(line: string): boolean {
+  return line.trim().startsWith(`${GATE_KEY_OPTIONS},`);
 }
 
 export function findExecLine(text: string, server: string): string | undefined {

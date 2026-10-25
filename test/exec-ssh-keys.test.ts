@@ -4,6 +4,7 @@ import {
   authorizedKeyLine,
   execComment,
   findExecLine,
+  isRestrictedLine,
   knownHostsLine,
   withKnownHost,
   withoutExecLine,
@@ -20,7 +21,7 @@ describe('authorizedKeyLine', () => {
     });
 
     expect(line).toBe(
-      'command="/Users/me/.corami/bin/corami exec gate" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample corami-exec:hearth-vps',
+      'restrict,pty,command="/Users/me/.corami/bin/corami exec gate" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample corami-exec:hearth-vps',
     );
   });
 
@@ -31,7 +32,22 @@ describe('authorizedKeyLine', () => {
       server: 'hearth-vps',
     });
 
-    expect(line.startsWith('command="\\"/opt/my corami/corami\\" exec gate" ')).toBe(true);
+    expect(line.startsWith('restrict,pty,command="\\"/opt/my corami/corami\\" exec gate" ')).toBe(
+      true,
+    );
+  });
+});
+
+describe('isRestrictedLine', () => {
+  test('tells a restricted line from one written before the restriction', () => {
+    const line = authorizedKeyLine({
+      gateCommand: 'corami exec gate',
+      publicKey: key,
+      server: 'hearth-vps',
+    });
+
+    expect(isRestrictedLine(line)).toBe(true);
+    expect(isRestrictedLine(line.replace('restrict,pty,', ''))).toBe(false);
   });
 });
 

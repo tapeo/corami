@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import type { CommandContext, CommandResult } from '@/cli/command.ts';
 import { clientConfig, readAuthorizedKeys } from '@/cli/exec-client-config.ts';
 import { gateCommand } from '@/cli/exec-client-system.ts';
-import { findExecLine } from '@/core/exec-ssh-keys.ts';
+import { findExecLine, isRestrictedLine } from '@/core/exec-ssh-keys.ts';
 
 export async function clientStatus(context: CommandContext): Promise<CommandResult> {
   const { server } = await clientConfig();
@@ -11,9 +11,11 @@ export async function clientStatus(context: CommandContext): Promise<CommandResu
   const gate = gateOf(line) ?? (await gateCommand().catch(() => ''));
   const binary = gateBinary(gate);
   let gateExists: boolean | null = null;
+  let restricted: boolean | null = null;
 
   if (line !== undefined) {
     gateExists = binary !== undefined && existsSync(binary);
+    restricted = isRestrictedLine(line);
   }
 
   if (context.output.json) {
@@ -24,6 +26,7 @@ export async function clientStatus(context: CommandContext): Promise<CommandResu
         connected: line !== undefined,
         gate,
         gate_exists: gateExists,
+        restricted,
       },
     };
   }
@@ -34,6 +37,10 @@ export async function clientStatus(context: CommandContext): Promise<CommandResu
     lines.push(`Gate        ${gate} (missing: run corami exec setup again)`);
   } else {
     lines.push(`Gate        ${gate}`);
+  }
+
+  if (restricted === false) {
+    lines.push('Key         not restricted to the gate: run corami exec setup again');
   }
 
   return { text: lines.join('\n') };
