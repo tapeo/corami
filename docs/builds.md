@@ -39,8 +39,21 @@ The rest of the notes stay:
 
 - The Mac must be awake, otherwise the command fails: the agent sees the error and can say so.
 - The login shell of an SSH session reads `.zshenv`, `.zprofile` and `.zlogin`, not `.zshrc`: a `PATH` the commands need goes in `.zprofile`. On Linux the same rule holds for `.profile`.
-- Over SSH the login keychain can be locked and `codesign` fails. For builds without signing (`--no-codesign`) nothing is needed; for a signed build run `security unlock-keychain` before it.
+- Over SSH the login keychain is locked and `codesign` fails. For builds without signing (`--no-codesign`) nothing is needed. For a signed build, run the command yourself with `--tty` and unlock the keychain in it, see [Commands that ask for input](#commands-that-ask-for-input).
 - The artifact stays on the Mac: publish from there, or copy the file with `scp`. Bringing it back to the server is still in the [v2](v2/README.md#remote-runs).
+
+### Commands that ask for input
+
+A command that asks for a password, a confirmation or any typed answer needs a terminal. The agent has none, so `--tty` is for you, in a terminal on the server: Corami opens a terminal on the client, the question reaches you and what you type goes back without being shown.
+
+```bash
+corami exec --on macbook --tty -- sh -c 'security unlock-keychain ~/Library/Keychains/login.keychain-db && sh deploy.sh'
+```
+
+- The unlock lasts as long as that connection, so a signed build runs in the same command. Another `corami exec` finds the keychain locked again.
+- Corami does not read the answer and does not know what the command asks. The agent cannot use `--tty`: without a terminal on both ends it is a `usage` error.
+- With `--tty` stdout and stderr arrive mixed, as in any terminal, and `--json` is refused.
+- After updating Corami on the client, run `corami exec setup` again once: it rewrites the line of the key with `restrict,pty`. `corami exec status` on the client says when the line is still the old one.
 
 ## Simulators and devices from the agent
 

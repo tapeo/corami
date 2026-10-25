@@ -5,7 +5,7 @@ import { booleanFlag, stringFlag } from '@/cli/parser.ts';
 import { listClients, listProjects } from '@/cli/server-client.ts';
 import { readGlobalConfig, requireServerRole } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
-import { commandRequest, encodeGateRequest } from '@/core/exec-gate.ts';
+import { commandRequest, encodeGateRequest, terminalRefusal } from '@/core/exec-gate.ts';
 import { projectForPath } from '@/core/previews.ts';
 import { runOnClient } from '@/integrations/ssh-exec.ts';
 import { peers } from '@/integrations/tailscale.ts';
@@ -32,6 +32,12 @@ export async function remote(context: CommandContext): Promise<CommandResult> {
     });
   }
 
+  const terminal = booleanFlag(context.args, 'tty');
+
+  if (terminal) {
+    requireTerminal(context);
+  }
+
   const client = (await listClients()).find((entry) => entry.name === clientName);
 
   if (client === undefined) {
@@ -48,7 +54,7 @@ export async function remote(context: CommandContext): Promise<CommandResult> {
   const payload = encodeGateRequest(commandRequest(project, argv));
   const json = booleanFlag(context.args, 'json');
   const started = Date.now();
-  const result = await runOnClient(client, payload, { stream: !json });
+  const result = await runOnClient(client, payload, { stream: !json, terminal });
   const data = {
     client: clientName,
     project,
@@ -63,6 +69,18 @@ export async function remote(context: CommandContext): Promise<CommandResult> {
   }
 
   return { exitCode: result.exitCode };
+}
+
+function requireTerminal(context: CommandContext): void {
+  const refusal = terminalRefusal({
+    json: booleanFlag(context.args, 'json'),
+    stdinIsTty: process.stdin.isTTY === true,
+    stdoutIsTty: process.stdout.isTTY === true,
+  });
+
+  if (refusal !== undefined) {
+    throw new CoramiError({ code: 'usage', ...refusal });
+  }
 }
 
 async function projectFromCwd(): Promise<string> {

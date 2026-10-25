@@ -7,6 +7,7 @@ import {
   gatePayload,
   parseGateRequest,
   probeRequest,
+  terminalRefusal,
 } from '@/core/exec-gate.ts';
 
 describe('the request of the gate', () => {
@@ -72,5 +73,28 @@ describe('gateCopyDecision', () => {
   test('tells a missing copy from a sync engine that did not answer', () => {
     expect(gateCopyDecision([], 'myapp')).toBe('missing');
     expect(gateCopyDecision(undefined, 'myapp')).toBe('unavailable');
+  });
+});
+
+describe('--tty', () => {
+  const terminal = { json: false, stdinIsTty: true, stdoutIsTty: true };
+
+  test('is accepted when both ends are a terminal', () => {
+    expect(terminalRefusal(terminal)).toBeUndefined();
+  });
+
+  test('is refused without a terminal, as when an agent runs it', () => {
+    expect(terminalRefusal({ ...terminal, stdinIsTty: false })?.message).toBe(
+      '--tty needs a terminal',
+    );
+    expect(terminalRefusal({ ...terminal, stdoutIsTty: false })?.message).toBe(
+      '--tty needs a terminal',
+    );
+  });
+
+  test('does not combine with --json', () => {
+    expect(terminalRefusal({ ...terminal, json: true })?.message).toBe(
+      '--tty does not combine with --json',
+    );
   });
 });

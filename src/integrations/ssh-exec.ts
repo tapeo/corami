@@ -15,6 +15,7 @@ export interface RemoteResult {
 
 export interface RemoteOptions {
   stream?: boolean | undefined;
+  terminal?: boolean | undefined;
   timeoutMs?: number | undefined;
 }
 
@@ -41,6 +42,7 @@ export async function runOnClient(
     await Bun.write(knownHosts, '');
   }
 
+  const terminal = options.terminal === true;
   const child = Bun.spawn({
     cmd: [
       'ssh',
@@ -62,12 +64,12 @@ export async function runOnClient(
       'GlobalKnownHostsFile=/dev/null',
       '-o',
       'ConnectTimeout=10',
-      '-T',
+      terminal ? '-tt' : '-T',
       `${client.ssh_user}@${client.ssh_host}`,
       `exec gate ${payload}`,
     ],
     stdin: 'inherit',
-    stdout: 'pipe',
+    stdout: stdoutMode(terminal),
     stderr: 'pipe',
   });
 
@@ -81,7 +83,7 @@ export async function runOnClient(
   const stdoutReader = new StreamReader(options.stream === true);
   const stderrReader = new StderrReader(options.stream === true);
   const [stdout, stderr, exitCode] = await Promise.all([
-    stdoutReader.read(child.stdout),
+    readStdout(stdoutReader, child.stdout),
     stderrReader.read(child.stderr),
     child.exited,
   ]);
@@ -101,6 +103,25 @@ export async function runOnClient(
   }
 
   return { exitCode, stdout, stderr };
+}
+
+function stdoutMode(terminal: boolean): 'inherit' | 'pipe' {
+  if (terminal) {
+    return 'inherit';
+  }
+
+  return 'pipe';
+}
+
+async function readStdout(
+  reader: StreamReader,
+  source: ReadableStream<Uint8Array> | undefined,
+): Promise<string> {
+  if (source === undefined) {
+    return '';
+  }
+
+  return reader.read(source);
 }
 
 class StreamReader {

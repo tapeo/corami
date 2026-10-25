@@ -20,10 +20,22 @@ export async function runGate(context: CommandContext): Promise<CommandResult> {
   } catch (error) {
     const coramiError = toCoramiError(error);
 
-    process.stderr.write(`\n${gateErrorLine(coramiError)}\n`);
+    process.stderr.write(`\n${gateErrorText(coramiError)}\n`);
 
     return { exitCode: coramiError.exitCode };
   }
+}
+
+function gateErrorText(error: CoramiError): string {
+  if (process.stderr.isTTY !== true) {
+    return gateErrorLine(error);
+  }
+
+  if (error.fix === undefined) {
+    return error.message;
+  }
+
+  return `${error.message}\n${error.fix}`;
 }
 
 async function gate(_context: CommandContext): Promise<CommandResult> {
@@ -161,16 +173,17 @@ async function flushOrFail(
 
 async function execute(request: GateCommand, cwd: string): Promise<CommandResult> {
   const shell = process.env.SHELL ?? '/bin/sh';
+  const terminal = process.stdin.isTTY === true;
   const child = Bun.spawn({
     cmd: [shell, '-lc', 'exec "$@"', 'corami-exec', ...request.argv],
     cwd,
     stdin: 'inherit',
     stdout: 'inherit',
     stderr: 'inherit',
-    detached: true,
+    detached: !terminal,
   });
 
-  const stopWatching = watchConnection(() => {
+  const stopWatching = watchConnection(terminal, () => {
     killGroup(child.pid);
   });
 
@@ -181,9 +194,14 @@ async function execute(request: GateCommand, cwd: string): Promise<CommandResult
   return { exitCode };
 }
 
-function watchConnection(onLost: () => void): () => void {
+function watchConnection(terminal: boolean, onLost: () => void): () => void {
   const parent = process.ppid;
-  const signals: NodeJS.Signals[] = ['SIGHUP', 'SIGTERM', 'SIGINT'];
+  const signals: NodeJS.Signals[] = ['SIGHUP', 'SIGTERM'];
+
+  if (!terminal) {
+    signals.push('SIGINT');
+  }
+
   let fired = false;
   const fire = () => {
     if (fired) {

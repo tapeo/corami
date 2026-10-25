@@ -59,11 +59,13 @@ Remove the device from the tailnet in the [Tailscale console](https://login.tail
 
 ## Commands on a client
 
-`corami exec` runs a command of the server on a client, inside the synced copy. `corami exec setup`, run once on the client, writes a key line in `~/.ssh/authorized_keys`: `command="<corami> exec gate"`. The key of the server opens nothing but the gate, so sshd gives it no shell, no pty and no forwarding. To disconnect the client, remove the line that ends with `corami-exec:<server>`.
+`corami exec` runs a command of the server on a client, inside the synced copy. `corami exec setup`, run once on the client, writes a key line in `~/.ssh/authorized_keys`: `restrict,pty,command="<corami> exec gate"`. The key of the server opens nothing but the gate, so sshd gives it no shell and no forwarding of ports, agent or display. The terminal is allowed only for `corami exec --tty`, which the server refuses without a terminal on both ends: an agent cannot ask for it. A line written before `restrict` existed still allows forwarding until `corami exec setup` is run again on the client. To disconnect the client, remove the line that ends with `corami-exec:<server>`.
 
 There is no second check on the client. The client lets the server run any command, as the user of the client, in the copies of the projects. The control belongs to the harness on the server, where it already decides which commands the agent runs: the permissions of Claude Code or OpenCode can allow `corami exec --on macbook -- flutter build '*'` and ask about the rest. An agent with the full permissions of its harness can already read and write the server, and through the sync the copies on the client.
 
 The line of the gate is what the client gives away, and it is worth saying exactly: the agent can read `~/.ssh`, the keychain and the rest of the account when the harness allows the command, and a build runs the files of the project, an Xcode build phase, a Podfile, a Gradle script, a build hook. Connect a client when you need it, and remove the line when you do not.
+
+A password typed in a `--tty` session goes from your terminal to the command over the encrypted ssh channel. Corami does not read it, store it or log it, and a keychain unlocked this way is locked again when the connection ends.
 
 Checks: `exec.setup` on a client; `exec.clients` on the server.
 

@@ -80,6 +80,35 @@ export function gatePayload(original: string | undefined): string | undefined {
   return payload;
 }
 
+export interface TerminalInput {
+  json: boolean;
+  stdinIsTty: boolean;
+  stdoutIsTty: boolean;
+}
+
+export interface TerminalRefusal {
+  message: string;
+  fix: string;
+}
+
+export function terminalRefusal(input: TerminalInput): TerminalRefusal | undefined {
+  if (input.json) {
+    return {
+      message: '--tty does not combine with --json',
+      fix: 'Drop --json: a terminal has no separate stdout and stderr to collect',
+    };
+  }
+
+  if (!input.stdinIsTty || !input.stdoutIsTty) {
+    return {
+      message: '--tty needs a terminal',
+      fix: 'Run the command from a terminal, not from a script or an agent',
+    };
+  }
+
+  return undefined;
+}
+
 export type GateCopy = 'ok' | 'missing' | 'pending' | 'unavailable';
 
 export interface GateSession {

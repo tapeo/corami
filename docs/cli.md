@@ -138,11 +138,11 @@ Every side is a peer with its own `.git`. Each publishes in `.git/corami/` the c
 
 | Command | Where | Description |
 |---|---|---|
-| `corami exec --on <client> [--project <name>] -- <command>` | server | runs the command on the client, in the copy of the project. The project comes from the current folder |
+| `corami exec --on <client> [--project <name>] [--tty] -- <command>` | server | runs the command on the client, in the copy of the project. The project comes from the current folder. `--tty` runs it in a terminal, for commands that ask for input: it needs a terminal on the server and is refused with `--json` |
 | `corami exec setup` | client | connects this client to its server: the key of the server in `authorized_keys`, the registration and a check from the server |
-| `corami exec status` | all | on the client: the server, the connection and the gate. On the server: the registered clients, online and OS |
+| `corami exec status` | all | on the client: the server, the connection, the gate and whether the key is restricted. On the server: the registered clients, online and OS |
 
-`exec setup` writes one line in `~/.ssh/authorized_keys`, `command="<corami> exec gate" <key> corami-exec:<server>`: the key of the server opens only the gate. It can be run again, and it has to be run again when the binary of the client changes path. The client lets the server run any command it sends: the control is in the harness, see [security](security.md).
+`exec setup` writes one line in `~/.ssh/authorized_keys`, `restrict,pty,command="<corami> exec gate" <key> corami-exec:<server>`: the key of the server opens only the gate, with no forwarding of ports, agent or display. `pty` allows the terminal of `--tty`. It can be run again, and it has to be run again when the binary of the client changes path. The client lets the server run any command it sends: the control is in the harness, see [security](security.md).
 
 To disconnect the client, remove the line that ends with `corami-exec:<server>` from `~/.ssh/authorized_keys`.
 
@@ -154,6 +154,7 @@ corami exec setup
 corami exec --on macbook -- flutter devices
 corami exec --on macbook --project myapp -- flutter run -d "iPhone 16"
 corami exec --on macbook -- xcrun simctl boot "iPhone 16"
+corami exec --on macbook --tty -- sudo softwareupdate -l
 ```
 
 Output is the exception to the contract above: without `--json` it is the stdout and stderr of the command, even without a TTY, and the exit code of the command is the exit code of `corami`. With `--json` the output is collected:
