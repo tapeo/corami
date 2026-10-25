@@ -1,6 +1,6 @@
 {
   "name": "corami",
-  "version": "0.22.1",
+  "version": "0.23.0",
   "private": true,
   "homepage": "https://corami.dev",
   "type": "module",
