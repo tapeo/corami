@@ -346,6 +346,20 @@ mutagen sync create \
 - SSH goes through Tailscale SSH, so no keys to distribute.
 - Mutagen daemon persistence: `mutagen daemon register` on macOS and Windows, user systemd unit `corami-mutagen` on Linux. The `mutagen-daemon` step of `corami setup client` installs it, and `corami doctor` checks it.
 
+**Agents left behind by a sleeping client.** Each session runs one `mutagen-agent` on the server, started over SSH by the client. When a client sleeps, its connections die without being closed, and at wake its daemon opens new ones, so the server gets a new agent per session. The old agent keeps running: the sync agent has no heartbeat and only stops on the end of its input, and Tailscale SSH 1.104 has no idle timeout, so nothing closes its session. An orphan writes nothing, because it acts only on requests of its client, but it still scans its folder at the polling interval. Some end by themselves, the others stay. More agents than sessions on the clients is the sign:
+
+```bash
+pgrep -fc '^\.mutagen/agents/.*/mutagen-agent synchronizer'
+```
+
+The cleanup is by hand, on the server, as the account of the projects:
+
+```bash
+pkill -f '^\.mutagen/agents/.*/mutagen-agent synchronizer'
+```
+
+It stops the live agents too. Each client daemon reconnects its sessions at once, or after 15 seconds when the session had already failed in the previous 15, with a full scan on both sides, and an interrupted cycle is run again, so no file is lost. The `^` matters: without it the pattern also matches the `tailscaled be-child` process that carries the same command in its arguments. Corami does not clean up by itself: from the server an orphan and a live agent with nothing to do look the same, since neither sends anything.
+
 ### Default exclusions
 
 One table of rules in `local-copy.ts` (`PATH_RULES`) is the only source of the paths the sync treats in a special way. Every rule is a pattern and one of two classes:
