@@ -17,6 +17,7 @@ function session(overrides: Partial<SyncSession> = {}): SyncSession {
     lastError: undefined,
     localLinks: [],
     ignore: [],
+    pollingInterval: 2,
     serverHost: 'vps',
     serverUser: 'corami',
     serverPath: '/home/corami/projects/sorumi',

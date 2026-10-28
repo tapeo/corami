@@ -92,6 +92,7 @@ Checks with a remedy for each item. One command: there are no areas.
 | `net.exposed_ports` | ports listening outside `127.0.0.1` or on `0.0.0.0` (Docker iptables included) |
 | `mutagen.installed`, `mutagen.service` | Mutagen of the pinned version, `~/.corami/bin` in the PATH, the daemon service |
 | `mutagen.ignores` | on a client, the sessions whose ignores differ from `DEFAULT_IGNORES` plus `.coramiignore`, with `corami sync refresh` as the fix |
+| `mutagen.watch` | on a client, the sessions created without the current watch polling interval (`WATCH_POLLING_SECONDS`), with `corami sync refresh` as the fix |
 | `git.service` | the git alignment service |
 | `server.*` | daemon reachable, account of the projects and its privileges, folders of the projects root that no project names, free space of the projects filesystem (under 10% is a failure) |
 
@@ -332,6 +333,7 @@ One session per project, created by `corami project add` on a client, whatever t
 mutagen sync create \
   --name corami-<project> \
   --mode two-way-safe \
+  --watch-polling-interval 2 \
   --ignore-vcs \
   --ignore <list> \
   corami@<server>:~/projects/<project> \
@@ -340,6 +342,7 @@ mutagen sync create \
 
 - Alpha is the server, beta is the client: the folder of the copy, the only record of where it is. The server path is the folder the daemon has for the project, so a project registered with `--from-server` syncs from where it is.
 - `two-way-safe`: conflicts that cannot be solved without losing data stay pending and are reported ([docs](https://mutagen.io/documentation/synchronization/)).
+- `--watch-polling-interval 2` (`WATCH_POLLING_SECONDS` in `mutagen.ts`): Linux has no recursive watching, so on the server Mutagen scans the whole folder at this interval and keeps native watches only on the 50 most recently changed paths ([docs](https://mutagen.io/documentation/synchronization/watching/)). The Mutagen default is 10 s, which made a change of the agent on the server take up to 10 s to reach a client. macOS and Windows clients watch natively, so the interval only matters to them as the retry delay of their watch; a Linux client polls like the server. A shorter interval costs a scan of every project every interval on the server: with small folders that is cheap, while 1 s would not be.
 - SSH goes through Tailscale SSH, so no keys to distribute.
 - Mutagen daemon persistence: `mutagen daemon register` on macOS and Windows, user systemd unit `corami-mutagen` on Linux. The `mutagen-daemon` step of `corami setup client` installs it, and `corami doctor` checks it.
 
@@ -364,7 +367,7 @@ Files generated with absolute paths of the machine (`Generated.xcconfig`, `local
 
 **`.coramiignore` in the project.** A pattern the table does not know but the project does goes in `.coramiignore` at the root of the folder: one Mutagen pattern per line, `#` starts a comment, no negation, no absolute path, no `..`. The file travels with the project, so every machine reads the same rules, and the agent on the server can add one when a build writes a new cache. A bad line is a `config_invalid` error with its line number.
 
-**A session keeps the ignores it was created with.** `DEFAULT_IGNORES` and `.coramiignore` are read when the session is created. `corami sync status` compares the ignores of the session with the two lists and says `ignores out of date` when they differ, `corami doctor` reports the same as `mutagen.ignores`, and `corami sync refresh` terminates the session and creates it again with the current lists. Nothing is lost: the first cycle of a recreated session compares the two trees with no ancestor, so a file edited on both sides becomes a conflict, not a deletion. A session that leaves out paths this Corami would carry (typically `.env` and keys, from a version that excluded them) is not refreshed without `--force`, because those files would start traveling.
+**A session keeps the ignores it was created with.** `DEFAULT_IGNORES` and `.coramiignore` are read when the session is created. `corami sync status` compares the ignores of the session with the two lists and says `ignores out of date` when they differ, `corami doctor` reports the same as `mutagen.ignores`, and `corami sync refresh` terminates the session and creates it again with the current lists. The watch polling interval is fixed at creation too: `sync status` says how long a change on the server can take to arrive when the session has an older one, `corami doctor` reports it as `mutagen.watch`, and the same `sync refresh` applies the current one. Nothing is lost: the first cycle of a recreated session compares the two trees with no ancestor, so a file edited on both sides becomes a conflict, not a deletion. A session that leaves out paths this Corami would carry (typically `.env` and keys, from a version that excluded them) is not refreshed without `--force`, because those files would start traveling.
 
 ### State and conflicts
 

@@ -25,6 +25,7 @@ export interface SyncSession {
   lastError: string | undefined;
   localLinks: string[];
   ignore: string[];
+  pollingInterval: number;
   serverHost: string;
   serverUser: string;
   serverPath: string;
@@ -59,6 +60,10 @@ export const DEFAULT_IGNORES = PATH_RULES.filter(
 ).map(mutagenPattern);
 
 export const GIT_IGNORES = ['/.git/*', '!/.git/corami/', '*/**/.git'];
+
+export const WATCH_POLLING_SECONDS = 2;
+
+const MUTAGEN_POLLING_SECONDS = 10;
 
 export function isGitFile(root: string): boolean {
   const entry = join(root, '.git');
@@ -115,6 +120,8 @@ export class MutagenEngine implements SyncEngine {
         sessionName(options.project),
         '--mode',
         'two-way-safe',
+        '--watch-polling-interval',
+        String(WATCH_POLLING_SECONDS),
         ...vcs,
         ...ignores,
         `${options.serverUser}@${options.serverHost}:${options.serverPath}`,
@@ -261,6 +268,7 @@ export function parseSessions(raw: string): SyncSession[] {
       lastError: described.error,
       localLinks: described.links,
       ignore: collectIgnores(record),
+      pollingInterval: collectPollingInterval(record),
       serverHost: server.host,
       serverUser: server.user,
       serverPath: server.path,
@@ -279,6 +287,20 @@ export function collectIgnores(record: Record<string, unknown>): string[] {
   }
 
   return paths.filter((entry): entry is string => typeof entry === 'string');
+}
+
+export function collectPollingInterval(record: Record<string, unknown>): number {
+  const interval = asCount(asRecord(record.watch)?.pollingInterval);
+
+  if (interval === 0) {
+    return MUTAGEN_POLLING_SECONDS;
+  }
+
+  return interval;
+}
+
+export function pollingCurrent(session: SyncSession): boolean {
+  return session.pollingInterval === WATCH_POLLING_SECONDS;
 }
 
 function describeServer(value: unknown): { host: string; user: string; path: string } {

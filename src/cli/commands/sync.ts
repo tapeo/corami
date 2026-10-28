@@ -40,7 +40,13 @@ import {
 } from '@/core/projects.ts';
 import { formatBytes } from '@/core/sizes.ts';
 import { conflictCopies, conflictFix, conflictLabel } from '@/core/sync-conflicts.ts';
-import { MutagenEngine, type SyncProgress, type SyncSession } from '@/integrations/mutagen.ts';
+import {
+  MutagenEngine,
+  pollingCurrent,
+  type SyncProgress,
+  type SyncSession,
+  WATCH_POLLING_SECONDS,
+} from '@/integrations/mutagen.ts';
 
 async function engineAndServer(
   explicitUser?: string,
@@ -472,6 +478,12 @@ async function status(context: CommandContext): Promise<{ data?: unknown; text?:
       );
     }
 
+    if (!pollingCurrent(session)) {
+      lines.push(
+        `  changes on the server take up to ${session.pollingInterval} s to arrive instead of ${WATCH_POLLING_SECONDS} s. To fix: corami sync refresh ${session.project}`,
+      );
+    }
+
     const heaviest = heavy.find((entry) => entry.project === session.project)?.entries ?? [];
 
     for (const entry of heaviest) {
@@ -773,10 +785,12 @@ async function refresh(context: CommandContext): Promise<{ data?: unknown; text?
 
   const plan = refreshPlan(session.ignore, expected, booleanFlag(context.args, 'force'));
 
-  if (plan.current) {
+  if (plan.current && pollingCurrent(session)) {
     return context.output.json
       ? { data: { project, refreshed: false, ignores } }
-      : { text: `The sync of ${project} already carries the current exclusions.` };
+      : {
+          text: `The sync of ${project} already carries the current exclusions and watch interval.`,
+        };
   }
 
   if (plan.refuse && !keepExtra) {
@@ -1068,7 +1082,8 @@ export const syncCommand: CommandSpec = {
     },
     {
       name: 'refresh',
-      summary: 'Recreates the session with the exclusions of the project',
+      summary:
+        'Recreates the session with the exclusions of the project and the current watch interval',
       usage: 'corami sync refresh [<project>] [--force | --keep-extra]',
       arguments: 1,
       flags: [

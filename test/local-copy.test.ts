@@ -8,7 +8,12 @@ import { applyRemoval, planRemoval, type RemovalEngine } from '@/cli/commands/sy
 import { CoramiError } from '@/core/errors.ts';
 import { directorySize, findLocalOnlyFiles, localGit } from '@/core/local-copy.ts';
 import type { SyncSession } from '@/integrations/mutagen.ts';
-import { collectConflicts, parseSessions, sessionName } from '@/integrations/mutagen.ts';
+import {
+  collectConflicts,
+  parseSessions,
+  pollingCurrent,
+  sessionName,
+} from '@/integrations/mutagen.ts';
 
 async function git(cwd: string, args: string[]): Promise<void> {
   const child = Bun.spawn(['git', '-C', cwd, ...args], { stdout: 'pipe', stderr: 'pipe' });
@@ -256,6 +261,28 @@ describe('mutagen parsing', () => {
   test('builds the session name', () => {
     expect(sessionName('demo')).toBe('corami-demo');
   });
+
+  test('reads the watch polling interval of the session', () => {
+    const record = [
+      {
+        name: 'corami-demo',
+        status: 'watching',
+        watch: { pollingInterval: 2 },
+        alpha: {},
+        beta: {},
+      },
+    ];
+    const [session] = parseSessions(JSON.stringify(record));
+
+    expect(session?.pollingInterval).toBe(2);
+  });
+
+  test('a session created without an interval polls at the Mutagen default', () => {
+    const record = [{ name: 'corami-demo', status: 'watching', watch: {}, alpha: {}, beta: {} }];
+    const [session] = parseSessions(JSON.stringify(record));
+
+    expect(session?.pollingInterval).toBe(10);
+  });
 });
 
 describe('removal checks', () => {
@@ -270,6 +297,7 @@ describe('removal checks', () => {
     lastError: undefined,
     localLinks: [],
     ignore: [],
+    pollingInterval: 2,
     serverHost: 'vps',
     serverUser: 'corami',
     serverPath: '~/projects/demo',
@@ -286,6 +314,11 @@ describe('removal checks', () => {
       terminate: async () => undefined,
     };
   }
+
+  test('a session at the old watch interval is not current', () => {
+    expect(pollingCurrent(watching)).toBe(true);
+    expect(pollingCurrent({ ...watching, pollingInterval: 10 })).toBe(false);
+  });
 
   test('an unflushed copy is blocked before anything is deleted', async () => {
     const root = await mkdtemp(join(tmpdir(), 'corami-removal-'));

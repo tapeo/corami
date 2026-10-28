@@ -31,7 +31,13 @@ import {
   sshPolicyText,
   sshRootText,
 } from '@/core/ssh-policy.ts';
-import { daemonServiceActive, MutagenEngine } from '@/integrations/mutagen.ts';
+import {
+  daemonServiceActive,
+  MutagenEngine,
+  pollingCurrent,
+  type SyncSession,
+  WATCH_POLLING_SECONDS,
+} from '@/integrations/mutagen.ts';
 import {
   gitWatchSpec,
   launchAgentPath,
@@ -74,7 +80,7 @@ async function collectChecks(): Promise<CheckResult[]> {
     checkPinnedTools(),
     checkGitService(),
     checkSyncDaemon(),
-    checkSyncIgnores(),
+    checkSyncSessions(),
     checkServerAccount(),
     checkServerDisk(),
     checkOrphanFolders(),
@@ -424,7 +430,7 @@ async function projectsFolderForServer(): Promise<string> {
   return home === undefined ? projectRoot() : projectsRootFor(home);
 }
 
-async function checkSyncIgnores(): Promise<CheckResult[]> {
+async function checkSyncSessions(): Promise<CheckResult[]> {
   const config = await readGlobalConfig().catch(() => undefined);
 
   if (config?.role !== 'client') {
@@ -437,38 +443,60 @@ async function checkSyncIgnores(): Promise<CheckResult[]> {
     return [];
   }
 
+  return [checkSyncIgnores(sessions), checkSyncWatch(sessions)];
+}
+
+function checkSyncWatch(sessions: SyncSession[]): CheckResult {
+  const stale = sessions.filter((session) => !pollingCurrent(session));
+
+  if (stale.length === 0) {
+    return {
+      id: 'mutagen.watch',
+      status: 'ok',
+      summary: `Every session checks the server for changes every ${WATCH_POLLING_SECONDS} s`,
+    };
+  }
+
+  return {
+    id: 'mutagen.watch',
+    status: 'warn',
+    summary: `${stale.length} sessions check the server for changes less often than every ${WATCH_POLLING_SECONDS} s`,
+    detail: stale
+      .map((session) => `${session.project}: every ${session.pollingInterval} s`)
+      .join('\n'),
+    fix: `corami sync refresh ${stale[0]?.project ?? '<project>'}`,
+  };
+}
+
+function checkSyncIgnores(sessions: SyncSession[]): CheckResult {
   const stale = sessions
     .map((session) => ({ session, drift: ignoreDrift(session.ignore, ignoresFor(session.beta)) }))
     .filter(({ drift }) => drift.missing.length > 0 || drift.extra.length > 0);
 
   if (stale.length === 0) {
-    return [
-      {
-        id: 'mutagen.ignores',
-        status: 'ok',
-        summary: 'Every session carries the current exclusions',
-      },
-    ];
+    return {
+      id: 'mutagen.ignores',
+      status: 'ok',
+      summary: 'Every session carries the current exclusions',
+    };
   }
 
-  return [
-    {
-      id: 'mutagen.ignores',
-      status: 'warn',
-      summary: `${stale.length} sessions carry older exclusions`,
-      detail: stale
-        .map(({ session, drift }) => {
-          const parts = [
-            drift.missing.length > 0 ? `missing ${drift.missing.join(', ')}` : '',
-            drift.extra.length > 0 ? `no longer ignored ${drift.extra.join(', ')}` : '',
-          ].filter((part) => part !== '');
+  return {
+    id: 'mutagen.ignores',
+    status: 'warn',
+    summary: `${stale.length} sessions carry older exclusions`,
+    detail: stale
+      .map(({ session, drift }) => {
+        const parts = [
+          drift.missing.length > 0 ? `missing ${drift.missing.join(', ')}` : '',
+          drift.extra.length > 0 ? `no longer ignored ${drift.extra.join(', ')}` : '',
+        ].filter((part) => part !== '');
 
-          return `${session.project}: ${parts.join('; ')}`;
-        })
-        .join('\n'),
-      fix: `corami sync refresh ${stale[0]?.session.project ?? '<project>'}`,
-    },
-  ];
+        return `${session.project}: ${parts.join('; ')}`;
+      })
+      .join('\n'),
+    fix: `corami sync refresh ${stale[0]?.session.project ?? '<project>'}`,
+  };
 }
 
 async function checkServerDisk(): Promise<CheckResult[]> {
