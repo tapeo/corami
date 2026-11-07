@@ -53,7 +53,7 @@ corami exec --on macbook --tty -- sh -c 'security unlock-keychain ~/Library/Keyc
 - The unlock lasts as long as that connection, so a signed build runs in the same command. Another `corami exec` finds the keychain locked again.
 - Corami does not read the answer and does not know what the command asks. The agent cannot use `--tty`: without a terminal on both ends it is a `usage` error.
 - With `--tty` stdout and stderr arrive mixed, as in any terminal, and `--json` is refused.
-- After updating Corami on the client, run `corami exec setup` again once: it rewrites the line of the key with `restrict,pty`. `corami exec status` on the client says when the line is still the old one.
+- After updating Corami on the client, run `corami exec setup` again once: it rewrites the line of the key with `restrict,pty`. `corami exec status` on the client says when the line is still the old one, and `corami doctor` reports it.
 
 ## Simulators and devices from the agent
 

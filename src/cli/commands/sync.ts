@@ -1,9 +1,26 @@
-import { existsSync, mkdirSync, realpathSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 
 import type { CommandContext, CommandResult, CommandSpec } from '@/cli/command.ts';
 import { gitSides } from '@/cli/commands/git.ts';
+import {
+  adoptionText,
+  refreshAll,
+  refreshData,
+  refreshMode,
+  refreshSession,
+  refreshTarget,
+  type SessionRefresh,
+} from '@/cli/commands/sync-refresh.ts';
 import { applyRemoval, planRemoval } from '@/cli/commands/sync-remove.ts';
+import {
+  canonicalPath,
+  projectFromCwd,
+  projectNameOf,
+  publishPeerHead,
+  requireClient,
+  syncSessions,
+} from '@/cli/commands/sync-session.ts';
 import { tailnetIdentity } from '@/cli/exec-client-system.ts';
 import { booleanFlag, stringFlag } from '@/cli/parser.ts';
 import type { ProgressUpdate } from '@/cli/progress.ts';
@@ -20,24 +37,11 @@ import { type CopyGitResult, type GitProgress, giveCopyGit, readGitState } from 
 import { notARepository } from '@/core/git-align.ts';
 import { describeOrigin } from '@/core/git-follow.ts';
 import { type DivergenceAdvice, divergenceAdvice } from '@/core/git-peers.ts';
-import { type PeerSide, peerSides, syncPeers } from '@/core/git-peers-sync.ts';
-import {
-  IGNORE_FILE,
-  ignoreDrift,
-  ignoresFor,
-  keptIgnores,
-  projectIgnores,
-  refreshPlan,
-} from '@/core/ignore-file.ts';
+import { type PeerSide, peerSides } from '@/core/git-peers-sync.ts';
+import { IGNORE_FILE, ignoreDrift, ignoresFor, projectIgnores } from '@/core/ignore-file.ts';
 import { lastChange } from '@/core/last-change.ts';
 import { type HeavyEntry, heavyInFolder } from '@/core/local-copy.ts';
-import {
-  isFolderEmpty,
-  isWithin,
-  localCopyTarget,
-  projectOfCopy,
-  unexpandedHome,
-} from '@/core/projects.ts';
+import { isFolderEmpty, isWithin, localCopyTarget, unexpandedHome } from '@/core/projects.ts';
 import { formatBytes } from '@/core/sizes.ts';
 import { conflictCopies, conflictFix, conflictLabel } from '@/core/sync-conflicts.ts';
 import {
@@ -68,47 +72,6 @@ async function engineAndServer(
   return { engine: existing ?? new MutagenEngine(), host, user };
 }
 
-export async function syncSessions(engine: MutagenEngine): Promise<SyncSession[]> {
-  const sessions = await engine.sessions();
-
-  if (sessions === undefined) {
-    throw new CoramiError({
-      code: 'capability_missing',
-      message: 'Mutagen did not answer: no way to tell which local copies this machine has',
-      fix: 'corami doctor checks the sync engine on this machine',
-    });
-  }
-
-  return sessions;
-}
-
-async function projectFromCwd(): Promise<string | undefined> {
-  const sessions = await syncSessions(new MutagenEngine());
-
-  return projectOfCopy(
-    canonicalPath(process.cwd()),
-    sessions.map((session) => ({ project: session.project, local: canonicalPath(session.beta) })),
-  );
-}
-
-async function projectNameOf(explicit?: string): Promise<string> {
-  if (explicit !== undefined) {
-    return explicit;
-  }
-
-  const found = await projectFromCwd();
-
-  if (found === undefined) {
-    throw new CoramiError({
-      code: 'usage',
-      message: 'Missing project',
-      fix: 'Give the project name, or run the command from inside the local copy',
-    });
-  }
-
-  return found;
-}
-
 export function givenPath(path: string): string {
   if (unexpandedHome(path)) {
     throw new CoramiError({
@@ -119,33 +82,6 @@ export function givenPath(path: string): string {
   }
 
   return resolve(path);
-}
-
-export function canonicalPath(path: string): string {
-  const real = realPath(path);
-
-  return process.platform === 'darwin' || process.platform === 'win32' ? real.toLowerCase() : real;
-}
-
-function realPath(path: string): string {
-  const absolute = resolve(path);
-  let existing = absolute;
-
-  while (!existsSync(existing)) {
-    const parent = dirname(existing);
-
-    if (parent === existing) {
-      return absolute;
-    }
-
-    existing = parent;
-  }
-
-  try {
-    return join(realpathSync.native(existing), relative(existing, absolute));
-  } catch {
-    return absolute;
-  }
 }
 
 export async function copyPlace(
@@ -349,41 +285,6 @@ async function copyGit(
     branch: server.origin?.state.branch ?? '',
     ...(onProgress === undefined ? {} : { onProgress }),
   });
-}
-
-export async function waitFirstSync(
-  engine: MutagenEngine,
-  project: string,
-  update: (progress: SyncProgress) => void,
-  timeoutMs = 0,
-): Promise<SyncProgress | undefined> {
-  const start = Date.now();
-
-  for (;;) {
-    const progress = await engine.progress(project);
-
-    if (progress === undefined) {
-      return undefined;
-    }
-
-    update(progress);
-
-    if (progress.state === 'done' || progress.state === 'halted') {
-      return progress;
-    }
-
-    if (timeoutMs > 0 && Date.now() - start >= timeoutMs) {
-      return progress;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-}
-
-async function publishPeerHead(root: string): Promise<void> {
-  const machine = (await tailnetIdentity()).name;
-
-  await syncPeers(root, { machine }).catch(() => undefined);
 }
 
 export function syncUpdate(progress: SyncProgress): ProgressUpdate {
@@ -637,20 +538,6 @@ async function gitStatesFor(sessions: SyncSession[]): Promise<
   return rows;
 }
 
-async function requireClient(action: string): Promise<void> {
-  const config = await readGlobalConfig().catch(() => undefined);
-
-  if (config?.role === 'client') {
-    return;
-  }
-
-  throw new CoramiError({
-    code: 'config_invalid',
-    message: `corami sync ${action} runs on a client`,
-    fix: `On the client, run corami sync ${action} <project>`,
-  });
-}
-
 async function control(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
   const project = context.args.positionals[0] ?? (await projectFromCwd());
 
@@ -749,6 +636,13 @@ export async function removeLocalCopy(
 }
 
 async function refresh(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
+  const target = refreshTarget(context.args);
+  const mode = refreshMode(context.args);
+
+  if (target === 'all') {
+    return refreshAll(context, mode);
+  }
+
   await requireClient('refresh');
   const project = await projectNameOf(context.args.positionals[0]);
   const engine = new MutagenEngine();
@@ -763,104 +657,58 @@ async function refresh(context: CommandContext): Promise<{ data?: unknown; text?
     });
   }
 
-  if (session.serverHost === '' || session.serverPath === '') {
+  const result = await refreshSession(engine, session, mode);
+
+  if (result.outcome === 'refused' || result.outcome === 'failed') {
     throw new CoramiError({
-      code: 'config_invalid',
-      message: `The session of ${project} does not say where the project is on the server`,
-      fix: `Run corami sync status ${project} and check the alpha endpoint`,
+      code: result.code ?? 'usage',
+      message: result.message ?? `The session of ${project} was not refreshed`,
+      fix: result.fix,
     });
   }
-
-  const ignores = projectIgnores(session.beta);
-  const expected = ignoresFor(session.beta);
-  const keepExtra = booleanFlag(context.args, 'keep-extra');
-
-  if (keepExtra && booleanFlag(context.args, 'force')) {
-    throw new CoramiError({
-      code: 'usage',
-      message: '--force and --keep-extra say opposite things',
-      fix: 'Use --keep-extra to add the current exclusions and keep the old ones, or --force to drop the old ones',
-    });
-  }
-
-  const plan = refreshPlan(session.ignore, expected, booleanFlag(context.args, 'force'));
-
-  if (plan.current && pollingCurrent(session)) {
-    return context.output.json
-      ? { data: { project, refreshed: false, ignores } }
-      : {
-          text: `The sync of ${project} already carries the current exclusions and watch interval.`,
-        };
-  }
-
-  if (plan.refuse && !keepExtra) {
-    throw new CoramiError({
-      code: 'usage',
-      message: `The session of ${project} leaves out ${plan.extra.join(', ')}, which this Corami would carry`,
-      fix: `Run corami sync refresh ${project} --keep-extra to add the current exclusions and keep the ones the session already has, or --force only if those files may reach the server`,
-    });
-  }
-
-  let flushed = true;
-
-  try {
-    await engine.flush(project);
-  } catch {
-    flushed = false;
-  }
-
-  const finalIgnores = keepExtra ? [...ignores, ...keptIgnores(expected, session.ignore)] : ignores;
-
-  await engine.terminate(project);
-  await publishPeerHead(session.beta);
-  await engine.create({
-    project,
-    serverHost: session.serverHost,
-    serverUser: session.serverUser,
-    serverPath: session.serverPath,
-    localPath: session.beta,
-    ignore: finalIgnores,
-  });
-
-  const progress = await waitFirstSync(engine, project, () => undefined, 120_000);
-  const after = await engine.status(project);
-  const conflicts = after?.conflicts ?? [];
-  const data = {
-    project,
-    refreshed: true,
-    flushed,
-    pending: progress?.state === 'waiting',
-    status: after?.status ?? 'unknown',
-    conflicts,
-    ignores: finalIgnores,
-  };
 
   if (context.output.json) {
-    return { data };
+    return {
+      data: { ...refreshData(result), refreshed: result.outcome === 'refreshed' },
+    };
   }
 
+  return { text: result.outcome === 'current' ? currentText(result) : refreshedText(result) };
+}
+
+function currentText(result: SessionRefresh): string {
+  return [
+    `The sync of ${result.project} already carries the current exclusions and watch interval.`,
+    ...adoptionText(result.adopted, result.sessionOnly),
+  ].join('\n');
+}
+
+function refreshedText(result: SessionRefresh): string {
+  const conflicts = result.conflicts ?? [];
+  const ignores = result.ignores ?? [];
   const lines = [
-    flushed
-      ? `The sync of ${project} is recreated with the current exclusions.`
-      : `The session of ${project} was stuck, so its queue was not flushed. The sync is recreated with the current exclusions.`,
-    `Exclusions from ${IGNORE_FILE}: ${finalIgnores.length === 0 ? 'none' : finalIgnores.join(', ')}`,
-    after === undefined
+    result.flushed === false
+      ? `The session of ${result.project} was stuck, so its queue was not flushed. The sync is recreated with the current exclusions.`
+      : `The sync of ${result.project} is recreated with the current exclusions.`,
+    `Exclusions from ${IGNORE_FILE}: ${ignores.length === 0 ? 'none' : ignores.join(', ')}`,
+    result.status === 'unknown' || result.status === undefined
       ? 'The new session is not listed yet: corami sync status follows it.'
-      : `State: ${after.status}, conflicts: ${conflicts.length}.`,
+      : `State: ${result.status}, conflicts: ${conflicts.length}.`,
+    ...adoptionText(result.adopted, result.sessionOnly),
   ];
 
-  if (progress?.state === 'waiting') {
+  if (result.pending === true) {
     lines.push('The first cycle is still running: corami sync status follows it.');
   }
 
   if (conflicts.length > 0) {
     lines.push(
       'The two sides had different content, so those files are now conflicts. No file was lost.',
-      `To resolve: ${conflictFix(project, conflicts)}`,
+      `To resolve: ${conflictFix(result.project, conflicts)}`,
     );
   }
 
-  return { text: lines.join('\n') };
+  return lines.join('\n');
 }
 
 async function stop(context: CommandContext): Promise<{ data?: unknown; text?: string }> {
@@ -1084,22 +932,28 @@ export const syncCommand: CommandSpec = {
       name: 'refresh',
       summary:
         'Recreates the session with the exclusions of the project and the current watch interval',
-      usage: 'corami sync refresh [<project>] [--force | --keep-extra]',
+      usage: 'corami sync refresh [<project> | --all] [--force | --keep-extra]',
       arguments: 1,
       flags: [
+        {
+          name: 'all',
+          description: 'Every session of this machine, one after the other',
+        },
         {
           name: 'force',
           description: 'Also stops ignoring the paths this Corami would carry',
         },
         {
           name: 'keep-extra',
-          description: 'Adds the current exclusions and keeps the ones the session already has',
+          description:
+            'Keeps the exclusions the session already has and writes them to .coramiignore',
         },
       ],
       examples: [
         'corami sync refresh',
         'corami sync refresh myapp',
         'corami sync refresh myapp --force',
+        'corami sync refresh --all --keep-extra',
       ],
       run: refresh,
     },

@@ -2,15 +2,13 @@ import { existsSync } from 'node:fs';
 import type { CommandContext, CommandResult, CommandSpec } from '@/cli/command.ts';
 import { runImport } from '@/cli/commands/import.ts';
 import {
-  canonicalPath,
   copyPlace,
   createLocalCopy,
   givenPath,
   removeLocalCopy,
-  syncSessions,
   syncUpdate,
-  waitFirstSync,
 } from '@/cli/commands/sync.ts';
+import { canonicalPath, syncSessions, waitFirstSync } from '@/cli/commands/sync-session.ts';
 import { renderOrphanCopies, renderTable } from '@/cli/output.ts';
 import { booleanFlag, negatedFlag, stringFlag } from '@/cli/parser.ts';
 import { type ProgressUpdate, progressFor } from '@/cli/progress.ts';

@@ -75,6 +75,7 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
   const copiedToOwner = await copyToOwner();
   const restarted = await restartDaemon();
   const watch = await refreshGitWatch(binary);
+  const steps = await postUpdateSteps(binary);
   const failures = [watch].flatMap((result) =>
     result === undefined || result.ok
       ? []
@@ -89,6 +90,7 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
     restarted_daemon: restarted,
     restarted_git_watch: watch?.ok === true,
     service_failures: failures,
+    next_steps: steps,
   };
 
   if (context.output.json) {
@@ -106,9 +108,105 @@ async function run_(context: CommandContext): Promise<{ data?: unknown; text?: s
         (failure) =>
           `${failure.name} not running after the update: ${failure.detail}. ${failure.fix}`,
       ),
+      ...(steps.length === 0
+        ? []
+        : [
+            'Steps after the update:',
+            ...steps.map(
+              (step) => `  ${step.summary}${step.fix === undefined ? '' : `. ${step.fix}`}`,
+            ),
+          ]),
     ]
       .filter((line) => line !== '')
       .join('\n'),
+  };
+}
+
+export interface PendingStep {
+  id: string;
+  summary: string;
+  fix?: string;
+}
+
+const NEXT_STEP_CHECKS = ['mutagen.ignores', 'mutagen.watch', 'exec.setup'];
+
+interface DoctorCheck {
+  id: string;
+  status: string;
+  summary: string;
+  fix?: string;
+}
+
+export function pendingSteps(answer: unknown): PendingStep[] {
+  return checksOf(answer)
+    .filter((check) => NEXT_STEP_CHECKS.includes(check.id) && check.status !== 'ok')
+    .map((check) => ({
+      id: check.id,
+      summary: check.summary,
+      ...(check.fix === undefined ? {} : { fix: check.fix }),
+    }));
+}
+
+function checksOf(answer: unknown): DoctorCheck[] {
+  if (typeof answer !== 'object' || answer === null) {
+    return [];
+  }
+
+  const data = (answer as { data?: unknown }).data;
+
+  if (typeof data !== 'object' || data === null) {
+    return [];
+  }
+
+  const checks = (data as { checks?: unknown }).checks;
+
+  if (!Array.isArray(checks)) {
+    return [];
+  }
+
+  return checks.filter(isDoctorCheck);
+}
+
+function isDoctorCheck(value: unknown): value is DoctorCheck {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const entry = value as Record<string, unknown>;
+
+  return (
+    typeof entry.id === 'string' &&
+    typeof entry.status === 'string' &&
+    typeof entry.summary === 'string' &&
+    (entry.fix === undefined || typeof entry.fix === 'string')
+  );
+}
+
+async function postUpdateSteps(binary: string): Promise<PendingStep[]> {
+  const config = await readGlobalConfig().catch(() => undefined);
+
+  if (config?.role !== 'client') {
+    return [];
+  }
+
+  const result = await run(binary, ['doctor', '--json'], { timeoutMs: 60_000 });
+
+  if (!result.ok) {
+    return [doctorFallback('The new binary did not answer corami doctor')];
+  }
+
+  try {
+    return pendingSteps(JSON.parse(result.stdout));
+  } catch {
+    return [doctorFallback('corami doctor did not answer with JSON')];
+  }
+}
+
+function doctorFallback(reason: string): PendingStep {
+  return {
+    id: 'doctor',
+    summary: `${reason}: the steps after the update are not known`,
+    fix: 'Run corami doctor',
   };
 }
 

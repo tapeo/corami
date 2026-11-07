@@ -6,14 +6,18 @@ import { join } from 'node:path';
 
 import { CoramiError } from '@/core/errors.ts';
 import {
+  adoptIgnores,
   IGNORE_FILE,
   ignoreDrift,
   ignoresFor,
+  KEPT_HEADER,
   keptIgnores,
   parseIgnores,
   projectIgnores,
+  refreshDecision,
   refreshPlan,
   sameIgnores,
+  unrepresentedIgnores,
 } from '@/core/ignore-file.ts';
 import { DEFAULT_IGNORES, GIT_IGNORES } from '@/integrations/mutagen.ts';
 
@@ -139,5 +143,95 @@ describe('the plan of a refresh', () => {
     expect(plan.refuse).toBe(true);
     expect(plan.extra).toEqual(['.env']);
     expect(refreshPlan(['a', '.env'], ['a'], true).refuse).toBe(false);
+  });
+});
+
+describe('the decision of a refresh', () => {
+  const current = refreshPlan(['a'], ['a'], false);
+  const missing = refreshPlan(['a'], ['a', 'b'], false);
+  const extra = refreshPlan(['a', 'b'], ['a'], false);
+
+  test('a session already current with the watch interval is left alone', () => {
+    expect(refreshDecision(current, true, 'plain')).toBe('current');
+  });
+
+  test('a current session with an old watch interval is recreated', () => {
+    expect(refreshDecision(current, false, 'plain')).toBe('refresh');
+  });
+
+  test('a session that leaves out paths is refused, unless the flag keeps them', () => {
+    expect(refreshDecision(extra, true, 'plain')).toBe('refused');
+    expect(refreshDecision(extra, true, 'force')).toBe('refresh');
+    expect(refreshDecision(extra, true, 'keep-extra')).toBe('refresh');
+  });
+
+  test('a missing pattern is added without asking', () => {
+    expect(refreshDecision(missing, true, 'plain')).toBe('refresh');
+  });
+});
+
+describe('the kept exclusions written to the file', () => {
+  test('a folder without the file gets the header and the patterns', () => {
+    const result = adoptIgnores('', ['.env', 'ios/Pods/']);
+
+    expect(result.adopted).toEqual(['.env', 'ios/Pods/']);
+    expect(result.sessionOnly).toEqual([]);
+    expect(result.text).toBe(`${KEPT_HEADER}\n.env\nios/Pods/\n`);
+    expect(parseIgnores(result.text).map((entry) => entry.pattern)).toEqual(['.env', 'ios/Pods/']);
+  });
+
+  test('the existing content is kept and separated by a blank line', () => {
+    const result = adoptIgnores('.build/', ['*.jks']);
+
+    expect(result.text).toBe(`.build/\n\n${KEPT_HEADER}\n*.jks\n`);
+  });
+
+  test('a pattern already in the file is not written twice', () => {
+    const result = adoptIgnores('.env\n', ['.env', '.env']);
+
+    expect(result.adopted).toEqual([]);
+    expect(result.text).toBe('.env\n');
+  });
+
+  test('a pattern the file cannot hold stays in the session only', () => {
+    const result = adoptIgnores('', ['!keep.me', '/abs', 'a/../b', 'ok/']);
+
+    expect(result.adopted).toEqual(['ok/']);
+    expect(result.sessionOnly).toEqual(['!keep.me', '/abs', 'a/../b']);
+  });
+
+  test('nothing kept leaves the file as it is', () => {
+    expect(adoptIgnores('a/\n', []).text).toBe('a/\n');
+  });
+
+  test('a second pass adds the pattern under the header already there', () => {
+    const first = adoptIgnores('', ['.env']);
+    const second = adoptIgnores(first.text, ['*.jks']);
+
+    expect(second.text).toBe(`${KEPT_HEADER}\n.env\n*.jks\n`);
+  });
+});
+
+describe('the kept exclusions the table already covers', () => {
+  test('a pattern equal to a current one without the prefix is dropped', () => {
+    expect(unrepresentedIgnores(['ios/Pods/', '.env'], ['**/ios/Pods/'])).toEqual(['.env']);
+  });
+
+  test('the comparison works in both directions', () => {
+    expect(unrepresentedIgnores(['**/x/'], ['x/'])).toEqual([]);
+  });
+
+  test('a pattern the table does not know stays', () => {
+    expect(unrepresentedIgnores(['a/'], ['b/'])).toEqual(['a/']);
+  });
+
+  test('a folder rule of the table covers the same name at any depth', () => {
+    expect(unrepresentedIgnores(['ios/Pods/', 'android/.gradle/'], ['Pods/', '.gradle/'])).toEqual(
+      [],
+    );
+  });
+
+  test('a name rule of the session is compared on its own', () => {
+    expect(unrepresentedIgnores(['*.jks', '.env'], ['Pods/'])).toEqual(['*.jks', '.env']);
   });
 });

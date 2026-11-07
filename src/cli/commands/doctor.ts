@@ -15,7 +15,7 @@ import {
 } from '@/core/doctor.ts';
 import { toCoramiError } from '@/core/errors.ts';
 import { run as runCommand } from '@/core/exec.ts';
-import { findExecLine } from '@/core/exec-ssh-keys.ts';
+import { findExecLine, isRestrictedLine } from '@/core/exec-ssh-keys.ts';
 import { ignoreDrift, ignoresFor } from '@/core/ignore-file.ts';
 import { findTool, MUTAGEN } from '@/core/pinned-tools.ts';
 import { orphanServerFolders, serverPathsOf } from '@/core/project-add.ts';
@@ -188,6 +188,17 @@ async function checkExecClient(serverHost: string): Promise<CheckResult[]> {
         id: 'exec.setup',
         status: 'ok',
         summary: `${server} cannot run commands here: run corami exec setup to connect`,
+      },
+    ];
+  }
+
+  if (!isRestrictedLine(line)) {
+    return [
+      {
+        id: 'exec.setup',
+        status: 'warn',
+        summary: `${server} can run commands here, but its key is not restricted to the gate`,
+        fix: 'Run corami exec setup on this machine to close the forwarding the old line leaves open',
       },
     ];
   }
@@ -464,7 +475,7 @@ function checkSyncWatch(sessions: SyncSession[]): CheckResult {
     detail: stale
       .map((session) => `${session.project}: every ${session.pollingInterval} s`)
       .join('\n'),
-    fix: `corami sync refresh ${stale[0]?.project ?? '<project>'}`,
+    fix: 'corami sync refresh --all',
   };
 }
 
@@ -481,6 +492,8 @@ function checkSyncIgnores(sessions: SyncSession[]): CheckResult {
     };
   }
 
+  const refused = stale.some(({ drift }) => drift.extra.length > 0);
+
   return {
     id: 'mutagen.ignores',
     status: 'warn',
@@ -495,7 +508,7 @@ function checkSyncIgnores(sessions: SyncSession[]): CheckResult {
         return `${session.project}: ${parts.join('; ')}`;
       })
       .join('\n'),
-    fix: `corami sync refresh ${stale[0]?.session.project ?? '<project>'}`,
+    fix: refused ? 'corami sync refresh --all --keep-extra' : 'corami sync refresh --all',
   };
 }
 

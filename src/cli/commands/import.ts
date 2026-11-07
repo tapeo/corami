@@ -6,7 +6,8 @@ import {
   transfer,
 } from '@/cli/commands/import-remote.ts';
 import type { StepResult } from '@/cli/commands/setup-steps.ts';
-import { copyPlace, createSyncFor, syncUpdate, waitFirstSync } from '@/cli/commands/sync.ts';
+import { copyPlace, createSyncFor, syncUpdate } from '@/cli/commands/sync.ts';
+import { waitFirstSync } from '@/cli/commands/sync-session.ts';
 import type { OutputOptions } from '@/cli/output.ts';
 import { renderSteps } from '@/cli/output.ts';
 import { type ProgressReporter, silentProgress } from '@/cli/progress.ts';
