@@ -29,7 +29,6 @@ import {
 
 const WATCH_TICK_MS = 2_000;
 const WATCH_ORIGIN_SLOTS = 4;
-const WATCH_SWEEP_MS = 30_000;
 const WATCH_PENDING_MS = 60_000;
 
 export interface WatchRoot {
@@ -57,7 +56,6 @@ export interface WatchOptions {
 export interface PeerTurnState {
   fingerprint: string;
   pendingUntil: number;
-  sweepAt: number;
 }
 
 interface ProjectRecord extends PeerTurnState {
@@ -73,10 +71,11 @@ interface WatchRuntime {
   records: Map<string, ProjectRecord>;
   asked: Set<string>;
   running: Set<string>;
+  sweeps: number;
 }
 
 export function peerTurnDue(state: PeerTurnState, fingerprint: string, now: number): boolean {
-  return now >= state.sweepAt || now < state.pendingUntil || fingerprint !== state.fingerprint;
+  return now < state.pendingUntil || fingerprint !== state.fingerprint;
 }
 
 export function nextPendingUntil(
@@ -102,6 +101,7 @@ export async function watchProjects(options: WatchOptions): Promise<void> {
     records: new Map(),
     asked: new Set(),
     running: new Set(),
+    sweeps: 0,
   };
   let empty = false;
 
@@ -117,12 +117,16 @@ export async function watchProjects(options: WatchOptions): Promise<void> {
       empty = false;
     }
 
+    const swept = roots[runtime.sweeps % Math.max(1, roots.length)];
+
+    runtime.sweeps += 1;
+
     for (const item of roots) {
       if (options.signal.aborted) {
         break;
       }
 
-      await peerTurn(runtime, item).catch(() => undefined);
+      await peerTurn(runtime, item, item === swept).catch(() => undefined);
     }
 
     startOriginTurns(runtime, roots);
@@ -131,7 +135,7 @@ export async function watchProjects(options: WatchOptions): Promise<void> {
   }
 }
 
-async function peerTurn(runtime: WatchRuntime, item: WatchRoot): Promise<void> {
+async function peerTurn(runtime: WatchRuntime, item: WatchRoot, sweep: boolean): Promise<void> {
   const record = recordFor(runtime, item.project);
 
   if (runtime.running.has(item.project)) {
@@ -141,12 +145,8 @@ async function peerTurn(runtime: WatchRuntime, item: WatchRoot): Promise<void> {
   const now = Date.now();
   const fingerprint = peerFingerprint(item.root);
 
-  if (!peerTurnDue(record, fingerprint, now)) {
+  if (!sweep && !peerTurnDue(record, fingerprint, now)) {
     return;
-  }
-
-  if (now >= record.sweepAt) {
-    record.sweepAt = now + WATCH_SWEEP_MS;
   }
 
   const changed = fingerprint !== record.fingerprint;
@@ -389,7 +389,6 @@ function recordFor(runtime: WatchRuntime, project: string): ProjectRecord {
     failing: false,
     pendingUntil: 0,
     originRetryAt: 0,
-    sweepAt: 0,
   };
 
   runtime.records.set(project, record);

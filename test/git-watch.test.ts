@@ -26,16 +26,15 @@ async function runWatch(root: string, machine: string): Promise<WatchEvent[]> {
 }
 
 describe('peer turn', () => {
-  const idle = { fingerprint: 'f1', pendingUntil: 0, sweepAt: 10_000 };
+  const idle = { fingerprint: 'f1', pendingUntil: 0 };
 
   test('skips a project whose fingerprint did not change', () => {
     expect(peerTurnDue(idle, 'f1', 5_000)).toBe(false);
   });
 
-  test('runs on a new fingerprint, a pending move or the sweep', () => {
+  test('runs on a new fingerprint or a pending move', () => {
     expect(peerTurnDue(idle, 'f2', 5_000)).toBe(true);
     expect(peerTurnDue({ ...idle, pendingUntil: 6_000 }, 'f1', 5_000)).toBe(true);
-    expect(peerTurnDue(idle, 'f1', 10_000)).toBe(true);
   });
 });
 
