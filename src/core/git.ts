@@ -214,6 +214,22 @@ export async function gitSetUpstream(root: string, branch: string): Promise<void
   await git(root, ['branch', '--quiet', '--set-upstream-to', `origin/${branch}`, branch]);
 }
 
+export async function gitUpdateRemoteRef(
+  root: string,
+  branch: string,
+  commit: string,
+  expected: string | undefined,
+): Promise<boolean> {
+  const result = await git(root, [
+    'update-ref',
+    `refs/remotes/origin/${branch}`,
+    commit,
+    expected ?? '',
+  ]);
+
+  return result.ok;
+}
+
 export function sshArgs(timeoutMs = 60_000): string[] {
   const seconds = Math.max(1, Math.round(timeoutMs / 1_000));
   return ['-c', `core.sshCommand=ssh -o BatchMode=yes -o ConnectTimeout=${seconds}`];

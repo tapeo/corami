@@ -1,65 +1,18 @@
 import { describe, expect, test } from 'bun:test';
-import { cpSync, existsSync, readFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+
 import { git, readGitState } from '@/core/git.ts';
-import { parsePeerHead } from '@/core/git-peers.ts';
-import { peerFingerprint, readPeerHeads, syncPeers } from '@/core/git-peers-sync.ts';
+import { originTipAction } from '@/core/git-follow.ts';
+import { originTipJson, parseOriginTip, parsePeerHead } from '@/core/git-peers.ts';
+import {
+  peerFingerprint,
+  publishOriginTip,
+  readPeerHeads,
+  syncPeers,
+} from '@/core/git-peers-sync.ts';
 
-interface Scene {
-  origin: string;
-  server: string;
-  client: string;
-}
-
-async function repository(prefix: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), `corami-${prefix}-`));
-  await git(root, ['init', '--quiet', '--initial-branch=main']);
-  await git(root, ['config', 'user.email', 'test@example.com']);
-  await git(root, ['config', 'user.name', 'Test']);
-  return root;
-}
-
-async function commit(root: string, message: string): Promise<string> {
-  await git(root, ['add', '-A']);
-  await git(root, ['commit', '--quiet', '-m', message]);
-  return (await git(root, ['rev-parse', 'HEAD'])).stdout;
-}
-
-async function scene(): Promise<Scene> {
-  const origin = await mkdtemp(join(tmpdir(), 'corami-origin-'));
-  await git(origin, ['init', '--quiet', '--bare', '--initial-branch=main']);
-
-  const seed = await repository('seed');
-  await Bun.write(join(seed, 'app.ts'), 'first\n');
-  await commit(seed, 'first');
-  await git(seed, ['remote', 'add', 'origin', origin]);
-  await git(seed, ['push', '--quiet', 'origin', 'main']);
-
-  const server = await mkdtemp(join(tmpdir(), 'corami-server-'));
-  await git(server, ['clone', '--quiet', origin, '.']);
-  await git(server, ['config', 'user.email', 'server@example.com']);
-  await git(server, ['config', 'user.name', 'Server']);
-
-  const client = await mkdtemp(join(tmpdir(), 'corami-client-'));
-  await git(client, ['clone', '--quiet', origin, '.']);
-  await git(client, ['config', 'user.email', 'client@example.com']);
-  await git(client, ['config', 'user.name', 'Client']);
-
-  return { origin, server, client };
-}
-
-function syncFiles(from: string, to: string): void {
-  cpSync(from, to, {
-    recursive: true,
-    filter: (path) => !path.includes('/.git'),
-  });
-}
-
-function copyPeerFiles(from: string, to: string): void {
-  cpSync(join(from, '.git', 'corami'), join(to, '.git', 'corami'), { recursive: true });
-}
+import { cloneAs, commit, copyPeerFiles, copyPeerHeads, scene, syncFiles } from './git-scene.ts';
 
 function ownHead(root: string, machine: string) {
   const text = readFileSync(join(root, '.git', 'corami', `${machine}.json`), 'utf8');
@@ -132,8 +85,9 @@ describe('peer exchange', () => {
     await syncPeers(server, { machine: 'hearth-vps' });
     copyPeerFiles(server, client);
     const before = (await readGitState(client)).commit;
-    await syncPeers(client, { machine: 'tapeo' });
+    const result = await syncPeers(client, { machine: 'tapeo' });
 
+    expect(result.pending).toBe(true);
     expect((await readGitState(client)).commit).toBe(before);
     expect(head).not.toBe(before);
   });
@@ -220,10 +174,7 @@ describe('peer exchange', () => {
 
   test('does nothing when the other origin moved and the base is missing', async () => {
     const { origin, server, client } = await scene();
-    const other = await mkdtemp(join(tmpdir(), 'corami-other-'));
-    await git(other, ['clone', '--quiet', origin, '.']);
-    await git(other, ['config', 'user.email', 'other@example.com']);
-    await git(other, ['config', 'user.name', 'Other']);
+    const other = await cloneAs(origin, 'other');
     await Bun.write(join(other, 'o1.ts'), 'o1\n');
     await commit(other, 'o1');
     await git(other, ['push', '--quiet', 'origin', 'main']);
@@ -240,5 +191,72 @@ describe('peer exchange', () => {
     await syncPeers(client, { machine: 'tapeo' });
 
     expect((await readGitState(client)).commit).toBe(before);
+  });
+
+  test('reports a peer commit whose bundle has not arrived', async () => {
+    const { server, client } = await scene();
+    await Bun.write(join(server, 's1.ts'), 's1\n');
+    const head = await commit(server, 's1');
+
+    await syncPeers(server, { machine: 'hearth-vps' });
+    syncFiles(server, client);
+    copyPeerHeads(server, client);
+
+    const before = (await readGitState(client)).commit;
+    const result = await syncPeers(client, { machine: 'tapeo' });
+
+    expect(result.missing.map((entry) => entry.commit)).toEqual([head]);
+    expect((await readGitState(client)).commit).toBe(before);
+  });
+
+  test('reports no gap when the bundle carries the commit', async () => {
+    const { server, client } = await scene();
+    await Bun.write(join(server, 's1.ts'), 's1\n');
+    await commit(server, 's1');
+
+    await syncPeers(server, { machine: 'hearth-vps' });
+    syncFiles(server, client);
+    copyPeerFiles(server, client);
+
+    const result = await syncPeers(client, { machine: 'tapeo' });
+
+    expect(result.missing).toEqual([]);
+  });
+});
+
+describe('origin tip', () => {
+  test('parses and writes the published tip', () => {
+    const tip = { branch: 'main', commit: 'c'.repeat(40), fetchedAt: '2026-11-09T09:49:04.000Z' };
+
+    expect(parseOriginTip(originTipJson(tip))).toEqual(tip);
+    expect(parseOriginTip({ branch: 'main', commit: 'c'.repeat(40) })).toEqual({
+      branch: 'main',
+      commit: 'c'.repeat(40),
+      fetchedAt: '',
+    });
+    expect(parseOriginTip({ branch: '', commit: 'c'.repeat(40) })).toBeUndefined();
+    expect(parseOriginTip({ branch: 'main' })).toBeUndefined();
+    expect(parseOriginTip(null)).toBeUndefined();
+  });
+
+  test('the published tip decides between none, update and fetch', () => {
+    const tip = { branch: 'main', commit: 'c'.repeat(40), fetchedAt: '' };
+
+    expect(originTipAction(undefined, undefined, false)).toBe('none');
+    expect(originTipAction('c'.repeat(40), tip, true)).toBe('none');
+    expect(originTipAction('d'.repeat(40), tip, true)).toBe('update_ref');
+    expect(originTipAction(undefined, tip, false)).toBe('fetch');
+    expect(originTipAction('d'.repeat(40), tip, false)).toBe('fetch');
+  });
+
+  test('publishing the same tip again leaves the file alone', async () => {
+    const { server } = await scene();
+    const file = join(server, '.git', 'corami', 'origin.json');
+
+    await publishOriginTip(server, 'main', 'c'.repeat(40));
+    const first = readFileSync(file, 'utf8');
+    await publishOriginTip(server, 'main', 'c'.repeat(40));
+
+    expect(readFileSync(file, 'utf8')).toBe(first);
   });
 });

@@ -15,8 +15,11 @@ import {
   isUsable,
   originRelation,
 } from '@/core/git-align.ts';
+import type { OriginTip } from '@/core/git-peers.ts';
 
-const CYCLE_MS = 60_000;
+const ACTIVE_MS = 60_000;
+const IDLE_MS = 15 * 60_000;
+const ACTIVITY_MS = 30 * 60_000;
 
 export interface GitOriginStatus {
   state: GitRepoState;
@@ -131,20 +134,90 @@ export function fetchFailed(status: GitOriginStatus): boolean {
   return status.upstream !== undefined && status.fetched === false;
 }
 
-export function originChanged(
+export function originStateChanged(
   previous: GitOriginStatus | undefined,
   status: GitOriginStatus,
-  wasFailing: boolean,
 ): boolean {
   if (previous === undefined) {
     return true;
   }
 
-  return (
-    previous.status !== status.status ||
-    previous.state.commit !== status.state.commit ||
-    fetchFailed(status) !== wasFailing
-  );
+  return previous.status !== status.status || previous.state.commit !== status.state.commit;
+}
+
+export interface OriginActivity {
+  fingerprint: string;
+  dirtyChanges: number;
+  offOrigin: boolean;
+}
+
+export interface OriginSchedule {
+  lastActiveAt: number;
+  lastFetchAt: number;
+  offOrigin: boolean;
+  requested: boolean;
+}
+
+export function freshOriginSchedule(): OriginSchedule {
+  return { lastActiveAt: 0, lastFetchAt: 0, offOrigin: false, requested: false };
+}
+
+export function noteOriginActivity(
+  schedule: OriginSchedule,
+  previous: OriginActivity | undefined,
+  activity: OriginActivity,
+  now: number,
+): OriginSchedule {
+  const changed =
+    previous === undefined ||
+    previous.fingerprint !== activity.fingerprint ||
+    previous.dirtyChanges !== activity.dirtyChanges ||
+    (activity.offOrigin && !previous.offOrigin);
+
+  return {
+    ...schedule,
+    offOrigin: activity.offOrigin,
+    lastActiveAt: changed ? now : schedule.lastActiveAt,
+  };
+}
+
+export function originFetchDue(schedule: OriginSchedule, now: number): boolean {
+  if (schedule.requested) {
+    return true;
+  }
+
+  if (schedule.lastFetchAt === 0) {
+    return true;
+  }
+
+  const active = schedule.offOrigin || now - schedule.lastActiveAt < ACTIVITY_MS;
+  const interval = active ? ACTIVE_MS : IDLE_MS;
+
+  return now - schedule.lastFetchAt >= interval;
+}
+
+export function originRequestOpen(requested: boolean, status: GitOriginStatus): boolean {
+  const fetchable = isUsable(status.state) && status.upstream !== undefined;
+
+  return requested && fetchable && !status.fetched;
+}
+
+export function originIsOff(status: GitOriginStatus): boolean {
+  return status.status === 'ahead' || status.status === 'behind';
+}
+
+export type OriginTipAction = 'none' | 'update_ref' | 'fetch';
+
+export function originTipAction(
+  local: string | undefined,
+  published: OriginTip | undefined,
+  present: boolean,
+): OriginTipAction {
+  if (published === undefined || published.commit === local) {
+    return 'none';
+  }
+
+  return present ? 'update_ref' : 'fetch';
 }
 
 export function originChangeJson(
@@ -191,4 +264,4 @@ export function originNeedsWatch(status: GitOriginStatus | undefined): boolean {
   return status?.status === 'behind' && status.move;
 }
 
-export { CYCLE_MS as ORIGIN_CYCLE_MS };
+export { ACTIVE_MS as ORIGIN_ACTIVE_MS };

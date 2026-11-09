@@ -29,8 +29,12 @@ import {
   branchWinner,
   furthestTip,
   nextBranchEpoch,
+  ORIGIN_TIP_FILE,
+  type OriginTip,
+  originTipJson,
   PEERS_DIR,
   type PeerHead,
+  parseOriginTip,
   parsePeerHead,
   peerBundleFile,
   peerHeadFile,
@@ -62,6 +66,12 @@ export interface PeerSyncResult {
   peers: PeerHead[];
   moved: PeerMove | undefined;
   switched: PeerSwitch | undefined;
+  missing: PeerHead[];
+  pending: boolean;
+}
+
+export function emptyPeerSync(): PeerSyncResult {
+  return { peers: [], moved: undefined, switched: undefined, missing: [], pending: false };
 }
 
 export async function syncPeers(root: string, options: PeerSyncOptions): Promise<PeerSyncResult> {
@@ -69,7 +79,7 @@ export async function syncPeers(root: string, options: PeerSyncOptions): Promise
   const state = await readGitState(root);
 
   if (dir === undefined || !isUsable(state)) {
-    return { peers: [], moved: undefined, switched: undefined };
+    return emptyPeerSync();
   }
 
   const peers = readPeerHeads(dir);
@@ -84,14 +94,36 @@ export async function syncPeers(root: string, options: PeerSyncOptions): Promise
       branchEpoch: epoch,
     },
   ];
-  const switched = await followPeerBranch(root, state, heads, options);
-  const current = switched === undefined ? state : await readGitState(root);
-  const moved = await moveToPeerTip(root, current, peers, options);
-  const after = moved === undefined ? current : await readGitState(root);
+  const branch = await followPeerBranch(root, state, heads, options);
+  const current = branch.switched === undefined ? state : await readGitState(root);
+  const tip = await moveToPeerTip(root, current, peers, options);
+  const after = tip.move === undefined ? current : await readGitState(root);
 
-  await publish(root, dir, after, options, switched, epoch);
+  await publish(root, dir, after, options, branch.switched, epoch);
 
-  return { peers, moved, switched };
+  return {
+    peers,
+    moved: tip.move,
+    switched: branch.switched,
+    missing: await peerGaps(root, peers, options.machine),
+    pending: branch.pending || tip.pending,
+  };
+}
+
+async function peerGaps(root: string, peers: PeerHead[], machine: string): Promise<PeerHead[]> {
+  const gaps: PeerHead[] = [];
+
+  for (const peer of peers) {
+    if (peer.machine === machine) {
+      continue;
+    }
+
+    if (!(await gitHasCommit(root, peer.commit))) {
+      gaps.push(peer);
+    }
+  }
+
+  return gaps;
 }
 
 export function peerFingerprint(root: string): string {
@@ -271,16 +303,21 @@ export function readPeerHeads(dir: string): PeerHead[] {
   return heads;
 }
 
+interface BranchStep {
+  switched: PeerSwitch | undefined;
+  pending: boolean;
+}
+
 async function followPeerBranch(
   root: string,
   state: GitRepoState,
   peers: PeerHead[],
   options: PeerSyncOptions,
-): Promise<PeerSwitch | undefined> {
+): Promise<BranchStep> {
   const winner = branchWinner(peers);
 
   if (winner === undefined || winner.branch === state.branch) {
-    return undefined;
+    return { switched: undefined, pending: false };
   }
 
   const present = await bundleCommitHere(root, winner, options);
@@ -299,13 +336,13 @@ async function followPeerBranch(
   });
 
   if (!decision.follow) {
-    return undefined;
+    return { switched: undefined, pending: decision.reason === 'waiting_for_files' };
   }
 
   const switched = await gitSwitchTo(root, winner.branch, winner.commit, refCommit);
 
   if (!switched.ok) {
-    return undefined;
+    return { switched: undefined, pending: false };
   }
 
   if ((await gitRefCommit(root, `refs/remotes/origin/${winner.branch}`)) !== undefined) {
@@ -313,10 +350,13 @@ async function followPeerBranch(
   }
 
   return {
-    from: state.branch,
-    to: winner.branch,
-    commit: winner.commit,
-    epoch: winner.branchEpoch,
+    switched: {
+      from: state.branch,
+      to: winner.branch,
+      commit: winner.commit,
+      epoch: winner.branchEpoch,
+    },
+    pending: false,
   };
 }
 
@@ -336,14 +376,19 @@ async function refPosition(
   return 'other';
 }
 
+interface TipStep {
+  move: PeerMove | undefined;
+  pending: boolean;
+}
+
 async function moveToPeerTip(
   root: string,
   state: GitRepoState,
   peers: PeerHead[],
   options: PeerSyncOptions,
-): Promise<PeerMove | undefined> {
+): Promise<TipStep> {
   if (state.staged || state.operation !== undefined) {
-    return undefined;
+    return { move: undefined, pending: false };
   }
 
   const candidates: Array<{ source: string; commit: string }> = [];
@@ -379,11 +424,11 @@ async function moveToPeerTip(
   const tip = furthestTip(inputs);
 
   if (tip === undefined || tip.commit === state.commit) {
-    return undefined;
+    return { move: undefined, pending: false };
   }
 
   if (!(await filesArrived(root, state.commit, tip.commit))) {
-    return undefined;
+    return { move: undefined, pending: true };
   }
 
   const reset = await gitCompareAndSwap(
@@ -393,7 +438,9 @@ async function moveToPeerTip(
     state.commit,
   );
 
-  return reset.ok ? { from: state.commit, to: tip.commit, source: tip.source } : undefined;
+  return reset.ok
+    ? { move: { from: state.commit, to: tip.commit, source: tip.source }, pending: false }
+    : { move: undefined, pending: false };
 }
 
 async function ancestorsOf(
@@ -526,4 +573,46 @@ function ownEpoch(own: PeerHead | undefined, state: GitRepoState, peers: PeerHea
   }
 
   return own.branchEpoch;
+}
+
+export function readOriginTip(dir: string): OriginTip | undefined {
+  const file = join(dir, PEERS_DIR, ORIGIN_TIP_FILE);
+
+  if (!existsSync(file)) {
+    return undefined;
+  }
+
+  try {
+    return parseOriginTip(JSON.parse(readFileSync(file, 'utf8')));
+  } catch {
+    return undefined;
+  }
+}
+
+export async function publishOriginTip(
+  root: string,
+  branch: string,
+  commit: string,
+): Promise<void> {
+  const dir = await gitDir(root);
+
+  if (dir === undefined || branch === '' || commit === '') {
+    return;
+  }
+
+  const previous = readOriginTip(dir);
+
+  if (previous !== undefined && previous.branch === branch && previous.commit === commit) {
+    return;
+  }
+
+  const folder = join(dir, PEERS_DIR);
+  const temporary = join(dir, '.corami-origin.json');
+
+  mkdirSync(folder, { recursive: true });
+
+  const tip: OriginTip = { branch, commit, fetchedAt: new Date().toISOString() };
+
+  writeFileSync(temporary, `${JSON.stringify(originTipJson(tip))}\n`);
+  renameSync(temporary, join(folder, ORIGIN_TIP_FILE));
 }

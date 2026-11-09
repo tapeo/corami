@@ -7,9 +7,9 @@ import {
   describeOrigin,
   fetchFailed,
   type GitOriginStatus,
-  originChanged,
   originChangeJson,
   originNeedsWatch,
+  originStateChanged,
 } from '@/core/git-follow.ts';
 import { mutagenDaemonSpec } from '@/integrations/mutagen.ts';
 import {
@@ -112,24 +112,24 @@ describe('origin summary', () => {
     expect(first.reason).toBe('staged');
   });
 
-  test('tells the fetch failures apart from the quiet rounds', () => {
+  test('tells a change of state from a quiet round', () => {
     const aligned = origin();
     const same = origin();
-    const failing = origin({ fetched: false });
     const moved = origin({ state: { ...aligned.state, commit: 'd'.repeat(40) } });
 
-    expect(originChanged(aligned, same, false)).toBe(false);
-    expect(originChanged(aligned, moved, false)).toBe(true);
-    expect(originChanged(aligned, origin({ status: 'ahead' }), false)).toBe(true);
-    expect(originChanged(undefined, aligned, false)).toBe(true);
-    expect(originChanged(aligned, failing, false)).toBe(true);
-    expect(originChanged(failing, failing, true)).toBe(false);
-    expect(originChanged(failing, aligned, true)).toBe(true);
+    expect(originStateChanged(aligned, same)).toBe(false);
+    expect(originStateChanged(aligned, moved)).toBe(true);
+    expect(originStateChanged(aligned, origin({ status: 'ahead' }))).toBe(true);
+    expect(originStateChanged(undefined, aligned)).toBe(true);
+  });
+
+  test('tells a failed fetch from a quiet round', () => {
+    expect(fetchFailed(origin({ fetched: false }))).toBe(true);
+    expect(fetchFailed(origin())).toBe(false);
 
     const missingRepo = origin({ status: 'unknown', upstream: undefined, fetched: false });
 
     expect(fetchFailed(missingRepo)).toBe(false);
-    expect(originChanged(missingRepo, { ...missingRepo }, false)).toBe(false);
   });
 });
 

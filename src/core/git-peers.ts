@@ -41,6 +41,44 @@ export interface DivergenceAdvice {
 }
 
 export const PEERS_DIR = 'corami';
+export const ORIGIN_TIP_FILE = 'origin.json';
+
+export interface OriginTip {
+  branch: string;
+  commit: string;
+  fetchedAt: string;
+}
+
+export function parseOriginTip(value: unknown): OriginTip | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const branch = record.branch;
+  const commit = record.commit;
+  const fetchedAt = record.fetched_at;
+
+  if (
+    typeof branch !== 'string' ||
+    branch === '' ||
+    typeof commit !== 'string' ||
+    commit === '' ||
+    (fetchedAt !== undefined && typeof fetchedAt !== 'string')
+  ) {
+    return undefined;
+  }
+
+  return { branch, commit, fetchedAt: fetchedAt ?? '' };
+}
+
+export function originTipJson(tip: OriginTip): Record<string, unknown> {
+  return {
+    branch: tip.branch,
+    commit: tip.commit,
+    fetched_at: tip.fetchedAt,
+  };
+}
 
 export function peerHeadFile(machine: string): string {
   return `${machine}.json`;

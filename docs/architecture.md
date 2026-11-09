@@ -164,7 +164,8 @@ corami/
       ports.ts            the Corami port range, TCP probes
       pinned-tools.ts     version and sha256 of Mutagen
       local-copy.ts       path rules: what the sync, the import and the copy removal never carry
-      git.ts, git-align.ts, git-follow.ts
+      git.ts, git-align.ts, git-follow.ts, git-peers.ts, git-peers-sync.ts,
+      git-watch.ts
       exec-rules.ts, exec-gate.ts, exec-ssh-keys.ts, exec-sshd.ts, exec-errors.ts
       paths and helper modules: doctor, errors, exec,
       last-change, release, state, transfer
@@ -426,7 +427,13 @@ Every side has its own `.git`: the client in the local copy, the server in the p
 
 **What each side publishes.** Per machine, two files in `.git/corami/`, with one writer each: `<machine>.json` with `branch`, `commit` and `branch_epoch`, and `<machine>.bundle`, made with `git bundle create <file> <branch> --not --remotes=origin`, so it holds the commits `origin` is missing and is absent when there are none. The machine name is the short tailnet name. Every file is written in `.git/`, which is ignored, and then renamed into `.git/corami/`, so a half-written file never travels. The rules are `/.git/*`, `!/.git/corami/` and `*/**/.git` (`GIT_IGNORES` in `src/integrations/mutagen.ts`). Mutagen scans an ignored folder only if the folder is there when the session is created, so `project add` and `sync refresh` publish the head of this machine before creating the session, and reset the session once when the folder appeared after it. A project whose root `.git` is a file, as a worktree writes it, keeps `--ignore-vcs` and gets no peer exchange.
 
-**The move.** The same rule on both sides, still a pure function: the candidates are `origin/<branch>` and the bundles of the other machines on the same branch. The side moves only to the furthest candidate on a single line, the one that descends from HEAD and from every other candidate; when the candidates diverge among themselves it moves nowhere. The bundle is fetched into `FETCH_HEAD`, without a remote and without a ref. A bundle that needs a commit of `origin` this side does not have waits for the next fetch.
+**The tip of `origin`.** The server, and only the server, writes `.git/corami/origin.json` after a successful fetch that moved the tip: `{ "branch": "<branch>", "commit": "<sha>", "fetched_at": "<iso>" }` for the branch of the project, with the same rename. A client compares it with its `refs/remotes/origin/<branch>`, and the decision is a pure function, `originTipAction` in `src/core/git-follow.ts`:
+
+- the same commit, or no file: nothing;
+- the commit is already here, typically because a bundle carried it: `git update-ref refs/remotes/origin/<branch> <sha> <old>` with no network, so `git status` stops saying ahead right after a push from the server;
+- the commit is not here: one on-demand fetch of that project.
+
+**The move.** The same rule on both sides, still a pure function: the candidates are `origin/<branch>` and the bundles of the other machines on the same branch. The side moves only to the furthest candidate on a single line, the one that descends from HEAD and from every other candidate; when the candidates diverge among themselves it moves nowhere. The bundle is fetched into `FETCH_HEAD`, without a remote and without a ref. A bundle that needs a commit of `origin` this side does not have asks for a fetch of that project at once, and the next cycle retries.
 
 **Waiting for the files.** Before moving the HEAD the cycle checks that the incoming changes **have arrived**: a file added between the two commits must be on disk, a deleted one must be gone, a modified one must no longer carry the old content. An empty `.git/corami/` folder on a side is not a repository: `hasGitRepository` in `src/core/git.ts` asks for `.git/HEAD`.
 
@@ -438,14 +445,14 @@ The HEAD move cannot jump over a just-made commit: `git update-ref refs/heads/<b
 
 Who does what:
 
-- **The same cycle runs on both sides:** `corami git watch`, as a service installed by `corami setup client` on the client and by `corami setup server` on the server. On every side it checks the local refs of the project and the files of `.git/corami/` every **two seconds**, and every **minute** it runs `git fetch origin` and the move towards the refs of `origin`. The client works on the local copies (`session.beta`), the server on the projects of `listProjects()`. Every state change of a project produces a **JSON line** (`project`, `status`, `reason`, `from`, `to`, `upstream_commit`, `fetched`), plus a line when a commit of another machine is taken and when the branch changes: on the server it goes to the journal, on the Mac to `~/.corami/logs/git-watch.log`, and with `--json` the line goes to stderr, so stdout stays the only envelope of the command.
+- **The same cycle runs on both sides:** `corami git watch`, as a service installed by `corami setup client` on the client and by `corami setup server` on the server. On every side it runs two loops. The **peer loop** checks the local refs of the project and the files of `.git/corami/` every **two seconds** and never runs a network command: it moves a side to a commit of another machine, or to `origin` when that commit is already here. The **origin loop** runs in the background, **four projects at a time**, and runs `git fetch origin` with the follow that comes with it. On the server only, and on a schedule: every **minute** for a project that has been active in the last 30 minutes (a commit, a branch switch, a change in the number of changed files, a branch ahead of or behind `origin`), every **15 minutes** for an idle one, at once when a bundle or the tip of `origin` asks for it. A client never fetches by itself: it fetches one project when a bundle of another machine needs a commit this side does not have, when a head names a commit that is here nowhere, or when the server has published a tip of `origin` this side does not have. The peer loop skips a project while its fetch runs, so the two loops never move the same refs at the same moment. The client works on the local copies (`session.beta`), the server on the projects of `listProjects()`. Every state change of a project produces a **JSON line** (`project`, `status`, `reason`, `from`, `to`, `upstream_commit`, `fetched`), plus a line when a commit of another machine is taken and when the branch changes: on the server it goes to the journal, on the Mac to `~/.corami/logs/git-watch.log`, and with `--json` the line goes to stderr, so stdout stays the only envelope of the command.
 - **The daemon never moves anything.** It answers with the state of the server (`GET /v1/projects/<p>/git/state`, which includes the relation with `origin` read without a fetch) and that is it.
 - **Passing outcomes retry by themselves.** When `origin` does not answer, when the network is not ready, when the files are not here yet, the next cycle retries. A failed fetch does not block: the decision uses the refs of the last successful fetch.
 
 What does not enter the alignment:
 
-- **A commit does not need a push to reach the other sides.** The bundle in `.git/corami/` carries it, so the other sides align on it within seconds. The push stays an act of whoever makes the commit, and it is what publishes the commit on `origin`: until then `git status` on the other sides says ahead of `origin`.
-- **`origin` stays the place where things are published.** For a commit that arrived from outside (a merged PR on GitHub, another machine) a `git pull` is needed on any side: the others follow once the sync has delivered the files. The alignment alone never `pull`s the files.
+- **A commit does not need a push to reach the other sides.** The bundle in `.git/corami/` carries it, so the other sides align on it within seconds. The push stays an act of whoever makes the commit, and it is what publishes the commit on `origin`: until then `git status` on the other sides says ahead of `origin`, and the tip the server publishes after its next fetch moves their `origin` ref without a fetch.
+- **`origin` stays the place where things are published.** For a commit that arrived from outside (a merged PR on GitHub, another machine) a `git pull` is needed on any side: the others follow the files with the sync, and they fetch that project at once when a head or the published tip tells them that `origin` moved. The alignment alone never `pull`s the files.
 - **Work in progress does not block the alignment.** On the side that moves, the uncommitted changes stay where they are. It waits only with something staged, on both sides, or with a git operation in progress.
 
 Manual commands:
@@ -458,7 +465,7 @@ corami git watch [proj] --once   # one cycle only, without staying in listen mod
 
 - **The `.git` of a new local copy:** `corami project add` gives the copy its own repository. It reads the url of `origin` and the branch of the server from `GET /v1/projects/<p>/git/state`, clones without checkout into a temporary folder next to the copy and moves the `.git` in. When the branch of the server exists on `origin` the copy goes on it, otherwise it stays on the default branch and the command says so. `git reset` then rebuilds the index from `HEAD` without touching the files, which are the ones of the sync. The clone uses the git credentials of the client, never prompts, and when it fails the files are synced anyway: the command run again retries, and does nothing on a copy that already has its `.git`. `--no-git` skips it. From there the git watch service works on its own, and the sync of `.git/corami/` does not pass for a repository, so the clone still happens.
 - **Removing the local copy:** `corami project rm --on client` stops when the local `.git` has commits or stashes that exist in no remote and in no other machine, counted from `.git/corami/`. A commit pushed, or published by another side, does not block the removal.
-- The alignment arrives within seconds for the commits of a machine, within a minute for the refs of `origin`.
+- The alignment arrives within seconds for the commits of a machine, whatever the number of projects. A ref of `origin` arrives within a minute for an active project and within 15 minutes for an idle one, and at once when any side runs `git pull`.
 
 ## Importing a local project
 
