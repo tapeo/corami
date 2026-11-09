@@ -467,29 +467,35 @@ async function worktreeHashes(
   root: string,
   paths: string[],
 ): Promise<Map<string, string> | undefined> {
-  const script = [
-    'root=$1',
-    'shift',
-    'for path in "$@"; do',
-    '  hash=$(git -C "$root" hash-object -- "$path" 2>/dev/null) || hash=-',
-    '  printf "%s\\n" "$hash"',
-    'done',
-  ].join('\n');
-  const result = await run('sh', ['-c', script, 'corami', root, ...paths]);
+  const hashes = new Map<string, string>(paths.map((path) => [path, '-']));
+  const files = paths.filter((path) => isWorktreeFile(join(root, path)));
+
+  if (files.length === 0) {
+    return hashes;
+  }
+
+  const result = await git(root, ['hash-object', '--', ...files]);
 
   if (!result.ok) {
     return undefined;
   }
 
   const lines = result.stdout.split('\n');
-  const hashes = new Map<string, string>();
 
-  paths.forEach((path, index) => {
+  files.forEach((path, index) => {
     const line = lines[index];
     hashes.set(path, line === undefined || line.trim() === '' ? '-' : line.trim());
   });
 
   return hashes;
+}
+
+function isWorktreeFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
 }
 
 export async function filesArrived(root: string, from: string, to: string): Promise<boolean> {

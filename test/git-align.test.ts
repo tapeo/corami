@@ -402,6 +402,25 @@ describe('filesArrived', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  test('waits for one missing file among files that are here', async () => {
+    const root = await repository();
+    writeFileSync(join(root, 'app.ts'), 'first\n');
+    const first = await commit(root, 'first');
+    writeFileSync(join(root, 'app.ts'), 'second\n');
+    writeFileSync(join(root, 'late.ts'), 'late\n');
+    const second = await commit(root, 'second');
+
+    rmSync(join(root, 'late.ts'));
+
+    expect(await filesArrived(root, first, second)).toBe(false);
+
+    writeFileSync(join(root, 'late.ts'), 'late\n');
+
+    expect(await filesArrived(root, first, second)).toBe(true);
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
   test('false with an empty commit on either side', async () => {
     const root = await repository();
     writeFileSync(join(root, 'app.ts'), 'first\n');
