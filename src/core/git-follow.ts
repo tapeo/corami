@@ -32,8 +32,8 @@ export interface GitOriginStatus {
   filesHere: boolean;
 }
 
-export async function gitOriginState(root: string): Promise<GitOriginStatus> {
-  const state = await readGitState(root);
+export async function gitOriginState(root: string, known?: GitRepoState): Promise<GitOriginStatus> {
+  const state = known ?? (await readGitState(root));
   const upstream = await gitUpstreamOf(root, state.branch);
   const upstreamCommit = upstream === undefined ? '' : ((await gitRefCommit(root, upstream)) ?? '');
   const upstreamHere = upstreamCommit !== '' && (await gitHasCommit(root, upstreamCommit));

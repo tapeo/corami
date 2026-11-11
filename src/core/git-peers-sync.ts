@@ -68,10 +68,18 @@ export interface PeerSyncResult {
   switched: PeerSwitch | undefined;
   missing: PeerHead[];
   pending: boolean;
+  state: GitRepoState | undefined;
 }
 
 export function emptyPeerSync(): PeerSyncResult {
-  return { peers: [], moved: undefined, switched: undefined, missing: [], pending: false };
+  return {
+    peers: [],
+    moved: undefined,
+    switched: undefined,
+    missing: [],
+    pending: false,
+    state: undefined,
+  };
 }
 
 export async function syncPeers(root: string, options: PeerSyncOptions): Promise<PeerSyncResult> {
@@ -107,6 +115,7 @@ export async function syncPeers(root: string, options: PeerSyncOptions): Promise
     switched: branch.switched,
     missing: await peerGaps(root, peers, options.machine),
     pending: branch.pending || tip.pending,
+    state: after,
   };
 }
 
@@ -124,6 +133,20 @@ async function peerGaps(root: string, peers: PeerHead[], machine: string): Promi
   }
 
   return gaps;
+}
+
+export async function tipOnOrigin(root: string, branch: string, tip: string): Promise<boolean> {
+  if (branch === '' || tip === '') {
+    return false;
+  }
+
+  const originTip = await gitRefCommit(root, `refs/remotes/origin/${branch}`);
+
+  if (originTip === undefined) {
+    return false;
+  }
+
+  return originTip === tip || (await isAncestor(root, tip, originTip));
 }
 
 export function peerFingerprint(root: string): string {

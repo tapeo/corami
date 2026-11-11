@@ -118,7 +118,7 @@ On a client the folder is not the one of the server: `corami serve rm <name>` th
 | `corami project rm <name> --on client --yes [--force] [--dry-run]` | client | removes only the local copy, the folder of its session, after the checks. The project is always named, never taken from the current folder |
 | `corami sync stop [<project>]` | client | stops the sync of this copy and keeps the files. The way out of a copy whose project is gone from the server, where `corami project rm --on client` would be deleting the last copy of the work |
 | `corami sync prune --unused <duration> [--dry-run] [--yes]` | client | lists and removes the unused copies of this client; without `--yes` it touches nothing |
-| `corami git watch [project] [--once]` | all | the alignment cycle in the foreground, as the service runs it: the commits of the other machines every two seconds, `origin` on its own schedule |
+| `corami git watch [project] [--once]` | all | the alignment cycle in the foreground, as the service runs it: the commits of the other machines every two seconds, a full check of each project every ten minutes, `origin` on its own schedule |
 
 `corami project ls` is the list to read for the copies of this machine: no daemon and no git, just the sessions of the engine, with the copies whose project is not on the server marked.
 

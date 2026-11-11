@@ -3,7 +3,13 @@ import { join } from 'node:path';
 
 import { git, gitRefCommit, readGitState } from '@/core/git.ts';
 import { publishOriginTip, syncPeers } from '@/core/git-peers-sync.ts';
-import { nextPendingUntil, peerTurnDue, type WatchEvent, watchProjects } from '@/core/git-watch.ts';
+import {
+  nextPendingUntil,
+  peerTurnDue,
+  sweepDue,
+  type WatchEvent,
+  watchProjects,
+} from '@/core/git-watch.ts';
 
 import { commit, copyPeerFiles, removeScene, scene, syncFiles } from './git-scene.ts';
 
@@ -26,7 +32,7 @@ async function runWatch(root: string, machine: string): Promise<WatchEvent[]> {
 }
 
 describe('peer turn', () => {
-  const idle = { fingerprint: 'f1', pendingUntil: 0 };
+  const idle = { fingerprint: 'f1', pendingUntil: 0, sweptAt: 0 };
 
   test('skips a project whose fingerprint did not change', () => {
     expect(peerTurnDue(idle, 'f1', 5_000)).toBe(false);
@@ -35,6 +41,14 @@ describe('peer turn', () => {
   test('runs on a new fingerprint or a pending move', () => {
     expect(peerTurnDue(idle, 'f2', 5_000)).toBe(true);
     expect(peerTurnDue({ ...idle, pendingUntil: 6_000 }, 'f1', 5_000)).toBe(true);
+  });
+});
+
+describe('sweep', () => {
+  test('a project is checked in full every ten minutes', () => {
+    expect(sweepDue(0, 599_999)).toBe(false);
+    expect(sweepDue(0, 600_000)).toBe(true);
+    expect(sweepDue(1_000, 601_000)).toBe(true);
   });
 });
 

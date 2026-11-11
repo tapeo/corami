@@ -237,6 +237,24 @@ describe('divergence advice', () => {
     expect(tied).toEqual({ machine: 'hearth-vps', resetTo: 'a2' });
   });
 
+  test('resets the side whose commits origin does not have', () => {
+    const published = divergenceAdvice([
+      { machine: 'tapeo', ahead: 3, tip: 'a3', published: true },
+      { machine: 'hearth-vps', ahead: 5, tip: 's5', published: false },
+    ]);
+
+    expect(published).toEqual({ machine: 'hearth-vps', resetTo: 'a3' });
+  });
+
+  test('gives no advice when origin has both sides', () => {
+    expect(
+      divergenceAdvice([
+        { machine: 'tapeo', ahead: 3, tip: 'a3', published: true },
+        { machine: 'hearth-vps', ahead: 5, tip: 's5', published: true },
+      ]),
+    ).toBeUndefined();
+  });
+
   test('needs two sides', () => {
     expect(divergenceAdvice([sides[0] as DivergedSide])).toBeUndefined();
   });

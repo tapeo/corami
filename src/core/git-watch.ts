@@ -30,6 +30,7 @@ import {
 const WATCH_TICK_MS = 2_000;
 const WATCH_ORIGIN_SLOTS = 4;
 const WATCH_PENDING_MS = 60_000;
+const WATCH_SWEEP_MS = 10 * 60_000;
 
 export interface WatchRoot {
   project: string;
@@ -56,6 +57,7 @@ export interface WatchOptions {
 export interface PeerTurnState {
   fingerprint: string;
   pendingUntil: number;
+  sweptAt: number;
 }
 
 interface ProjectRecord extends PeerTurnState {
@@ -71,11 +73,15 @@ interface WatchRuntime {
   records: Map<string, ProjectRecord>;
   asked: Set<string>;
   running: Set<string>;
-  sweeps: number;
+  sweepCursor: number;
 }
 
 export function peerTurnDue(state: PeerTurnState, fingerprint: string, now: number): boolean {
   return now < state.pendingUntil || fingerprint !== state.fingerprint;
+}
+
+export function sweepDue(sweptAt: number, now: number): boolean {
+  return now - sweptAt >= WATCH_SWEEP_MS;
 }
 
 export function nextPendingUntil(
@@ -101,7 +107,7 @@ export async function watchProjects(options: WatchOptions): Promise<void> {
     records: new Map(),
     asked: new Set(),
     running: new Set(),
-    sweeps: 0,
+    sweepCursor: 0,
   };
   let empty = false;
 
@@ -117,22 +123,37 @@ export async function watchProjects(options: WatchOptions): Promise<void> {
       empty = false;
     }
 
-    const swept = roots[runtime.sweeps % Math.max(1, roots.length)];
-
-    runtime.sweeps += 1;
+    const swept = nextSweep(roots, runtime, Date.now());
 
     for (const item of roots) {
       if (options.signal.aborted) {
         break;
       }
 
-      await peerTurn(runtime, item, item === swept).catch(() => undefined);
+      await peerTurn(runtime, item, item.project === swept).catch(() => undefined);
     }
 
     startOriginTurns(runtime, roots);
 
     await sleep(WATCH_TICK_MS, options.signal);
   }
+}
+
+function nextSweep(roots: WatchRoot[], runtime: WatchRuntime, now: number): string | undefined {
+  for (let offset = 0; offset < roots.length; offset += 1) {
+    const index = (runtime.sweepCursor + offset) % roots.length;
+    const record = runtime.records.get(roots[index]?.project ?? '');
+
+    if (record === undefined || !sweepDue(record.sweptAt, now)) {
+      continue;
+    }
+
+    runtime.sweepCursor = index + 1;
+
+    return roots[index]?.project;
+  }
+
+  return undefined;
 }
 
 async function peerTurn(runtime: WatchRuntime, item: WatchRoot, sweep: boolean): Promise<void> {
@@ -176,6 +197,7 @@ async function peerWork(
     emptyPeerSync,
   );
 
+  record.sweptAt = Date.now();
   record.pendingUntil = nextPendingUntil(record.pendingUntil, peers.pending, changed, Date.now());
 
   if (!existed && existsSync(peerDir)) {
@@ -196,7 +218,7 @@ async function peerWork(
 
   await applyOriginTip(runtime, item, record);
 
-  const status = await gitOriginState(item.root).catch(() => undefined);
+  const status = await gitOriginState(item.root, peers.state).catch(() => undefined);
 
   if (status !== undefined) {
     noteActivity(record, status);
@@ -389,6 +411,7 @@ function recordFor(runtime: WatchRuntime, project: string): ProjectRecord {
     failing: false,
     pendingUntil: 0,
     originRetryAt: 0,
+    sweptAt: 0,
   };
 
   runtime.records.set(project, record);

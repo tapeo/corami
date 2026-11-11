@@ -63,21 +63,31 @@ export function summarizeSide(state: GitRepoState | undefined): string {
   return parts.join(' ');
 }
 
+const ROOTS_TTL_MS = 30_000;
+
+let rootsCache: { at: number; roots: WatchRoot[] } | undefined;
+
 async function rootsToWatch(single: string | undefined): Promise<WatchRoot[]> {
+  const now = Date.now();
+
+  if (rootsCache === undefined || now - rootsCache.at >= ROOTS_TTL_MS) {
+    rootsCache = { at: now, roots: await readRoots() };
+  }
+
+  return rootsCache.roots.filter((row) => single === undefined || row.project === single);
+}
+
+async function readRoots(): Promise<WatchRoot[]> {
   const config = await readGlobalConfig().catch(() => undefined);
 
   if (config?.role !== 'client') {
-    return listProjects()
-      .filter((row) => single === undefined || row.name === single)
-      .map((row) => ({ project: row.name, root: row.path }));
+    return listProjects().map((row) => ({ project: row.name, root: row.path }));
   }
 
   const engine = new MutagenEngine();
   const sessions = await engine.list().catch(() => []);
 
-  return sessions
-    .filter((session) => single === undefined || session.project === single)
-    .map((session) => ({ project: session.project, root: session.beta }));
+  return sessions.map((session) => ({ project: session.project, root: session.beta }));
 }
 
 async function watch(context: CommandContext): Promise<{ data?: unknown; text?: string }> {

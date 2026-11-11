@@ -33,6 +33,7 @@ export interface DivergedSide {
   machine: string;
   ahead: number;
   tip: string;
+  published?: boolean;
 }
 
 export interface DivergenceAdvice {
@@ -185,7 +186,8 @@ export function divergenceAdvice(sides: DivergedSide[]): DivergenceAdvice | unde
     return undefined;
   }
 
-  const resetter = [...sides].sort(byAheadAndMachine)[0];
+  const resettable = sides.filter((side) => side.published !== true);
+  const resetter = [...resettable].sort(byAheadAndMachine)[0];
 
   if (resetter === undefined) {
     return undefined;

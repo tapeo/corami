@@ -37,7 +37,7 @@ import { type CopyGitResult, type GitProgress, giveCopyGit, readGitState } from 
 import { notARepository } from '@/core/git-align.ts';
 import { describeOrigin } from '@/core/git-follow.ts';
 import { type DivergenceAdvice, divergenceAdvice } from '@/core/git-peers.ts';
-import { type PeerSide, peerSides } from '@/core/git-peers-sync.ts';
+import { type PeerSide, peerSides, tipOnOrigin } from '@/core/git-peers-sync.ts';
 import { IGNORE_FILE, ignoreDrift, ignoresFor, projectIgnores } from '@/core/ignore-file.ts';
 import { lastChange } from '@/core/last-change.ts';
 import { type HeavyEntry, heavyInFolder } from '@/core/local-copy.ts';
@@ -485,6 +485,13 @@ async function peersFor(
     const sides = await peerSides(session.beta, machine).catch(() => []);
     const state = sides.find((side) => side.relation === 'diverged');
     const own = await readGitState(session.beta).catch(() => notARepository());
+    let localPublished = false;
+    let peerPublished = false;
+
+    if (state !== undefined) {
+      localPublished = await tipOnOrigin(session.beta, own.branch, own.commit);
+      peerPublished = await tipOnOrigin(session.beta, own.branch, state.commit);
+    }
 
     rows.push({
       project: session.project,
@@ -493,8 +500,13 @@ async function peersFor(
         state === undefined
           ? undefined
           : divergenceAdvice([
-              { machine, ahead: state.behind, tip: own.commit },
-              { machine: state.machine, ahead: state.ahead, tip: state.commit },
+              { machine, ahead: state.behind, tip: own.commit, published: localPublished },
+              {
+                machine: state.machine,
+                ahead: state.ahead,
+                tip: state.commit,
+                published: peerPublished,
+              },
             ]),
     });
   }
