@@ -297,7 +297,7 @@ describe('removal checks', () => {
     lastError: undefined,
     localLinks: [],
     ignore: [],
-    pollingInterval: 2,
+    pollingInterval: 5,
     serverHost: 'vps',
     serverUser: 'corami',
     serverPath: '~/projects/demo',
@@ -318,6 +318,7 @@ describe('removal checks', () => {
   test('a session at the old watch interval is not current', () => {
     expect(pollingCurrent(watching)).toBe(true);
     expect(pollingCurrent({ ...watching, pollingInterval: 10 })).toBe(false);
+    expect(pollingCurrent({ ...watching, pollingInterval: 2 })).toBe(false);
   });
 
   test('an unflushed copy is blocked before anything is deleted', async () => {

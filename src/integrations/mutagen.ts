@@ -61,7 +61,7 @@ export const DEFAULT_IGNORES = PATH_RULES.filter(
 
 export const GIT_IGNORES = ['/.git/*', '!/.git/corami/', '*/**/.git'];
 
-export const WATCH_POLLING_SECONDS = 2;
+export const WATCH_POLLING_SECONDS = 5;
 
 const MUTAGEN_POLLING_SECONDS = 10;
 

@@ -335,7 +335,7 @@ One session per project, created by `corami project add` on a client, whatever t
 mutagen sync create \
   --name corami-<project> \
   --mode two-way-safe \
-  --watch-polling-interval 2 \
+  --watch-polling-interval 5 \
   --ignore-vcs \
   --ignore <list> \
   corami@<server>:~/projects/<project> \
@@ -344,7 +344,7 @@ mutagen sync create \
 
 - Alpha is the server, beta is the client: the folder of the copy, the only record of where it is. The server path is the folder the daemon has for the project, so a project registered with `--from-server` syncs from where it is.
 - `two-way-safe`: conflicts that cannot be solved without losing data stay pending and are reported ([docs](https://mutagen.io/documentation/synchronization/)).
-- `--watch-polling-interval 2` (`WATCH_POLLING_SECONDS` in `mutagen.ts`): Linux has no recursive watching, so on the server Mutagen scans the whole folder at this interval and keeps native watches only on the 50 most recently changed paths ([docs](https://mutagen.io/documentation/synchronization/watching/)). The Mutagen default is 10 s, which made a change of the agent on the server take up to 10 s to reach a client. macOS and Windows clients watch natively, so the interval only matters to them as the retry delay of their watch; a Linux client polls like the server. A shorter interval costs a scan of every project every interval on the server: with small folders that is cheap, while 1 s would not be.
+- `--watch-polling-interval 5` (`WATCH_POLLING_SECONDS` in `mutagen.ts`): Linux has no recursive watching, so on the server Mutagen scans the whole folder at this interval and keeps native watches only on the 50 most recently changed paths ([docs](https://mutagen.io/documentation/synchronization/watching/)). The Mutagen default is 10 s, which made a change of the agent on the server take up to 10 s to reach a client. macOS and Windows clients watch natively, so the interval only matters to them as the retry delay of their watch; a Linux client polls like the server. Every interval costs a scan of every project on the server: measured with 32 sessions and 24,600 entries, 2 s took about 0.46 cores of the four, 5 s about 0.2. The files changed in the last half hour are watched natively and arrive at once anyway; the interval is the delay of a path that has not changed for longer.
 - SSH goes through Tailscale SSH, so no keys to distribute.
 - Mutagen daemon persistence: `mutagen daemon register` on macOS and Windows, user systemd unit `corami-mutagen` on Linux. The `mutagen-daemon` step of `corami setup client` installs it, and `corami doctor` checks it.
 
