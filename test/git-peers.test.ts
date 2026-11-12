@@ -11,7 +11,11 @@ import {
   peerHeadFile,
   peerHeadJson,
   publishNeeded,
+  type RewriteInput,
+  rewriteBase,
   type TipInput,
+  takeMessage,
+  takenFrom,
 } from '@/core/git-peers.ts';
 
 function head(machine: string, epoch: number, branch = 'main', commit = 'c1') {
@@ -127,6 +131,79 @@ describe('furthest tip', () => {
 
   test('has nothing to pick among no candidates', () => {
     expect(furthestTip([])).toBeUndefined();
+  });
+});
+
+describe('taken commit', () => {
+  test('names the machine the head was taken from', () => {
+    const entry = { commit: 'c1', subject: takeMessage('hearth-vps') };
+
+    expect(takenFrom(entry, 'c1')).toBe('hearth-vps');
+  });
+
+  test('sees no take after a local commit, an amend or a reset', () => {
+    expect(takenFrom({ commit: 'c1', subject: 'commit: c1' }, 'c1')).toBeUndefined();
+    expect(takenFrom({ commit: 'c1', subject: 'commit (amend): c1' }, 'c1')).toBeUndefined();
+    expect(takenFrom({ commit: 'c1', subject: 'reset: moving to c1' }, 'c1')).toBeUndefined();
+  });
+
+  test('sees no take when the head moved since', () => {
+    expect(takenFrom({ commit: 'c1', subject: takeMessage('hearth-vps') }, 'c2')).toBeUndefined();
+  });
+
+  test('sees no take without a reflog', () => {
+    expect(takenFrom(undefined, 'c1')).toBeUndefined();
+  });
+
+  test('does not read a follow of origin as a take', () => {
+    expect(takenFrom({ commit: 'c1', subject: 'corami: follow origin' }, 'c1')).toBeUndefined();
+  });
+});
+
+describe('rewrite base', () => {
+  function input(overrides: Partial<RewriteInput>): RewriteInput {
+    return {
+      ownCommit: 'c1',
+      ownBranch: 'main',
+      source: head('hearth-vps', 0, 'main', 'c2'),
+      sourceHere: true,
+      sourceDescends: false,
+      ...overrides,
+    };
+  }
+
+  test('follows the machine that rewrote the commit taken from it', () => {
+    expect(rewriteBase(input({}))).toEqual({ base: 'c2', abandoned: 'c1' });
+  });
+
+  test('keeps the head when nothing was taken', () => {
+    expect(rewriteBase(input({ source: undefined }))).toEqual({ base: 'c1', abandoned: undefined });
+  });
+
+  test('keeps the head when the source is still on it', () => {
+    const source = head('hearth-vps', 0, 'main', 'c1');
+
+    expect(rewriteBase(input({ source }))).toEqual({ base: 'c1', abandoned: undefined });
+  });
+
+  test('leaves a source that went ahead to the usual move', () => {
+    expect(rewriteBase(input({ sourceDescends: true }))).toEqual({
+      base: 'c1',
+      abandoned: undefined,
+    });
+  });
+
+  test('keeps the head when the source is on another branch', () => {
+    const source = head('hearth-vps', 0, 'feat/x', 'c2');
+
+    expect(rewriteBase(input({ source }))).toEqual({ base: 'c1', abandoned: undefined });
+  });
+
+  test('keeps the head while the new commit of the source is not here', () => {
+    expect(rewriteBase(input({ sourceHere: false }))).toEqual({
+      base: 'c1',
+      abandoned: undefined,
+    });
   });
 });
 

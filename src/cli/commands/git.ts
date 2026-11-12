@@ -14,7 +14,12 @@ import {
   originNeedsWatch,
   originStatusJson,
 } from '@/core/git-follow.ts';
-import { emptyPeerSync, type PeerSyncResult, syncPeers } from '@/core/git-peers-sync.ts';
+import {
+  emptyPeerSync,
+  type PeerMove,
+  type PeerSyncResult,
+  syncPeers,
+} from '@/core/git-peers-sync.ts';
 import { type WatchEvent, type WatchRoot, watchProjects } from '@/core/git-watch.ts';
 import { listProjects } from '@/core/state.ts';
 import { MutagenEngine } from '@/integrations/mutagen.ts';
@@ -195,12 +200,22 @@ function eventText(event: WatchEvent): string {
     case 'origin':
       return describeOrigin(event.status);
     case 'move':
-      return `aligned with ${event.move.source} commit ${event.move.to.slice(0, 8)}`;
+      return moveText(event.move);
     case 'switch':
       return `branch ${event.switched.from} -> ${event.switched.to}, following ${event.switched.commit.slice(0, 8)}`;
     case 'fetch':
       return event.failed ? 'origin unreachable (fetch failed)' : 'origin reachable again';
   }
+}
+
+function moveText(move: PeerMove): string {
+  const commit = move.to.slice(0, 8);
+
+  if (move.rewritten) {
+    return `followed the rewritten history of ${move.source}, commit ${commit}`;
+  }
+
+  return `aligned with ${move.source} commit ${commit}`;
 }
 
 export const gitCommand: CommandSpec = {

@@ -298,11 +298,23 @@ describe('git helpers on a real repository', () => {
     writeFileSync(join(root, 'app.ts'), 'second\n');
     const second = await commit(root, 'second');
 
-    const stale = await gitCompareAndSwap(root, 'refs/heads/main', first, 'c'.repeat(40));
+    const stale = await gitCompareAndSwap(
+      root,
+      'refs/heads/main',
+      first,
+      'c'.repeat(40),
+      'corami: follow origin',
+    );
     expect(stale.ok).toBe(false);
     expect((await readGitState(root)).commit).toBe(second);
 
-    const moved = await gitCompareAndSwap(root, 'refs/heads/main', first, second);
+    const moved = await gitCompareAndSwap(
+      root,
+      'refs/heads/main',
+      first,
+      second,
+      'corami: follow origin',
+    );
     expect(moved.ok).toBe(true);
     expect((await readGitState(root)).commit).toBe(first);
     expect(await Bun.file(join(root, 'app.ts')).text()).toBe('second\n');
@@ -518,7 +530,13 @@ describe('followOrigin', () => {
 
     writeFileSync(join(client, 'client.ts'), 'client\n');
     const clientCommit = await commit(client, 'client');
-    const stale = await gitCompareAndSwap(client, 'refs/heads/main', second, 'c'.repeat(40));
+    const stale = await gitCompareAndSwap(
+      client,
+      'refs/heads/main',
+      second,
+      'c'.repeat(40),
+      'corami: follow origin',
+    );
 
     expect(stale.ok).toBe(false);
     expect((await readGitState(client)).commit).toBe(clientCommit);

@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { git, readGitState } from '@/core/git.ts';
+import { git, gitLastRefEntry, readGitState } from '@/core/git.ts';
 import { originTipAction } from '@/core/git-follow.ts';
-import { originTipJson, parseOriginTip, parsePeerHead } from '@/core/git-peers.ts';
+import { originTipJson, parseOriginTip, parsePeerHead, peerHeadJson } from '@/core/git-peers.ts';
 import {
   peerFingerprint,
   publishOriginTip,
@@ -221,6 +221,160 @@ describe('peer exchange', () => {
     const result = await syncPeers(client, { machine: 'tapeo' });
 
     expect(result.missing).toEqual([]);
+  });
+});
+
+async function handOver(from: string, fromMachine: string, to: string, toMachine: string) {
+  await syncPeers(from, { machine: fromMachine });
+  syncFiles(from, to);
+  copyPeerFiles(from, to);
+  return syncPeers(to, { machine: toMachine });
+}
+
+async function amend(root: string, file: string, content: string): Promise<string> {
+  await Bun.write(join(root, file), content);
+  await git(root, ['add', '-A']);
+  await git(root, ['commit', '--quiet', '--amend', '-m', content.trim()]);
+  return (await git(root, ['rev-parse', 'HEAD'])).stdout;
+}
+
+async function headOf(root: string): Promise<string> {
+  return (await readGitState(root)).commit;
+}
+
+describe('rewritten history', () => {
+  test('records the take in the reflog of the branch', async () => {
+    const { server, client } = await scene();
+    await Bun.write(join(server, 's1.ts'), 's1\n');
+    const taken = await commit(server, 's1');
+
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+
+    expect(await gitLastRefEntry(client, 'main')).toEqual({
+      commit: taken,
+      subject: 'corami: take hearth-vps',
+    });
+  });
+
+  test('follows the server when it amends a commit the client took', async () => {
+    const { server, client } = await scene();
+    await Bun.write(join(server, 's1.ts'), 's1\n');
+    const taken = await commit(server, 's1');
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+    expect(await headOf(client)).toBe(taken);
+
+    const amended = await amend(server, 's1.ts', 's1 amended\n');
+    const result = await handOver(server, 'hearth-vps', client, 'tapeo');
+
+    expect(await headOf(client)).toBe(amended);
+    expect(result.moved?.rewritten).toBe(true);
+  });
+
+  test('stays diverged when the client committed after the take', async () => {
+    const { server, client } = await scene();
+    await Bun.write(join(server, 's1.ts'), 's1\n');
+    await commit(server, 's1');
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+    await Bun.write(join(client, 'c1.ts'), 'c1\n');
+    const own = await commit(client, 'c1');
+
+    await amend(server, 's1.ts', 's1 amended\n');
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+
+    expect(await headOf(client)).toBe(own);
+  });
+
+  test('stays on a taken commit that origin has when the server amends it', async () => {
+    const { server, client } = await scene();
+    await Bun.write(join(server, 's1.ts'), 's1\n');
+    const taken = await commit(server, 's1');
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+    await git(server, ['push', '--quiet', 'origin', 'main']);
+    await git(client, ['fetch', '--quiet', 'origin']);
+
+    await amend(server, 's1.ts', 's1 amended\n');
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+
+    expect(await headOf(client)).toBe(taken);
+  });
+
+  test('follows an amend the server pushed with force', async () => {
+    const { server, client } = await scene();
+    await Bun.write(join(server, 's1.ts'), 's1\n');
+    await commit(server, 's1');
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+    await git(server, ['push', '--quiet', 'origin', 'main']);
+    await git(client, ['fetch', '--quiet', 'origin']);
+
+    const amended = await amend(server, 's1.ts', 's1 amended\n');
+    await git(server, ['push', '--quiet', '--force', 'origin', 'main']);
+    await git(client, ['fetch', '--quiet', 'origin']);
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+
+    expect(await headOf(client)).toBe(amended);
+  });
+
+  test('follows the server back when it drops the commit', async () => {
+    const { server, client } = await scene();
+    const base = await headOf(server);
+    await Bun.write(join(server, 's1.ts'), 's1\n');
+    await commit(server, 's1');
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+
+    await git(server, ['reset', '--quiet', '--hard', base]);
+    rmSync(join(client, 's1.ts'));
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+
+    expect(await headOf(client)).toBe(base);
+  });
+
+  test('is not held back by a machine left on the dropped commit', async () => {
+    const { server, client } = await scene();
+    await Bun.write(join(server, 's1.ts'), 's1\n');
+    const taken = await commit(server, 's1');
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+    const stale = { machine: 'old-mac', branch: 'main', commit: taken, branchEpoch: 0 };
+    writeFileSync(
+      join(client, '.git', 'corami', 'old-mac.json'),
+      `${JSON.stringify(peerHeadJson(stale))}\n`,
+    );
+
+    const amended = await amend(server, 's1.ts', 's1 amended\n');
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+
+    expect(await headOf(client)).toBe(amended);
+  });
+
+  test('stays diverged without a reflog', async () => {
+    const { server, client } = await scene();
+    await git(client, ['config', 'core.logAllRefUpdates', 'false']);
+    rmSync(join(client, '.git', 'logs', 'refs', 'heads', 'main'));
+    await Bun.write(join(server, 's1.ts'), 's1\n');
+    const taken = await commit(server, 's1');
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+
+    await amend(server, 's1.ts', 's1 amended\n');
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+
+    expect(await headOf(client)).toBe(taken);
+  });
+
+  test('follows a rewrite along a chain of machines', async () => {
+    const { origin, server, client } = await scene();
+    const laptop = await cloneAs(origin, 'laptop');
+    await Bun.write(join(laptop, 'l1.ts'), 'l1\n');
+    const taken = await commit(laptop, 'l1');
+    await handOver(laptop, 'laptop', server, 'hearth-vps');
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+    expect(await headOf(client)).toBe(taken);
+    expect((await gitLastRefEntry(client, 'main'))?.subject).toBe('corami: take hearth-vps');
+
+    const amended = await amend(laptop, 'l1.ts', 'l1 amended\n');
+    await handOver(laptop, 'laptop', server, 'hearth-vps');
+    await handOver(server, 'hearth-vps', client, 'tapeo');
+
+    expect(await headOf(server)).toBe(amended);
+    expect(await headOf(client)).toBe(amended);
   });
 });
 

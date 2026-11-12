@@ -15,7 +15,7 @@ import {
   isUsable,
   originRelation,
 } from '@/core/git-align.ts';
-import type { OriginTip } from '@/core/git-peers.ts';
+import { FOLLOW_ORIGIN_MESSAGE, type OriginTip } from '@/core/git-peers.ts';
 
 const ACTIVE_MS = 60_000;
 const IDLE_MS = 15 * 60_000;
@@ -99,6 +99,7 @@ export async function followOrigin(root: string, timeoutMs = 60_000): Promise<Gi
     `refs/heads/${next.state.branch}`,
     next.upstreamCommit,
     next.state.commit,
+    FOLLOW_ORIGIN_MESSAGE,
   );
   const after = await readGitState(root);
 

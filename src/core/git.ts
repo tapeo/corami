@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { redactUrl, run, shellQuote } from '@/core/exec.ts';
 import { type GitRepoState, notARepository } from '@/core/git-align.ts';
+import type { RefEntry } from '@/core/git-peers.ts';
 
 export async function git(
   root: string,
@@ -134,10 +135,11 @@ export async function gitCompareAndSwap(
   ref: string,
   value: string,
   expected: string,
+  message: string,
 ): Promise<{ ok: boolean; detail: string }> {
   const update = await gitStep(
     root,
-    ['update-ref', ref, value, expected],
+    ['update-ref', '-m', message, ref, value, expected],
     'ref is not what was expected',
   );
 
@@ -183,17 +185,18 @@ export async function gitSwitchTo(
   branch: string,
   commit: string,
   expected: string | undefined,
+  message: string,
 ): Promise<{ ok: boolean; detail: string }> {
   const update =
     expected === undefined
       ? await gitStep(
           root,
-          ['update-ref', `refs/heads/${branch}`, commit, ''],
+          ['update-ref', '-m', message, `refs/heads/${branch}`, commit, ''],
           'ref already exists',
         )
       : await gitStep(
           root,
-          ['update-ref', `refs/heads/${branch}`, commit, expected],
+          ['update-ref', '-m', message, `refs/heads/${branch}`, commit, expected],
           'ref is not what was expected',
         );
 
@@ -208,6 +211,25 @@ export async function gitSwitchTo(
   );
 
   return moved.ok ? gitStep(root, ['reset', '--quiet'], 'git reset failed') : moved;
+}
+
+export async function gitLastRefEntry(root: string, branch: string): Promise<RefEntry | undefined> {
+  const result = await git(root, [
+    'log',
+    '-g',
+    '-n',
+    '1',
+    '--format=%H %gs',
+    `refs/heads/${branch}`,
+  ]);
+  const line = result.stdout.trim();
+  const space = line.indexOf(' ');
+
+  if (!result.ok || space < 0) {
+    return undefined;
+  }
+
+  return { commit: line.slice(0, space), subject: line.slice(space + 1) };
 }
 
 export async function gitSetUpstream(root: string, branch: string): Promise<void> {

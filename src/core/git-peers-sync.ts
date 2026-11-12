@@ -17,6 +17,7 @@ import {
   gitCompareAndSwap,
   gitDir,
   gitHasCommit,
+  gitLastRefEntry,
   gitRefCommit,
   gitSetUpstream,
   gitSwitchTo,
@@ -41,7 +42,11 @@ import {
   peerHeadJson,
   publishNeeded,
   type RefPosition,
+  type RewriteBase,
+  rewriteBase,
   type TipInput,
+  takeMessage,
+  takenFrom,
 } from '@/core/git-peers.ts';
 
 export interface PeerSyncOptions {
@@ -53,6 +58,7 @@ export interface PeerMove {
   from: string;
   to: string;
   source: string;
+  rewritten: boolean;
 }
 
 export interface PeerSwitch {
@@ -362,7 +368,13 @@ async function followPeerBranch(
     return { switched: undefined, pending: decision.reason === 'waiting_for_files' };
   }
 
-  const switched = await gitSwitchTo(root, winner.branch, winner.commit, refCommit);
+  const switched = await gitSwitchTo(
+    root,
+    winner.branch,
+    winner.commit,
+    refCommit,
+    takeMessage(winner.machine),
+  );
 
   if (!switched.ok) {
     return { switched: undefined, pending: false };
@@ -416,13 +428,16 @@ async function moveToPeerTip(
 
   const candidates: Array<{ source: string; commit: string }> = [];
   const originTip = await gitRefCommit(root, `refs/remotes/origin/${state.branch}`);
+  const rewrite = await rewriteStep(root, state, peers, options);
 
   if (originTip !== undefined) {
     candidates.push({ source: 'origin', commit: originTip });
   }
 
   for (const peer of peers) {
-    if (peer.machine === options.machine || peer.branch !== state.branch) {
+    const elsewhere = peer.machine === options.machine || peer.branch !== state.branch;
+
+    if (elsewhere || peer.commit === rewrite.abandoned) {
       continue;
     }
 
@@ -438,8 +453,8 @@ async function moveToPeerTip(
       source: candidate.source,
       commit: candidate.commit,
       fromHead:
-        candidate.commit === state.commit ||
-        (await isAncestor(root, state.commit, candidate.commit)),
+        candidate.commit === rewrite.base ||
+        (await isAncestor(root, rewrite.base, candidate.commit)),
       ancestors: await ancestorsOf(root, candidate.commit, candidates),
     });
   }
@@ -459,11 +474,50 @@ async function moveToPeerTip(
     `refs/heads/${state.branch}`,
     tip.commit,
     state.commit,
+    takeMessage(tip.source),
   );
 
-  return reset.ok
-    ? { move: { from: state.commit, to: tip.commit, source: tip.source }, pending: false }
-    : { move: undefined, pending: false };
+  if (!reset.ok) {
+    return { move: undefined, pending: false };
+  }
+
+  const rewritten = rewrite.abandoned !== undefined;
+
+  return {
+    move: { from: state.commit, to: tip.commit, source: tip.source, rewritten },
+    pending: false,
+  };
+}
+
+async function rewriteStep(
+  root: string,
+  state: GitRepoState,
+  peers: PeerHead[],
+  options: PeerSyncOptions,
+): Promise<RewriteBase> {
+  const unchanged = { base: state.commit, abandoned: undefined };
+  const machine = takenFrom(await gitLastRefEntry(root, state.branch), state.commit);
+
+  if (machine === undefined || machine === options.machine) {
+    return unchanged;
+  }
+
+  const source = peers.find((peer) => peer.machine === machine);
+
+  if (source === undefined) {
+    return unchanged;
+  }
+
+  const sourceHere = await bundleCommitHere(root, source, options);
+  const sourceDescends = sourceHere && (await isAncestor(root, state.commit, source.commit));
+
+  return rewriteBase({
+    ownCommit: state.commit,
+    ownBranch: state.branch,
+    source,
+    sourceHere,
+    sourceDescends,
+  });
 }
 
 async function ancestorsOf(

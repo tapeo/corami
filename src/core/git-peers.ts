@@ -41,6 +41,28 @@ export interface DivergenceAdvice {
   resetTo: string;
 }
 
+export interface RefEntry {
+  commit: string;
+  subject: string;
+}
+
+export interface RewriteInput {
+  ownCommit: string;
+  ownBranch: string;
+  source: PeerHead | undefined;
+  sourceHere: boolean;
+  sourceDescends: boolean;
+}
+
+export interface RewriteBase {
+  base: string;
+  abandoned: string | undefined;
+}
+
+const TAKE_PREFIX = 'corami: take ';
+
+export const FOLLOW_ORIGIN_MESSAGE = 'corami: follow origin';
+
 export const PEERS_DIR = 'corami';
 export const ORIGIN_TIP_FILE = 'origin.json';
 
@@ -179,6 +201,43 @@ export function branchFollow(input: BranchFollowInput): BranchFollow {
   }
 
   return { follow: true, reason: undefined };
+}
+
+export function takeMessage(machine: string): string {
+  return `${TAKE_PREFIX}${machine}`;
+}
+
+export function takenFrom(entry: RefEntry | undefined, ownCommit: string): string | undefined {
+  if (entry === undefined || entry.commit !== ownCommit || !entry.subject.startsWith(TAKE_PREFIX)) {
+    return undefined;
+  }
+
+  const machine = entry.subject.slice(TAKE_PREFIX.length).trim();
+
+  if (machine === '') {
+    return undefined;
+  }
+
+  return machine;
+}
+
+export function rewriteBase(input: RewriteInput): RewriteBase {
+  const unchanged = { base: input.ownCommit, abandoned: undefined };
+  const source = input.source;
+
+  if (
+    source === undefined ||
+    source.branch !== input.ownBranch ||
+    source.commit === input.ownCommit
+  ) {
+    return unchanged;
+  }
+
+  if (!input.sourceHere || input.sourceDescends) {
+    return unchanged;
+  }
+
+  return { base: source.commit, abandoned: input.ownCommit };
 }
 
 export function divergenceAdvice(sides: DivergedSide[]): DivergenceAdvice | undefined {
