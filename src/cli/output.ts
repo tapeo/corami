@@ -28,6 +28,24 @@ export interface TableColumn<T> {
   value: (row: T) => string;
 }
 
+const pendingWrites: Promise<void>[] = [];
+
+export function write(stream: NodeJS.WriteStream, text: string): void {
+  if (stream.write(text)) {
+    return;
+  }
+
+  pendingWrites.push(
+    new Promise<void>((resolve) => {
+      stream.once('drain', () => resolve());
+    }),
+  );
+}
+
+export async function flushOutput(): Promise<void> {
+  await Promise.all(pendingWrites);
+}
+
 export function success<T>(data: T): SuccessEnvelope<T> {
   return { ok: true, data };
 }
@@ -51,7 +69,7 @@ export function failure(error: CoramiError): ErrorEnvelope {
 
 export function emit<T>(envelope: Envelope<T>, options: OutputOptions): void {
   if (options.json) {
-    process.stdout.write(`${JSON.stringify(envelope, null, 2)}\n`);
+    write(process.stdout, `${JSON.stringify(envelope, null, 2)}\n`);
     return;
   }
 
@@ -62,11 +80,11 @@ export function emit<T>(envelope: Envelope<T>, options: OutputOptions): void {
       lines.push(`Fix: ${envelope.error.fix}`);
     }
 
-    process.stderr.write(`${lines.join('\n')}\n`);
+    write(process.stderr, `${lines.join('\n')}\n`);
     return;
   }
 
-  process.stdout.write(`${renderData(envelope.data)}\n`);
+  write(process.stdout, `${renderData(envelope.data)}\n`);
 }
 
 export function renderData(data: unknown): string {

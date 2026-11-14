@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { allSpecs } from '@/cli/command.ts';
 import { allCommands } from '@/cli/commands/index.ts';
-import { reportError, resolveOutputOptions } from '@/cli/output.ts';
+import { flushOutput, reportError, resolveOutputOptions } from '@/cli/output.ts';
 import { parseArgs } from '@/cli/parser.ts';
 import { runRouter } from '@/cli/router.ts';
 
@@ -33,5 +33,6 @@ export async function main(argv: string[]): Promise<number> {
 
 if (import.meta.main) {
   const code = await main(Bun.argv.slice(2));
+  await flushOutput();
   process.exit(code);
 }

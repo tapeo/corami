@@ -12,7 +12,7 @@ import {
   resolveCommand,
   usageFor,
 } from '@/cli/command.ts';
-import { emit, type OutputOptions, success } from '@/cli/output.ts';
+import { emit, type OutputOptions, success, write } from '@/cli/output.ts';
 import { booleanFlag, parseArgs } from '@/cli/parser.ts';
 import { ownerToSwitchTo } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
@@ -55,8 +55,8 @@ export async function runRouter(options: RouterOptions): Promise<number> {
       return 0;
     }
 
-    process.stdout.write(`${heading(`corami ${VERSION}`, options.output.color)}\n`);
-    process.stdout.write(`${overview(data)}\n`);
+    write(process.stdout, `${heading(`corami ${VERSION}`, options.output.color)}\n`);
+    write(process.stdout, `${overview(data)}\n`);
     return 0;
   }
 
@@ -71,7 +71,7 @@ export async function runRouter(options: RouterOptions): Promise<number> {
       return 0;
     }
 
-    process.stdout.write(`${usageFor(spec, path)}\n`);
+    write(process.stdout, `${usageFor(spec, path)}\n`);
     return 0;
   }
 
@@ -111,7 +111,7 @@ export async function runRouter(options: RouterOptions): Promise<number> {
       return result.exitCode ?? 0;
     }
 
-    process.stdout.write(`${result.text}\n`);
+    write(process.stdout, `${result.text}\n`);
   }
 
   return result.exitCode ?? 0;
