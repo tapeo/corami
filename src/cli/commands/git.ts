@@ -1,7 +1,7 @@
 import type { CommandContext, CommandSpec } from '@/cli/command.ts';
-import { tailnetIdentity } from '@/cli/exec-client-system.ts';
 import { booleanFlag } from '@/cli/parser.ts';
 import { projectGitOrigin } from '@/cli/server-client.ts';
+import { tailnetIdentity } from '@/cli/tailnet-identity.ts';
 import { readGlobalConfig } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import type { GitRelationStatus, GitRepoState } from '@/core/git-align.ts';

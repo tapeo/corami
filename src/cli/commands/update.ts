@@ -128,7 +128,7 @@ export interface PendingStep {
   fix?: string;
 }
 
-const NEXT_STEP_CHECKS = ['mutagen.ignores', 'mutagen.watch', 'exec.setup'];
+const NEXT_STEP_CHECKS = ['mutagen.ignores', 'mutagen.watch'];
 
 interface DoctorCheck {
   id: string;

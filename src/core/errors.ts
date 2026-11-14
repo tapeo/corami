@@ -1,4 +1,4 @@
-export const ERROR_CODES = [
+const ERROR_CODES = [
   'capability_missing',
   'server_unreachable',
   'sync_conflict',

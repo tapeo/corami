@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -467,39 +467,6 @@ export function gitWatchSpec(
     logFile: join(home ?? homedir(), '.corami', 'logs', 'git-watch.log'),
     ...(scope === undefined ? {} : { systemdScope: scope }),
   };
-}
-
-export async function removeService(spec: ServiceSpec): Promise<boolean> {
-  const platform = servicePlatform();
-  const short = serviceShortName(spec.name);
-
-  if (platform === 'macos') {
-    const path = join(
-      homedir(),
-      'Library',
-      'LaunchAgents',
-      `${LAUNCHD_LABEL_PREFIX}.${short}.plist`,
-    );
-
-    await run('launchctl', ['bootout', `gui/${process.getuid?.() ?? 0}`, path]);
-    rmSync(path, { force: true });
-    return true;
-  }
-
-  if (platform === 'linux') {
-    const env = { XDG_RUNTIME_DIR: `/run/user/${process.getuid?.() ?? 0}` };
-
-    await run('systemctl', ['--user', 'disable', '--now', `${spec.name}.service`], { env });
-    rmSync(join(homedir(), '.config', 'systemd', 'user', `${spec.name}.service`), { force: true });
-    await run('systemctl', ['--user', 'daemon-reload'], { env });
-    return true;
-  }
-
-  if (platform === 'windows') {
-    return (await run('schtasks', ['/delete', '/tn', `corami-${short}`, '/f'])).ok;
-  }
-
-  return false;
 }
 
 export function serviceDirHint(): string {

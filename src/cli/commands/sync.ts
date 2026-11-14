@@ -21,7 +21,6 @@ import {
   requireClient,
   syncSessions,
 } from '@/cli/commands/sync-session.ts';
-import { tailnetIdentity } from '@/cli/exec-client-system.ts';
 import { booleanFlag, stringFlag } from '@/cli/parser.ts';
 import type { ProgressUpdate } from '@/cli/progress.ts';
 import {
@@ -31,6 +30,7 @@ import {
   projectOnServer,
   serverUserForSync,
 } from '@/cli/server-client.ts';
+import { tailnetIdentity } from '@/cli/tailnet-identity.ts';
 import { readGlobalConfig, serverProjectPath } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { type CopyGitResult, type GitProgress, giveCopyGit, readGitState } from '@/core/git.ts';

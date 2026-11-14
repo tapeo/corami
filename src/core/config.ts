@@ -24,8 +24,6 @@ export interface CoramiPaths {
   logs: string;
   syncState: string;
   daemonToken: string;
-  exec: string;
-  execKnownHosts: string;
 }
 
 export function homeDirectory(): string {
@@ -46,7 +44,6 @@ export function paths(): CoramiPaths {
 
   const root = join(home, '.corami');
   const logs = join(root, 'logs');
-  const exec = join(root, 'exec');
 
   return {
     root,
@@ -56,8 +53,6 @@ export function paths(): CoramiPaths {
     logs,
     syncState: join(root, 'sync-state.json'),
     daemonToken: join(root, 'daemon-token'),
-    exec,
-    execKnownHosts: join(exec, 'known_hosts'),
   };
 }
 

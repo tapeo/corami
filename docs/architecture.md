@@ -76,7 +76,7 @@ Implementation details of v1. The invariants of the code, the reasons a name can
 
 Corami takes care of server, network, sync, previews and verification. It **does not install and does not choose** Node, pnpm, Bun, Flutter, FVM, Java, Android SDK, Xcode or CocoaPods: the user (or the agent) installs them on every machine, as they prefer.
 
-- Corami starts no project process and runs no build. Dev servers and builds are commands of the user or of the agent, run where the tools are: the server for most projects, a client with `corami exec` when only that machine can do it (see [builds.md](builds.md)).
+- Corami starts no project process and runs no build. Dev servers and builds are commands of the user or of the agent, run where the tools are: the server for most projects, a client over SSH when only that machine can do it (see [builds.md](builds.md)).
 - There is no configuration file in the repository. A project is a folder on the server; the sync and the previews find it by its path.
 - There is no stack specific code in Corami. The few rules a dev server must respect to be reachable are in [previews.md](previews.md).
 
@@ -93,7 +93,6 @@ Checks with a remedy for each item. One command: there are no areas.
 | `mutagen.installed`, `mutagen.service` | Mutagen of the pinned version, `~/.corami/bin` in the PATH, the daemon service |
 | `mutagen.ignores` | on a client, the sessions whose ignores differ from `DEFAULT_IGNORES` plus `.coramiignore`, with `corami sync refresh --all` as the fix |
 | `mutagen.watch` | on a client, the sessions created without the current watch polling interval (`WATCH_POLLING_SECONDS`), with `corami sync refresh --all` as the fix |
-| `exec.setup` | on a client, the line of the gate key is there and restricted to the gate, with `corami exec setup` as the fix |
 | `git.service` | the git alignment service |
 | `server.*` | daemon reachable, account of the projects and its privileges, folders of the projects root that no project names, free space of the projects filesystem (under 10% is a failure) |
 
@@ -123,7 +122,7 @@ Editing files by hand from the phone would need a web editor on the server (e.g.
 | Component | Role | Notes |
 |---|---|---|
 | `corami` CLI | all | compiled Bun, one file per platform |
-| `corami daemon` | server | API: project registry, previews, git state, registered clients and the exec key |
+| `corami daemon` | server | API: project registry, previews, git state |
 | git service | all | service unit that keeps `.git` aligned with `origin` on every side (launchd, user systemd, scheduled task), installed by `corami setup client` and by `corami setup server`. On Linux the output goes to the journal, on macOS to `~/.corami/logs/git-watch.log` |
 | Tailscale | all | private network, MagicDNS, Tailscale SSH, HTTPS and identity headers with `tailscale serve` |
 | Mutagen | client | two-way sync towards the server over SSH. Mutagen installs its agent on the server by itself. Its daemon runs as a service, installed by `corami setup client` |
@@ -150,13 +149,12 @@ corami/
     main.ts
     cli/
       commands/           one file per group: setup, setup-client, doctor, project,
-                          serve, sync, git, update, exec
+                          serve, sync, git, update
       output.ts           JSON envelope, TTY tables, exit codes
       server-client.ts    HTTP client towards the daemon
     daemon/
       server.ts           HTTP routing and authentication with the Tailscale headers
       api.ts              projects, previews, git state
-      exec-api.ts         exec key, registered clients, probe
       previews.ts         serve rules: apply, remove, reconcile
     core/
       config.ts           global config and paths
@@ -166,11 +164,10 @@ corami/
       local-copy.ts       path rules: what the sync, the import and the copy removal never carry
       git.ts, git-align.ts, git-follow.ts, git-peers.ts, git-peers-sync.ts,
       git-watch.ts
-      exec-rules.ts, exec-gate.ts, exec-ssh-keys.ts, exec-sshd.ts, exec-errors.ts
       paths and helper modules: doctor, errors, exec,
       last-change, release, state, transfer
     integrations/
-      tailscale.ts  mutagen.ts  service.ts  ssh.ts  ssh-exec.ts  systemd.ts
+      tailscale.ts  mutagen.ts  service.ts  ssh.ts  systemd.ts
   scripts/
     install.sh
     install.ps1
@@ -187,8 +184,6 @@ corami/
 | State | `~/.corami/state.db` | |
 | Daemon token | `~/.corami/daemon-token` (0600) | |
 | Service logs | `~/.corami/logs/` (git watch) | `~/.corami/logs/` |
-| Exec channel | `~/.corami/exec/` (`known_hosts`) | |
-| Exec key | `~/.ssh/id_ed25519_corami_exec` | |
 | Projects | `~/projects/<project>`, or the folder chosen with `--server-path` | the folder given as the argument of `project add` and kept by the session. Never guessed |
 
 Every service listens on `127.0.0.1:<port>`. `tailscale serve` exposes the same port number over HTTPS on the tailnet (see "Network and security").
@@ -294,7 +289,7 @@ To open the server preview from a client, the same HTTPS address is used, withou
 
 ## Builds and runs
 
-Nothing in Corami runs a build or a project command. The details, including builds on a client with `corami exec` and the rules for keys, are in [builds.md](builds.md).
+Nothing in Corami runs a build or a project command. The details, including builds on a client over SSH and the rules for keys, are in [builds.md](builds.md).
 
 - **Dependencies:** each machine installs them with the command of the project (`pnpm install`, `flutter pub get`). Lockfiles are synced, the dependency folders are not, because they contain native binaries and absolute paths of the machine.
 - **Advice, not obligations:** pnpm with its global store (same file system as the local copies, for hard links), FVM with `.fvmrc` for Flutter. Corami does not check them.
@@ -302,16 +297,7 @@ Nothing in Corami runs a build or a project command. The details, including buil
 
 ### Commands on a client
 
-`corami exec` runs a command of the server inside the synced copy of a client. The agent lives on the server; a simulator, `xcodebuild` or a device plugged into a Mac need the Mac.
-
-- `corami exec setup`, run once on the client, writes a line of `~/.ssh/authorized_keys`: `restrict,pty,command="<corami> exec gate"`. The key of the server opens nothing but the gate: `restrict` turns off port, agent and X11 forwarding, `pty` allows the terminal of `--tty`. It is idempotent and writes the line again when the binary of the client moves.
-- The gate takes no decision on the command. It finds the copy of the project, flushes the sync, runs the command and streams the result back. The control is in the harness on the server, which decides which `corami exec` it allows.
-- The server sends a base64url JSON in `SSH_ORIGINAL_COMMAND`: `{ "v": 1, "project": "myapp", "argv": [...] }`. The gate flushes the sync, runs `[$SHELL, "-lc", "exec \"$@\"", ...argv]` in the copy, and streams stdout, stderr and the exit code back.
-- `--tty` runs `ssh -tt` instead of `ssh -T`. The gate sees a terminal on stdin and runs the command in its own session, not in a new one (no `setsid`), so the command keeps the controlling terminal and can ask for input; `Ctrl-C` reaches the command through the terminal. The gate writes its errors as plain text instead of the `corami-exec-error:` line. The server refuses `--tty` with `--json` and without a terminal on stdin and stdout, so an agent never gets it.
-- An ssh session without a pty sends no signal to the gate when the connection closes: the gate watches its parent process, and when it changes it stops the process group of the command.
-- Output is the exception to the CLI contract: without `--json` it is the stdout and stderr of the command, even without a TTY. `--json` collects them in the envelope with `client`, `project`, `exit_code`, `stdout`, `stderr`, `duration_ms`.
-- The server keeps `clients(name, ssh_host, ssh_user, os, host_key, updated_at)`, the dedicated key `~/.ssh/id_ed25519_corami_exec` and `~/.corami/exec/known_hosts`, with `StrictHostKeyChecking=yes`: no trust on first use.
-- `GET /v1/exec/key` gives the public key; `PUT /v1/clients/<name>` registers the client with its host key; `POST /v1/clients/<name>/probe` enters with a probe payload, which executes nothing.
+The agent lives on the server; a simulator, `xcodebuild` or a device plugged into a Mac need the Mac. Corami has no command for it: the agent runs it over SSH, with a key of the server that the user adds to the client ([builds.md](builds.md#on-a-client-over-ssh)). Corami gives the two parts plain SSH lacks, both commands of the client: `corami sync status <project> --json` for the folder of the copy and the state of its session, `corami sync flush <project>` so the command runs on the files the agent just wrote. Versions up to 0.25 had `corami exec`, a gate on the client behind a restricted key: removed, because it chained these commands and ssh.
 
 ## Worktrees
 
@@ -388,7 +374,7 @@ Files generated with absolute paths of the machine (`Generated.xcconfig`, `local
 ### State and conflicts
 
 - `corami sync status --json` reads `mutagen sync list --template '{{ json . }}'` and returns state, last cycle, conflicts, the ignores of the session, the heavy entries and the last change.
-- **Heavy entries.** A file of 500 MB or more, or a folder of 2 GB or more among the ones the sync carries, is reported with its apparent size (the one Mutagen hashes and writes). A build cache no rule covers is the usual case: the sync stays in `Scanning files` on every change, and a sparse file of the client becomes a full one on the server. `corami sync status <project>` looks at the folder, and so does the `sync_pending` error of `corami exec`, which names the heaviest path and the ignore to add.
+- **Heavy entries.** A file of 500 MB or more, or a folder of 2 GB or more among the ones the sync carries, is reported with its apparent size (the one Mutagen hashes and writes). A build cache no rule covers is the usual case: the sync stays in `Scanning files` on every change, and a sparse file of the client becomes a full one on the server. `corami sync status <project>` looks at the folder and names the heaviest path.
 - `corami sync status` shows the local and the server path of each conflict. To resolve one, delete the copy that should lose, on this machine or on the server: Mutagen then syncs the other one to both sides, which is the resolution method documented by Mutagen ([docs](https://mutagen.io/documentation/synchronization/)). No dedicated command: it would only wrap one deletion. The `sync_conflict` error of `corami project rm --on client` gives the same fix.
 - Sync hides behind a `SyncEngine` interface, so it can move to Syncthing if needed.
 
@@ -541,27 +527,21 @@ All routes are under `/v1`, authenticated with the Tailscale identity headers an
 | PUT | `/projects/:project/previews/:name` | register or move a preview: `{ "target_port": 3000 }` |
 | DELETE | `/projects/:project/previews/:name` | remove the preview and its serve rule |
 | GET | `/previews` | every preview with `url` and `responding` |
-| GET | `/exec/key` | public key of the dedicated exec key |
-| GET | `/clients` | registered clients |
-| PUT | `/clients/:name` | register a client: `{ "ssh_host": ..., "ssh_user": ..., "os": ..., "host_key": ... }`; the host key goes into `known_hosts` |
-| POST | `/clients/:name/probe` | enters the client with a probe payload, which executes nothing |
 
 ### SQLite tables
 
 ```
 projects(name, path, repo_url, created_at, owned)
 previews(project, name, public_port, target_port, created_at)
-clients(name, ssh_host, ssh_user, os, host_key, updated_at)
 ```
 
-`owned` tells a folder Corami made (a clone, an import) from one registered where it was. A database written before the column existed fills it with the rule of the day, "inside the projects root". A database written before `clients` lost `allowed` keeps the column, with its default, and Corami ignores it: the truth of the connection is the key line on the client.
+`owned` tells a folder Corami made (a clone, an import) from one registered where it was. A database written before the column existed fills it with the rule of the day, "inside the projects root". A database written by 0.25 or earlier keeps the `clients` table of `corami exec`, and Corami ignores it.
 
 ## CLI output contract
 
 - With a TTY stdout: tables and text. Without a TTY or with `--json`: JSON.
 - In a terminal, `project add` and the setup show the phase they are running on one line, erased when the phase ends. A bar with a percentage appears only where a real counter knows the total: the bytes of the upload, the bytes of the sync (the files when the size is not known), the objects of a clone. With `--json`, or without a terminal, that line is not drawn and the output does not change.
 - The text of `setup server` and `setup client` ends with the commands to run next, on the other machine or for the first project. The JSON does not carry them.
-- `corami exec --on` is the exception: without `--json` it passes stdout, stderr and the exit code of the command through, even without a TTY. `--json` collects them in the envelope.
 - Envelope:
 
 ```json

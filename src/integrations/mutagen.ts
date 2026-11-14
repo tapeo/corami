@@ -352,7 +352,7 @@ const SYNC_ACTIVITY: Record<string, string> = {
   disconnected: 'Waiting for the server',
 };
 
-export function syncActivityText(status: string, lastError?: string): string {
+function syncActivityText(status: string, lastError?: string): string {
   const error = (lastError ?? '').trim();
 
   if (error !== '') {

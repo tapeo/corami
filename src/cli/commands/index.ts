@@ -1,7 +1,6 @@
 import type { CommandSpec } from '@/cli/command.ts';
 import { daemonCommand } from '@/cli/commands/daemon.ts';
 import { doctorCommand } from '@/cli/commands/doctor.ts';
-import { execCommand } from '@/cli/commands/exec.ts';
 import { gitCommand } from '@/cli/commands/git.ts';
 import { projectCommand } from '@/cli/commands/project.ts';
 import { serveCommand } from '@/cli/commands/serve.ts';
@@ -19,7 +18,6 @@ export function allCommands(): CommandSpec[] {
     syncCommand,
     updateCommand,
     gitCommand,
-    execCommand,
   ];
 
   implemented.sort((left, right) => left.name.localeCompare(right.name));

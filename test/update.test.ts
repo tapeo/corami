@@ -18,12 +18,6 @@ describe('the steps after an update', () => {
         },
         { id: 'mutagen.watch', status: 'ok', summary: 'Every session checks every 2 s' },
         { id: 'git.service', status: 'warn', summary: 'not running' },
-        {
-          id: 'exec.setup',
-          status: 'warn',
-          summary: 'the key is not restricted to the gate',
-          fix: 'Run corami exec setup',
-        },
       ]),
     );
 
@@ -32,11 +26,6 @@ describe('the steps after an update', () => {
         id: 'mutagen.ignores',
         summary: '9 sessions carry older exclusions',
         fix: 'corami sync refresh --all --keep-extra',
-      },
-      {
-        id: 'exec.setup',
-        summary: 'the key is not restricted to the gate',
-        fix: 'Run corami exec setup',
       },
     ]);
   });

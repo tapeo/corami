@@ -1,7 +1,7 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 
-import { tailnetIdentity } from '@/cli/exec-client-system.ts';
+import { tailnetIdentity } from '@/cli/tailnet-identity.ts';
 import { readGlobalConfig } from '@/core/config.ts';
 import { CoramiError } from '@/core/errors.ts';
 import { syncPeers } from '@/core/git-peers-sync.ts';

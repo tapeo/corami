@@ -11,7 +11,6 @@ export interface CommandContext {
 export interface CommandResult {
   data?: unknown;
   text?: string;
-  exitCode?: number;
 }
 
 export interface FlagSpec {
@@ -29,7 +28,6 @@ export interface ActionSpec {
   flags?: FlagSpec[];
   arguments?: number;
   examples?: string[];
-  hidden?: boolean;
   run: RunCommand;
 }
 
@@ -160,9 +158,7 @@ export function helpData(spec: CommandSpec | ActionSpec, path: string): HelpData
     command: path,
     summary: spec.summary,
     usage: spec.usage,
-    actions: actions
-      .filter((action) => action.hidden !== true)
-      .map((action) => ({ name: action.name, summary: action.summary })),
+    actions: actions.map((action) => ({ name: action.name, summary: action.summary })),
     flags: spec.flags ?? [],
     examples: spec.examples ?? [],
     global_flags: GLOBAL_FLAGS,

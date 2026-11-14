@@ -1,6 +1,6 @@
 # CLI reference
 
-Commands of v1. A command that does several things has actions, as in `corami sync prune`, and each action has its own flags. Every command accepts the global flags `--json`, `--help` and `--version`. Without a TTY the output is JSON by default, the help included; `corami exec --on` is the one exception, with the passthrough explained in [Exec](#exec). A flag the command or the action does not know, a flag without its value, or an argument beyond the ones it takes, is a `usage` error. Envelope and exit codes are in `architecture.md`.
+Commands of v1. A command that does several things has actions, as in `corami sync prune`, and each action has its own flags. Every command accepts the global flags `--json`, `--help` and `--version`. Without a TTY the output is JSON by default, the help included. A flag the command or the action does not know, a flag without its value, or an argument beyond the ones it takes, is a `usage` error. Envelope and exit codes are in `architecture.md`.
 
 `corami help [command [action]]` is the same as `--help` on the command or the action: `corami help sync prune` shows the flags of `sync prune` only.
 
@@ -10,7 +10,6 @@ Commands of v1. A command that does several things has actions, as in `corami sy
 - [Projects](#projects)
 - [Previews](#previews)
 - [Sync](#sync)
-- [Exec](#exec)
 - [Output examples](#output-examples)
 
 ## Setup
@@ -26,7 +25,7 @@ Commands of v1. A command that does several things has actions, as in `corami sy
 | `corami setup client <server> --step <step>` | client | runs a single step: `tailscale`, `daemon`, `ssh`, `mutagen`, `mutagen-daemon`, `config`, `git-watch` |
 | `corami setup git [--provider github\|gitlab\|bitbucket] [--identity-name <name>] [--identity-email <email>]` | server, as the account | SSH key of the server, check and rewriting of HTTPS remotes; with `--identity-email` it also sets the git identity of the account, `Corami` as the name by default |
 | `corami doctor` | all | checks with remedies, in one list |
-| `corami update [--check] [--version vX.Y.Z] [--force]` | all | updates the binary from the GitHub release, with a sum check, or installs the version named with `--version` (an older one included); `--force` installs the same version again; on the server it restarts the daemon, and as root it also replaces the binary of the account; on macOS it registers the launch agents again and says which one did not start; on a client it ends with the steps the new version leaves: sessions to refresh, the key of the gate to rewrite |
+| `corami update [--check] [--version vX.Y.Z] [--force]` | all | updates the binary from the GitHub release, with a sum check, or installs the version named with `--version` (an older one included); `--force` installs the same version again; on the server it restarts the daemon, and as root it also replaces the binary of the account; on macOS it registers the launch agents again and says which one did not start; on a client it ends with the steps the new version leaves: sessions to refresh |
 
 In a terminal the setups ask what the flags do not say, and only that:
 
@@ -57,7 +56,7 @@ A role and flags after `--` go to the setup. Without a terminal it installs the 
 | `corami-git-watch` | server and clients: systemd on Linux, launchd agent `dev.corami.git-watch` on macOS, scheduled task on Windows | keeps `.git` aligned with `origin` | both setups, step `git-watch` |
 | Mutagen daemon | clients: user systemd unit `corami-mutagen` on Linux, launchd agent `io.mutagen.mutagen` on macOS, logon registration on Windows | carries the sync sessions, also after a reboot | `corami setup client`, step `mutagen-daemon` |
 
-`corami doctor` reports a service that is not running and the step that installs it again. On the server it also reports the folders of the projects root that no project names, and the ones an import that stopped left behind. It reports how Tailscale SSH treats `root` and the other accounts of the machine, whether the tailnet holds people besides the owner, and on a client whether the exec channel is connected: the remedies are in [security.md](security.md).
+`corami doctor` reports a service that is not running and the step that installs it again. On the server it also reports the folders of the projects root that no project names, and the ones an import that stopped left behind. It reports how Tailscale SSH treats `root` and the other accounts of the machine, whether the tailnet holds people besides the owner: the remedies are in [security.md](security.md).
 
 ## Projects
 
@@ -131,67 +130,6 @@ The folder of a copy is never guessed. `project add` needs it as the argument, a
 The account of the server for the sync and the import is `server_user` of the configuration, saved by `corami setup client`, then `user` of the health answer of the daemon, then `root`. `--user` overrides it for one command.
 
 Every side is a peer with its own `.git`. Each publishes in `.git/corami/` the commits that `origin` does not have yet, as a bundle, the branch it is on, and (on the server only) the tip of `origin` it last fetched: the sync carries that folder, so the other sides read them even before a push. `corami git watch` checks the local refs and that folder every two seconds and, when a side is behind and the files have already arrived with the sync, moves its HEAD without touching the files. The network is a second loop, four projects at a time: the server downloads the refs of `origin` every minute for a project active in the last half hour and every 15 minutes for an idle one, and a client only when it needs them, which is when a commit of another machine or a published tip of `origin` is not here. After a push from the server, the tip it publishes moves `origin` on the other sides without a fetch on them. A branch switch made on one side is followed by the others, and the last switch wins. The push stays an act of whoever makes the commit: the other sides have the commit anyway, `origin` gets it when that side pushes. A merged PR on GitHub enters with a `git pull` on any side, and the others follow at once when the sync has delivered the files.
-
-## Exec
-
-`corami exec` runs a command of the server on a client, inside the synced copy of a project. The agent works on the server; a simulator, `xcodebuild` or a device plugged into a Mac need the Mac.
-
-| Command | Where | Description |
-|---|---|---|
-| `corami exec --on <client> [--project <name>] [--tty] -- <command>` | server | runs the command on the client, in the copy of the project. The project comes from the current folder. `--tty` runs it in a terminal, for commands that ask for input: it needs a terminal on the server and is refused with `--json` |
-| `corami exec setup` | client | connects this client to its server: the key of the server in `authorized_keys`, the registration and a check from the server |
-| `corami exec status` | all | on the client: the server, the connection, the gate and whether the key is restricted. On the server: the registered clients, online and OS |
-
-`exec setup` writes one line in `~/.ssh/authorized_keys`, `restrict,pty,command="<corami> exec gate" <key> corami-exec:<server>`: the key of the server opens only the gate, with no forwarding of ports, agent or display. `pty` allows the terminal of `--tty`. It can be run again, and it has to be run again when the binary of the client changes path. The client lets the server run any command it sends: the control is in the harness, see [security](security.md).
-
-To disconnect the client, remove the line that ends with `corami-exec:<server>` from `~/.ssh/authorized_keys`.
-
-```bash
-# on the client, once
-corami exec setup
-
-# from the server, inside the project
-corami exec --on macbook -- flutter devices
-corami exec --on macbook --project myapp -- flutter run -d "iPhone 16"
-corami exec --on macbook -- xcrun simctl boot "iPhone 16"
-corami exec --on macbook --tty -- sudo softwareupdate -l
-```
-
-Output is the exception to the contract above: without `--json` it is the stdout and stderr of the command, even without a TTY, and the exit code of the command is the exit code of `corami`. With `--json` the output is collected:
-
-```json
-{
-  "ok": true,
-  "data": {
-    "client": "macbook",
-    "project": "myapp",
-    "exit_code": 0,
-    "stdout": "2 connected devices:\n...",
-    "stderr": "",
-    "duration_ms": 1840
-  }
-}
-```
-
-The errors of Corami before the command starts use the usual envelope: `macbook is offline in the tailnet`, `macbook does not allow commands from this server`, `macbook denies this command: rm -rf build (rule: deny rm *)`, `macbook has no copy of myapp`, or `the sync of myapp on macbook is not up to date: Scanning the files. .build/CompilationCache.noindex/ is 38 GB`.
-
-An MCP server can run on the client through the same channel. The first run asks for the exact command of the server:
-
-```json
-{
-  "mcp": {
-    "mobile": {
-      "type": "local",
-      "command": [
-        "corami", "exec", "--on", "macbook", "--project", "myapp", "--",
-        "npx", "-y", "@mobilenext/mobile-mcp@latest"
-      ]
-    }
-  }
-}
-```
-
-When the harness closes the MCP server, the connection ends and the gate closes the processes of the command on the client.
 
 ## Output examples
 

@@ -53,12 +53,12 @@ Topics postponed after v1. They are ideas, not decisions: they will be analysed 
 
 ## Remote runs
 
-**Why:** in v1 `corami exec` already runs a command of the server on a client. The key is restricted to the gate, the sync is flushed before the command and the outcome comes back. What remains are the parts around it.
+**Why:** in v1 the agent runs a command on a client over plain SSH, with `corami sync flush` before it ([builds.md](../builds.md#on-a-client-over-ssh)). What remains are the parts around it.
 
 **What has emerged:**
 - Returning the artifact (an `.ipa`, an `.apk`) to the server, where it is published.
-- Choosing the machine when several clients can run the command: today `--on` is required.
-- Resuming when a client goes offline halfway through: today the processes are closed and the error is clear.
+- Choosing the machine when several clients can run the command.
+- Resuming when a client goes offline halfway through.
 - A preview registered on the client, for a dev server that runs there.
 - Checking that the command exists on the client before asking for the permission.
 - External services discussed for iOS builds:
