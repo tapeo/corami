@@ -1,14 +1,87 @@
 import { describe, expect, test } from 'bun:test';
 
+import { EventEmitter } from 'node:events';
+
 import {
   failure,
+  flushOutput,
   renderNextSteps,
   renderOrphanCopies,
   renderSteps,
   renderTable,
   success,
+  write,
 } from '@/cli/output.ts';
 import { CoramiError, exitCodeFor, toCoramiError } from '@/core/errors.ts';
+
+class FakeStream extends EventEmitter {
+  readonly written: string[] = [];
+
+  constructor(readonly acceptsWrite: boolean) {
+    super();
+  }
+
+  write(text: string): boolean {
+    this.written.push(text);
+    return this.acceptsWrite;
+  }
+}
+
+function fakeStream(acceptsWrite: boolean): NodeJS.WriteStream & FakeStream {
+  return new FakeStream(acceptsWrite) as unknown as NodeJS.WriteStream & FakeStream;
+}
+
+describe('write and flushOutput', () => {
+  test('a write the stream takes ends with the flush', async () => {
+    const stream = fakeStream(true);
+
+    write(stream, 'text');
+    await flushOutput();
+
+    expect(stream.written).toEqual(['text']);
+  });
+
+  test('a buffered write waits for the drain', async () => {
+    const stream = fakeStream(false);
+
+    write(stream, 'text');
+    const flushed = flushOutput();
+
+    stream.emit('drain');
+    await flushed;
+  });
+
+  test('a buffered write does not wait forever when the reader is gone', async () => {
+    const stream = fakeStream(false);
+
+    write(stream, 'text');
+    const flushed = flushOutput();
+
+    stream.emit('error', new Error('write EPIPE'));
+    await flushed;
+  });
+
+  test('a stream that closes also ends the wait', async () => {
+    const stream = fakeStream(false);
+
+    write(stream, 'text');
+    const flushed = flushOutput();
+
+    stream.emit('close');
+    await flushed;
+  });
+
+  test('a broken stream takes no more text', async () => {
+    const stream = fakeStream(false);
+
+    write(stream, 'first');
+    stream.emit('error', new Error('write EPIPE'));
+    await flushOutput();
+
+    write(stream, 'second');
+    expect(stream.written).toEqual(['first']);
+  });
+});
 
 describe('envelope', () => {
   test('wraps successful data', () => {

@@ -29,16 +29,48 @@ export interface TableColumn<T> {
 }
 
 const pendingWrites: Promise<void>[] = [];
+const streamEnds = new WeakMap<NodeJS.WriteStream, Promise<void>>();
+const brokenStreams = new WeakSet<NodeJS.WriteStream>();
+
+function streamEnd(stream: NodeJS.WriteStream): Promise<void> {
+  const cached = streamEnds.get(stream);
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const end = new Promise<void>((resolve) => {
+    stream.once('error', () => {
+      brokenStreams.add(stream);
+      resolve();
+    });
+    stream.once('close', () => {
+      brokenStreams.add(stream);
+      resolve();
+    });
+  });
+  streamEnds.set(stream, end);
+  return end;
+}
 
 export function write(stream: NodeJS.WriteStream, text: string): void {
+  const end = streamEnd(stream);
+
+  if (brokenStreams.has(stream)) {
+    return;
+  }
+
   if (stream.write(text)) {
     return;
   }
 
   pendingWrites.push(
-    new Promise<void>((resolve) => {
-      stream.once('drain', () => resolve());
-    }),
+    Promise.race([
+      new Promise<void>((resolve) => {
+        stream.once('drain', () => resolve());
+      }),
+      end,
+    ]),
   );
 }
 

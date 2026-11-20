@@ -56,6 +56,6 @@ Short notes on the invariants the code relies on: rules whose reason a name cann
 
 - Arguments are read once, before the command is known: a flag takes the next word as its value only when some command or action declares it with one.
 - `--` is not a separator: it is an unknown flag, a usage error. In a group of short flags only the last can take a value (`-yp folder`). `--no-<flag>` sets it false.
-- The output of a command goes through `write` in `src/cli/output.ts`, and `main` waits for `flushOutput` before `process.exit`. Bun drops what a pipe has not read yet when the process exits, past 64 KB: a `sync status --json` read over ssh came out cut.
+- The output of a command goes through `write` in `src/cli/output.ts`, and `main` waits for `flushOutput` before `process.exit`. Bun drops what a pipe has not read yet when the process exits, past 64 KB: a `sync status --json` read over ssh came out cut. A buffered write also ends its wait when the stream ends, on `error` or `close`: a reader that leaves early, like `| head`, never drains the pipe, and the wait would never end while the process spins on a full core.
 - Only a bare `--version` is the global flag: in `corami update --version v0.3.0` it belongs to the command, and a command that declares it with no value is a usage error.
 - Questions are asked only to a person: stdin and stdout are terminals and `--json` is not set.
